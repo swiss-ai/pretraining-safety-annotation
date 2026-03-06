@@ -1,0 +1,10 @@
+.venv/
+.git/
+.nicegui/
+__pycache__/
+*.pyc
+annotation/annotations.jsonl
+annotation/comments.jsonl
+annotation/sample.json
+food/output/
+safety/output/
