@@ -18,8 +18,10 @@ from annotation.sampling import (
 from annotation.storage import (
     load_annotator_ids,
     load_annotations_by_item,
+    load_comments_by_annotation,
     load_latest_annotations,
     save_annotation,
+    save_comment,
 )
 
 N_PER_SUBSET = 50
@@ -140,7 +142,13 @@ def annotate_page():
     import random as _random
     full_queue = list(sample_ids)
     _random.Random(annotator_id).shuffle(full_queue)
-    state = {"pos": 0, "queue": full_queue}
+    # Start at first unannotated item
+    start_pos = 0
+    for i, iid in enumerate(full_queue):
+        if iid not in my_annotations:
+            start_pos = i
+            break
+    state = {"pos": start_pos, "queue": full_queue}
 
     # === Header ===
     with ui.header().classes("items-center justify-between").style("background: #1d1d1d;"):
@@ -423,10 +431,13 @@ def overview_page():
     # Container for the annotation cards
     cards_container = ui.column().classes("w-full q-px-md gap-4 q-mt-md")
 
+    viewer_id = app.storage.user.get("annotator_id", "")
+
     def render_annotations():
         cards_container.clear()
         filt_annotator = annotator_filter.value
         filt_subset = subset_filter.value
+        comments_by_ann = load_comments_by_annotation()
 
         filtered_ids = annotated_ids
         if filt_subset != "All":
@@ -472,8 +483,11 @@ def overview_page():
                     # Annotations side by side
                     with ui.row().classes("w-full gap-4"):
                         for rec in sorted(records, key=lambda r: r["annotator_id"]):
+                            ann_item_id = item_id
+                            ann_author = rec["annotator_id"]
+
                             with ui.card().classes("flex-1 q-pa-sm").style("min-width: 300px;"):
-                                ui.label(rec["annotator_id"]).classes("text-subtitle2 text-weight-bold")
+                                ui.label(ann_author).classes("text-subtitle2 text-weight-bold")
                                 ui.label(rec["timestamp"][:19]).classes("text-caption text-grey-6")
 
                                 ui.label("Analysis").classes("text-overline text-grey-7 q-mt-sm")
@@ -497,6 +511,41 @@ def overview_page():
                                     with ui.row().classes("gap-1"):
                                         for eid in elements:
                                             ui.badge(eid, color="blue-grey-3").props("outline")
+
+                                # -- Comments thread --
+                                comments = comments_by_ann.get((ann_item_id, ann_author), [])
+                                with ui.expansion(
+                                    f"Comments ({len(comments)})",
+                                    icon="chat_bubble_outline",
+                                ).classes("w-full q-mt-sm"):
+                                    for c in comments:
+                                        with ui.row().classes("items-start gap-2 q-mb-xs"):
+                                            ui.label(c["commenter_id"]).classes(
+                                                "text-caption text-weight-bold"
+                                            )
+                                            ui.label(c["timestamp"][:16]).classes(
+                                                "text-caption text-grey-5"
+                                            )
+                                        ui.label(c["comment"]).classes("text-body2 q-mb-sm").style(
+                                            "white-space: pre-wrap; padding-left: 8px;"
+                                        )
+
+                                    if viewer_id:
+                                        comment_input = ui.input(
+                                            placeholder="Add a comment...",
+                                        ).classes("w-full").props("dense outlined")
+
+                                        def make_submit(iid=ann_item_id, target=ann_author, inp=comment_input):
+                                            def do_submit():
+                                                assert inp.value and inp.value.strip(), "Comment cannot be empty"
+                                                save_comment(iid, target, viewer_id, inp.value.strip())
+                                                ui.notify("Comment added", type="positive")
+                                                render_annotations()
+                                            return do_submit
+
+                                        ui.button(
+                                            "Post", on_click=make_submit(), color="primary",
+                                        ).props("flat dense size=sm")
 
     annotator_filter.on("update:model-value", lambda _: render_annotations())
     subset_filter.on("update:model-value", lambda _: render_annotations())

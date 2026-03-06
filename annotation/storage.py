@@ -80,3 +80,51 @@ def load_annotations_by_item() -> dict[str, list[dict]]:
 def compute_item_id(text: str) -> str:
     """Compute a stable item ID from the text (first 200 chars)."""
     return hashlib.sha256(text[:200].encode()).hexdigest()[:16]
+
+
+# --- Comments ---
+
+def comments_path() -> Path:
+    """Return the JSONL file path for annotation comments."""
+    return ANNOTATION_DIR / "comments.jsonl"
+
+
+def load_comments() -> list[dict]:
+    """Load all comment records."""
+    path = comments_path()
+    if not path.exists():
+        return []
+    records = []
+    for line in path.read_text().splitlines():
+        if line.strip():
+            records.append(json.loads(line))
+    return records
+
+
+def load_comments_by_annotation() -> dict[tuple[str, str], list[dict]]:
+    """Load comments keyed by (item_id, target_annotator_id), sorted by timestamp."""
+    by_annotation: dict[tuple[str, str], list[dict]] = {}
+    for comment in load_comments():
+        key = (comment["item_id"], comment["target_annotator_id"])
+        by_annotation.setdefault(key, []).append(comment)
+    for comments in by_annotation.values():
+        comments.sort(key=lambda c: c["timestamp"])
+    return by_annotation
+
+
+def save_comment(
+    item_id: str,
+    target_annotator_id: str,
+    commenter_id: str,
+    comment: str,
+) -> None:
+    """Append a comment on an annotation."""
+    record = {
+        "item_id": item_id,
+        "target_annotator_id": target_annotator_id,
+        "commenter_id": commenter_id,
+        "comment": comment,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(comments_path(), "a") as f:
+        f.write(json.dumps(record) + "\n")
