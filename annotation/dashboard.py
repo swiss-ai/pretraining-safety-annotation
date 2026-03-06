@@ -8,13 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from nicegui import app, ui
 
-from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH, ITEMS_PER_SOURCE
-from annotation.sampling import (
-    draw_stratified_sample,
-    load_items_from_sources,
-    load_sample,
-    save_sample,
-)
+from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH
+from annotation.sampling import load_sample
 from annotation.storage import (
     load_annotator_ids,
     load_annotations_by_item,
@@ -32,19 +27,12 @@ def load_charter() -> str:
 
 
 def get_sample_items() -> list[dict]:
-    """Load or create the sample (50/50 ClimbMix + 4chan)."""
-    cached = load_sample()
-    if cached is not None:
-        return cached
-    all_items = load_items_from_sources()
-    climbmix_items = [i for i in all_items if i["subset"] == "climbmix"]
-    fourchan_items = [i for i in all_items if i["subset"].startswith("4chan/")]
-    climbmix_ids = [i["item_id"] for i in climbmix_items]
-    fourchan_ids = draw_stratified_sample(
-        fourchan_items, n=ITEMS_PER_SOURCE, min_per_stratum=1,
+    """Load the pre-generated sample from disk."""
+    sample = load_sample()
+    assert sample is not None, (
+        "sample.json not found. Run `uv run python -m annotation.generate_sample` first."
     )
-    save_sample(all_items, climbmix_ids + fourchan_ids)
-    return load_sample()
+    return sample
 
 
 CHARTER_TEXT = load_charter()
