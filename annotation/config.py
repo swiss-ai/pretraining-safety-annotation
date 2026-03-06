@@ -6,10 +6,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 CHARTER_PATH = PROJECT_ROOT / "safety" / "SwissAICharter.md"
 
-HF_DATASET = "locuslab/fineweb_annotated"
-SUBSETS = [f"score_{i}" for i in range(6)]
+CLIMBMIX_DATASET = "OptimalScale/ClimbMix"
+FOURCHAN_DATASET = "Fal7acy/4chan-archive"
 SAMPLE_SIZE = 200
-MIN_PER_STRATUM = 5
+ITEMS_PER_SOURCE = SAMPLE_SIZE // 2
 
 def load_charter_element_ids() -> list[str]:
     """Extract all [X.Y] element IDs from the charter, in order."""

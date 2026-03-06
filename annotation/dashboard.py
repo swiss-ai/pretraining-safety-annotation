@@ -8,10 +8,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from nicegui import app, ui
 
-from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH, MIN_PER_STRATUM, SAMPLE_SIZE
+from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH, ITEMS_PER_SOURCE
 from annotation.sampling import (
     draw_stratified_sample,
-    load_items_from_hf,
+    load_items_from_sources,
     load_sample,
     save_sample,
 )
@@ -24,7 +24,6 @@ from annotation.storage import (
     save_comment,
 )
 
-N_PER_SUBSET = 50
 REFLECTION_MARKER_ID = "reflection-marker"
 
 
@@ -33,17 +32,18 @@ def load_charter() -> str:
 
 
 def get_sample_items() -> list[dict]:
-    """Load or create the stratified sample."""
+    """Load or create the sample (50/50 ClimbMix + 4chan)."""
     cached = load_sample()
     if cached is not None:
         return cached
-    items = load_items_from_hf(N_PER_SUBSET)
-    sample_ids = draw_stratified_sample(
-        items,
-        n=min(SAMPLE_SIZE, len(items)),
-        min_per_stratum=MIN_PER_STRATUM,
+    all_items = load_items_from_sources()
+    climbmix_items = [i for i in all_items if i["subset"] == "climbmix"]
+    fourchan_items = [i for i in all_items if i["subset"].startswith("4chan/")]
+    climbmix_ids = [i["item_id"] for i in climbmix_items]
+    fourchan_ids = draw_stratified_sample(
+        fourchan_items, n=ITEMS_PER_SOURCE, min_per_stratum=1,
     )
-    save_sample(items, sample_ids)
+    save_sample(all_items, climbmix_ids + fourchan_ids)
     return load_sample()
 
 
@@ -417,15 +417,10 @@ def overview_page():
             label="Filter by annotator",
         ).classes("w-48")
 
-        subset_options = sorted({
-            items_by_id[iid]["subset"]
-            for iid in annotated_ids
-            if iid in items_by_id
-        })
-        subset_filter = ui.select(
-            options=["All"] + subset_options,
+        source_filter = ui.select(
+            options=["All", "climbmix", "4chan"],
             value="All",
-            label="Filter by subset",
+            label="Filter by source",
         ).classes("w-48")
 
     # Container for the annotation cards
@@ -436,14 +431,17 @@ def overview_page():
     def render_annotations():
         cards_container.clear()
         filt_annotator = annotator_filter.value
-        filt_subset = subset_filter.value
+        filt_source = source_filter.value
         comments_by_ann = load_comments_by_annotation()
 
         filtered_ids = annotated_ids
-        if filt_subset != "All":
+        if filt_source != "All":
             filtered_ids = [
                 iid for iid in filtered_ids
-                if iid in items_by_id and items_by_id[iid]["subset"] == filt_subset
+                if iid in items_by_id and (
+                    items_by_id[iid]["subset"] == filt_source
+                    or items_by_id[iid]["subset"].startswith(filt_source + "/")
+                )
             ]
         if filt_annotator != "All":
             filtered_ids = [
@@ -548,7 +546,7 @@ def overview_page():
                                         ).props("flat dense size=sm")
 
     annotator_filter.on("update:model-value", lambda _: render_annotations())
-    subset_filter.on("update:model-value", lambda _: render_annotations())
+    source_filter.on("update:model-value", lambda _: render_annotations())
     render_annotations()
 
 
