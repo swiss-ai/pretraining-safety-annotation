@@ -11,16 +11,6 @@ import os
 from nicegui import app, ui
 
 from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH
-
-PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
-
-
-def require_password():
-    """Redirect to password page if not yet authenticated. Returns True if authenticated."""
-    if PASSWORD and not app.storage.browser.get("authenticated"):
-        ui.navigate.to("/password")
-        return False
-    return True
 from annotation.sampling import load_sample
 from annotation.storage import (
     load_annotator_ids,
@@ -86,6 +76,18 @@ def render_source_text(text: str, reflection_point: int) -> str:
     return f"{esc_before}{marker}{esc_after}"
 
 
+PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+MAX_PASSWORD_ATTEMPTS = 10
+
+
+def require_password() -> bool:
+    """Redirect to password page if not yet authenticated."""
+    if PASSWORD and not app.storage.browser.get("authenticated"):
+        ui.navigate.to("/password")
+        return False
+    return True
+
+
 @ui.page("/password")
 def password_page():
     """Simple password gate, stored in browser storage (cookie-persisted)."""
@@ -93,17 +95,38 @@ def password_page():
         ui.navigate.to("/")
         return
 
+    attempts = app.storage.browser.get("password_attempts", 0)
+
     with ui.column().classes("absolute-center items-center gap-4"):
         ui.label("Model Raising Annotation Platform").classes("text-h4 text-weight-bold")
+
+        if attempts >= MAX_PASSWORD_ATTEMPTS:
+            ui.label("Too many failed attempts. Access locked.").classes(
+                "text-subtitle1 text-red"
+            )
+            return
+
         ui.label("Enter the password to continue.").classes("text-subtitle1 text-grey-7")
         pw_input = ui.input(label="Password", password=True, password_toggle_button=True).classes("w-64")
+        error_label = ui.label("").classes("text-red").set_visibility(False)
 
         def check_password():
+            current_attempts = app.storage.browser.get("password_attempts", 0)
+            if current_attempts >= MAX_PASSWORD_ATTEMPTS:
+                error_label.set_text("Too many failed attempts. Access locked.")
+                error_label.set_visibility(True)
+                return
             if pw_input.value == PASSWORD:
                 app.storage.browser["authenticated"] = True
+                app.storage.browser["password_attempts"] = 0
                 ui.navigate.to("/")
             else:
-                ui.notify("Wrong password", type="negative")
+                current_attempts += 1
+                app.storage.browser["password_attempts"] = current_attempts
+                remaining = MAX_PASSWORD_ATTEMPTS - current_attempts
+                error_label.set_text(f"Wrong password. {remaining} attempt(s) remaining.")
+                error_label.set_visibility(True)
+                pw_input.set_value("")
 
         pw_input.on("keydown.enter", lambda _: check_password())
         ui.button("Enter", on_click=check_password, color="primary").classes("w-64")
