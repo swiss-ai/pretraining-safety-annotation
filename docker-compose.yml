@@ -7,3 +7,4 @@ services:
       - .env
     volumes:
       - ./data/annotation:/app/data/annotation
+      - ./data/pipeline:/app/data/pipeline

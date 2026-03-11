@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from huggingface_hub import HfApi
-from huggingface_hub.utils import EntryNotFoundError
+from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
 
 from annotation.config import DATA_DIR
 
@@ -49,6 +49,15 @@ def _load_state() -> dict:
 def _save_state(state: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_STATE_PATH.write_text(json.dumps(state))
+
+
+def _ensure_repo(api: HfApi, repo: str) -> None:
+    """Create the HF dataset repo if it doesn't exist."""
+    try:
+        api.repo_info(repo_id=repo, repo_type="dataset")
+    except RepositoryNotFoundError:
+        api.create_repo(repo_id=repo, repo_type="dataset", private=True)
+        logger.info("Created HF dataset repo %s", repo)
 
 
 def _download(api: HfApi, repo: str) -> None:
@@ -141,6 +150,7 @@ def start_backup_loop() -> threading.Thread | None:
         logger.warning("HF token not found — backup disabled. Run `huggingface-cli login` to enable.")
         return None
 
+    _ensure_repo(api, repo)
     _download(api, repo)
 
     def _loop():

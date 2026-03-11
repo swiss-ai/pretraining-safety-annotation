@@ -1,5 +1,6 @@
 """Stage 1 annotation dashboard: humans write preflections and reflections on raw FineWeb text."""
 
+import json as _json
 import random as _random
 import re
 import sys
@@ -26,6 +27,24 @@ from annotation.storage import (
 )
 
 REFLECTION_MARKER_ID = "reflection-marker"
+
+
+_COPY_JS_TEMPLATE = """(e) => {{
+    var text = window.{var_name} || "";
+    if (navigator.clipboard && window.isSecureContext) {{
+        navigator.clipboard.writeText(text);
+    }} else {{
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+    }}
+    emit(e);
+}}"""
 
 N_PHASES = 3
 
@@ -292,11 +311,10 @@ def annotate_page():
                         ui.label("Constitution").classes("text-h6 text-weight-bold")
                         ui.button(
                             icon="content_copy",
-                            on_click=lambda: (
-                                ui.run_javascript(f'navigator.clipboard.writeText({repr(CHARTER_TEXT)})'),
-                                ui.notify("Charter copied!", type="info"),
-                            ),
-                        ).props("flat dense size=sm").tooltip("Copy charter to clipboard")
+                            on_click=lambda: ui.notify("Charter copied!", type="info"),
+                        ).props("flat dense size=sm").tooltip(
+                            "Copy charter to clipboard"
+                        ).on('click', js_handler=_COPY_JS_TEMPLATE.format(var_name='_charterText'))
 
                     def on_search_change(e):
                         query = e.value if e.value else ""
@@ -338,8 +356,10 @@ def annotate_page():
                         ).props("flat dense size=sm")
                         ui.button(
                             icon="content_copy",
-                            on_click=lambda: copy_source_text(),
-                        ).props("flat dense size=sm").tooltip("Copy source text to clipboard")
+                            on_click=lambda: ui.notify("Source text copied!", type="info"),
+                        ).props("flat dense size=sm").tooltip(
+                            "Copy source text to clipboard"
+                        ).on('click', js_handler=_COPY_JS_TEMPLATE.format(var_name='_sourceText'))
 
                     source_html = ui.html("").style(
                         "min-height: 200px; max-height: 600px; height: 400px; "
@@ -388,11 +408,6 @@ def annotate_page():
         def current_item() -> dict:
             return items_by_id[state["queue"][state["pos"]]]
 
-        def copy_source_text():
-            text = current_item()["text"]
-            ui.run_javascript(f'navigator.clipboard.writeText({repr(text)})')
-            ui.notify("Source text copied!", type="info")
-
         def update_display():
             item = current_item()
             item_id = item["item_id"]
@@ -404,6 +419,8 @@ def annotate_page():
             subset_badge.set_text(item["subset"])
             item_id_label.set_text(item_id[:16])
             source_html.set_content(render_source_text(item["text"], item["reflection_point"]))
+            copy_text = item["text"][:item["reflection_point"]] + "[REFLECTION POINT]" + item["text"][item["reflection_point"]:]
+            ui.run_javascript(f'window._sourceText = {_json.dumps(copy_text)}')
             prev_btn.set_enabled(state["pos"] > 0)
             next_btn.set_enabled(state["pos"] < len(state["queue"]) - 1)
 
@@ -459,6 +476,7 @@ def annotate_page():
                         return
             update_display()
 
+        ui.run_javascript(f'window._charterText = {_json.dumps(CHARTER_TEXT)}')
         update_display()
 
     # === Loading gate: show spinner while data loads, then build UI ===
@@ -684,6 +702,8 @@ def overview_page():
     source_filter.on("update:model-value", lambda _: render_annotations())
     render_annotations()
 
+
+import pipeline.dashboard  # noqa: F401 — registers /pipeline and /pipeline/review routes
 
 start_backup_loop()
 ui.run(title="Model Raising Annotation Platform", port=int(os.environ.get("DASHBOARD_PORT", 8600)), storage_secret="annotation-dashboard")

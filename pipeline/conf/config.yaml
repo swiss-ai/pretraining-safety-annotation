@@ -1,0 +1,22 @@
+model: jminder/data-annotator-glm45
+endpoint: https://api.swissai.cscs.ch/v1
+
+scoring:
+  scale_min: 1
+  scale_max: 5
+  accept_threshold: 4
+  dimensions:
+    - relevance
+    - depth
+    - charter_grounding
+    - clarity
+
+iteration:
+  n_items: 50
+  n_gold: 12
+  max_concurrent: 10
+
+prompts:
+  generator: generator_v1.md
+  judge: judge_v1.md
+  improver: improver.md
