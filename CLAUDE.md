@@ -40,6 +40,19 @@
     - `uv run script.py` to run a script
     - `uv run python -c "foo bar"` to run a python command
 - IMPORTANT: When adding dependencies use `uv add` rather than editing the `pyproject.toml` file.
+## Remote cluster access (Clariden/Bristen via FirecREST)
+Credentials in `.env` (`FIRECREST_CONSUMER`, `FIRECREST_SECRET`). Never read or log them.
+```bash
+uv run python -m slurm.cli submit --script slurm/jobs/glm45_air.sh --working-dir /users/jminder/repositories/model-launch --account a141
+uv run python -m slurm.cli status [--jobid JOBID]
+uv run python -m slurm.cli logs --path /users/jminder/repositories/model-launch/logs/JOBID --read
+uv run python -m slurm.cli cancel --jobid JOBID
+```
+- Job logs live at `{working_dir}/logs/{jobid}/` on the cluster
+- For quick Python debugging, use `FirecrestClient().head('clariden', path, num_lines=500)`
+- Known issue: `sglang.toml` has CUDA 12 NCCL plugin but containers run CUDA 13 — override with `NCCL_NET=Socket` and `NCCL_NET_PLUGIN=ofi` in job scripts
+
+## Local slurm (lrun/crun)
 For slurm commands, use `source ~/.slurm_aliases`. Then:
 - `crun yourcommand` to run a command on a cpu node.
 - `lrun yourcommand` to run a command on a gpu node.
