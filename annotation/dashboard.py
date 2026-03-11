@@ -5,7 +5,8 @@ import re
 import sys
 import threading
 from pathlib import Path
-
+import dotenv
+dotenv.load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
@@ -14,6 +15,7 @@ from nicegui import app, ui
 
 from annotation.config import CHARTER_ELEMENT_IDS, CHARTER_PATH, FINEWEB_SUBSETS, ITEMS_PER_SUBSET
 from annotation.sampling import sample_items
+from annotation.backup import start_backup_loop
 from annotation.storage import (
     load_annotator_ids,
     load_annotations_by_item,
@@ -683,4 +685,5 @@ def overview_page():
     render_annotations()
 
 
+start_backup_loop()
 ui.run(title="Model Raising Annotation Platform", port=int(os.environ.get("DASHBOARD_PORT", 8600)), storage_secret="annotation-dashboard")
