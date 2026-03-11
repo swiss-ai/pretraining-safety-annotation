@@ -15,6 +15,8 @@ import random
 import sys
 import time
 from pathlib import Path
+import dotenv
+dotenv.load_dotenv()
 
 import openai
 from dotenv import load_dotenv
@@ -46,8 +48,12 @@ async def _api_call(
     model: str,
     messages: list[dict[str, str]],
     semaphore: asyncio.Semaphore,
-) -> str:
-    """Make a single API call with network-error retry. Returns response text."""
+) -> tuple[str, str | None]:
+    """Make a single API call with network-error retry.
+
+    Returns (content, reasoning_content). reasoning_content is None if the
+    model does not produce reasoning output.
+    """
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -55,9 +61,11 @@ async def _api_call(
                 response = await client.chat.completions.create(
                     model=model, messages=messages,
                 )
-            content = response.choices[0].message.content
+            msg = response.choices[0].message
+            content = msg.content
             assert content is not None, "API returned None content"
-            return content.strip()
+            reasoning = getattr(msg, "reasoning_content", None)
+            return content.strip(), reasoning
         except (
             openai.APITimeoutError,
             openai.APIConnectionError,
@@ -235,12 +243,22 @@ async def generate_batch(
     prompt_filename = prompt_path.name
 
     async def process_one(item: dict) -> dict:
+        rp = item["reflection_point"]
+        context_before = item["text"][:rp]
+        context_after = item["text"][rp:]
+        user_content = (
+            f"## Full Text\n\n{item['text']}\n\n"
+            f"## Reflection Point\n\n"
+            f"The reflection point is at character {rp}. "
+            f"Text before the reflection point:\n\n{context_before}\n\n"
+            f"Text after the reflection point (the reflection must NOT use this):\n\n{context_after}"
+        )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": item["text"]},
+            {"role": "user", "content": user_content},
         ]
         t0 = time.monotonic()
-        raw = await _api_call(client, model, messages, semaphore)
+        raw, reasoning = await _api_call(client, model, messages, semaphore)
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         parsed = _parse_generation(raw)
@@ -258,6 +276,7 @@ async def generate_batch(
             "reflection": parsed["reflection"],
             "charter_elements": parsed["charter_elements"],
             "raw_response": raw,
+            "reasoning": reasoning,
             "latency_ms": latency_ms,
             "timestamp": __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
@@ -272,6 +291,50 @@ async def generate_batch(
     return list(results)
 
 
+async def _judge_one_part(
+    item: dict,
+    part_type: str,
+    prompt_template: str,
+    accept_threshold: float,
+    model: str,
+    client: openai.AsyncOpenAI,
+    semaphore: asyncio.Semaphore,
+) -> tuple[dict, str, str | None]:
+    """Judge a single part (preflection or reflection) of a generated item.
+
+    For preflection: uses full text as context.
+    For reflection: uses only text up to the reflection point.
+
+    Returns (parsed_judgment, raw_response, reasoning_content).
+    """
+    system_prompt = (
+        prompt_template
+        .replace("{part_type}", part_type)
+        .replace("{accept_threshold}", str(accept_threshold))
+    )
+
+    if part_type == "preflection":
+        source_text = item["text"]
+    else:
+        source_text = item["text"][:item["reflection_point"]]
+
+    content = item[part_type]
+    charter_elements = ", ".join(item["charter_elements"])
+
+    user_content = (
+        f"## Source Text\n\n{source_text}\n\n"
+        f"## {part_type.title()} to Judge\n\n{content}\n\n"
+        f"## Charter Elements Cited\n\n{charter_elements}"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    raw, reasoning = await _api_call(client, model, messages, semaphore)
+    parsed = _parse_judgment(raw)
+    return parsed, raw, reasoning
+
+
 async def judge_batch(
     items: list[dict],
     prompt_path: Path,
@@ -281,37 +344,47 @@ async def judge_batch(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
 ) -> list[dict]:
-    """Judge generated reflections. Updates items with judgment and saves.
+    """Judge generated reflections. Judges preflection and reflection separately.
+
+    Preflection is judged against the full text.
+    Reflection is judged against only the context up to the reflection point.
 
     Returns the list of judged item records.
     """
     prompt_template = prompt_path.read_text(encoding="utf-8")
-    system_prompt = prompt_template.replace("{accept_threshold}", str(accept_threshold))
     prompt_filename = prompt_path.name
 
     async def judge_one(item: dict) -> dict:
-        user_content = (
-            f"## Original Text\n\n{item['text']}\n\n"
-            f"## Generated Reflection\n\n"
-            f"**Analysis:** {item['analysis']}\n\n"
-            f"**Preflection:** {item['preflection']}\n\n"
-            f"**Reflection:** {item['reflection']}\n\n"
-            f"**Charter Elements:** {', '.join(item['charter_elements'])}"
+        pre_parsed, pre_raw, pre_reasoning = await _judge_one_part(
+            item, "preflection", prompt_template, accept_threshold,
+            model, client, semaphore,
         )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
-        raw = await _api_call(client, model, messages, semaphore)
-        parsed = _parse_judgment(raw)
+        ref_parsed, ref_raw, ref_reasoning = await _judge_one_part(
+            item, "reflection", prompt_template, accept_threshold,
+            model, client, semaphore,
+        )
+
+        all_scores = list(pre_parsed["scores"].values()) + list(ref_parsed["scores"].values())
+        aggregate = sum(all_scores) / len(all_scores)
+        decision = "accept" if aggregate >= accept_threshold else "reject"
 
         judgment = {
-            "scores": parsed["scores"],
-            "aggregate": parsed["aggregate"],
-            "decision": parsed["decision"],
-            "reasoning": parsed["reasoning"],
+            "preflection": {
+                "scores": pre_parsed["scores"],
+                "aggregate": pre_parsed["aggregate"],
+                "reasoning": pre_parsed["reasoning"],
+                "model_reasoning": pre_reasoning,
+            },
+            "reflection": {
+                "scores": ref_parsed["scores"],
+                "aggregate": ref_parsed["aggregate"],
+                "reasoning": ref_parsed["reasoning"],
+                "model_reasoning": ref_reasoning,
+            },
+            "aggregate": aggregate,
+            "decision": decision,
             "judge_prompt": prompt_filename,
-            "raw_response": raw,
+            "raw_responses": {"preflection": pre_raw, "reflection": ref_raw},
             "timestamp": __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
             ).isoformat(),
@@ -325,10 +398,11 @@ async def judge_batch(
     return list(results)
 
 
-async def run_iteration(cfg: PipelineConfig) -> dict:
+async def run_iteration(cfg: PipelineConfig, phase_callback=None) -> dict:
     """Run a single generate→judge iteration. Returns the run summary.
 
     Orchestrates: select items → generate → judge → save run record.
+    phase_callback: optional callable(str) for granular progress reporting.
     """
     load_dotenv()
     api_key = os.environ.get("SWISS_AI_API_KEY")
@@ -353,14 +427,18 @@ async def run_iteration(cfg: PipelineConfig) -> dict:
     print("Selecting items...")
     items = select_items(cfg.iteration.n_items, cfg.iteration.n_gold, seed)
 
-    gen_prompt = resolve_prompt_path(cfg.prompts.generator)
-    judge_prompt = resolve_prompt_path(cfg.prompts.judge)
+    gen_prompt = resolve_prompt_path(cfg.prompts.generator, model=cfg.model)
+    judge_prompt = resolve_prompt_path(cfg.prompts.judge, model=cfg.model)
 
+    if phase_callback:
+        phase_callback("generating")
     print(f"Generating with {gen_prompt.name}...")
     generated = await generate_batch(
         items, gen_prompt, charter_text, cfg.model, iteration, client, semaphore,
     )
 
+    if phase_callback:
+        phase_callback("judging")
     print(f"Judging with {judge_prompt.name}...")
     judged = await judge_batch(
         generated, judge_prompt, cfg.model, iteration,
@@ -372,9 +450,21 @@ async def run_iteration(cfg: PipelineConfig) -> dict:
     scores = [item["judgment"]["aggregate"] for item in judged]
     mean_score = sum(scores) / len(scores) if scores else 0.0
 
+    # Check reasoning availability
+    gen_has_reasoning = any(item.get("reasoning") is not None for item in judged)
+    judge_has_reasoning = any(
+        item["judgment"]["preflection"].get("model_reasoning") is not None
+        or item["judgment"]["reflection"].get("model_reasoning") is not None
+        for item in judged
+    )
+    reasoning_note = (
+        f"Generator reasoning: {'available' if gen_has_reasoning else 'NOT available (not a reasoning model)'}. "
+        f"Judge reasoning: {'available' if judge_has_reasoning else 'NOT available (not a reasoning model)'}."
+    )
+
     summary = (
         f"Iteration {iteration}: {n_accepted} accepted, {n_rejected} rejected, "
-        f"mean score {mean_score:.2f}"
+        f"mean score {mean_score:.2f}. {reasoning_note}"
     )
     print(f"\n{summary}")
 

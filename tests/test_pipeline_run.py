@@ -96,7 +96,7 @@ class TestIntegration:
             "charter_elements": ["1.1"],
         })
         judge_response = json.dumps({
-            "scores": {"relevance": 4, "depth": 3, "charter_grounding": 4, "clarity": 4},
+            "scores": {"relevance": 4, "specificity": 3, "charter_grounding": 4, "voice_tone": 4},
             "aggregate": 3.75,
             "decision": "reject",
             "reasoning": "slightly below threshold",
@@ -115,11 +115,13 @@ class TestIntegration:
             call_count["n"] += 1
             resp = MagicMock()
             resp.choices = [MagicMock()]
-            # First 3 calls are generation, next 3 are judging
+            msg = resp.choices[0].message
+            msg.reasoning_content = None  # simulate non-reasoning model
+            # First 3 calls are generation, next 6 are judging (2 per item: preflection + reflection)
             if call_count["n"] <= 3:
-                resp.choices[0].message.content = gen_response
+                msg.content = gen_response
             else:
-                resp.choices[0].message.content = judge_response
+                msg.content = judge_response
             return resp
 
         mock_client.chat.completions.create = mock_create
@@ -136,7 +138,7 @@ class TestIntegration:
         gen_prompt = prompt_dir / "gen_v1.md"
         gen_prompt.write_text("Generate. Charter: {charter}")
         judge_prompt = prompt_dir / "judge_v1.md"
-        judge_prompt.write_text("Judge. Threshold: {accept_threshold}")
+        judge_prompt.write_text("Judge {part_type}. Threshold: {accept_threshold}")
 
         semaphore = asyncio.Semaphore(10)
 
@@ -156,7 +158,14 @@ class TestIntegration:
                 client=mock_client, semaphore=semaphore,
             )
             assert len(judged) == 3
+            # aggregate=3.75 < threshold=4.0 → reject
             assert all(j["judgment"]["decision"] == "reject" for j in judged)
+            # Verify separate preflection/reflection judgments
+            for j in judged:
+                assert "preflection" in j["judgment"]
+                assert "reflection" in j["judgment"]
+                assert "scores" in j["judgment"]["preflection"]
+                assert "scores" in j["judgment"]["reflection"]
 
             # Verify JSONL was written (3 gen + 3 judged = 6 records)
             items_file = self.data_dir / "items.jsonl"

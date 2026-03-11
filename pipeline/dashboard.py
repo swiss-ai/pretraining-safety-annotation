@@ -42,11 +42,15 @@ def _compute_calibration(reviews: list[dict], items_by_key: dict) -> dict:
             continue
         judgment = item["judgment"]
 
-        for dim, human_score in review["scores"].items():
-            if dim in judgment["scores"]:
-                paired_scores.setdefault(dim, []).append(
-                    (judgment["scores"][dim], human_score)
-                )
+        # Collect per-dimension pairs from both preflection and reflection sub-judgments
+        for part in ("preflection", "reflection"):
+            part_j = judgment.get(part, {})
+            part_scores = part_j.get("scores", {})
+            for dim, human_score in review["scores"].items():
+                if dim in part_scores:
+                    paired_scores.setdefault(f"{part}_{dim}", []).append(
+                        (part_scores[dim], human_score)
+                    )
 
         aggregate_pairs.append((judgment["aggregate"], review["aggregate"]))
         decision_pairs.append((judgment["decision"], review["decision"]))
@@ -169,16 +173,96 @@ def pipeline_monitoring_page():
                 with ui.expansion(f"Iteration {run['iteration']} Analysis").classes("w-full"):
                     ui.markdown(run.get("analysis", "No analysis recorded.")).classes("text-body2")
 
-    # --- New Iteration Form ---
+    # --- Autonomous Loop ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Run New Iteration").classes("text-h6 text-weight-bold")
+        ui.label("Autonomous Loop").classes("text-h6 text-weight-bold")
+        ui.label(
+            "Runs generate→judge→improve cycles. A Claude subprocess improves prompts between iterations."
+        ).classes("text-caption text-grey-7")
+
+        loop_progress = ui.linear_progress(value=0, show_value=False).classes("w-full q-mt-sm")
+        loop_phase_label = ui.label("").classes("text-caption text-grey-6")
+        loop_error_label = ui.label("").classes("text-caption text-red")
+
+        loop_results_container = ui.column().classes("w-full gap-1 q-mt-sm")
+
+        def _poll_loop_status():
+            from pipeline.loop import read_status
+            st = read_status()
+            if st is None:
+                return
+            total = st.get("total_iterations", 1) or 1
+            current = st.get("loop_iteration", 0)
+            loop_progress.set_value(current / total)
+            phase = st.get("phase", "")
+            loop_phase_label.set_text(
+                f"Iteration {current}/{total} — {phase}"
+                if st.get("running") else f"Loop {phase}"
+            )
+            if st.get("error"):
+                loop_error_label.set_text(f"Error: {st['error']}")
+            else:
+                loop_error_label.set_text("")
+
+            results = st.get("results", [])
+            loop_results_container.clear()
+            if results:
+                with loop_results_container:
+                    cols = [
+                        {"name": "iter", "label": "#", "field": "loop_iteration"},
+                        {"name": "accepted", "label": "Accepted", "field": "n_accepted"},
+                        {"name": "rejected", "label": "Rejected", "field": "n_rejected"},
+                        {"name": "score", "label": "Mean Score", "field": "mean_score"},
+                    ]
+                    ui.table(columns=cols, rows=results, row_key="loop_iteration").classes("w-full")
+
+            if not st.get("running"):
+                loop_timer.active = False
+                loop_btn.enable()
+                single_btn.enable()
+
+        loop_timer = ui.timer(3.0, _poll_loop_status, active=False)
+
+        def start_loop():
+            loop_btn.disable()
+            single_btn.disable()
+            loop_error_label.set_text("")
+            loop_phase_label.set_text("Starting loop...")
+            loop_timer.active = True
+
+            def _thread():
+                import asyncio as _asyncio
+                from pipeline.loop import run_loop
+                cfg = load_config()
+                _asyncio.run(run_loop(n_iterations=cfg.loop.n_iterations, cfg=cfg))
+
+            threading.Thread(target=_thread, daemon=True).start()
+
+        cfg_for_label = load_config()
+        loop_btn = ui.button(
+            f"Start Loop ({cfg_for_label.loop.n_iterations} iterations)",
+            on_click=start_loop,
+            color="primary",
+        )
+
+        # Check if a loop is already running
+        from pipeline.loop import read_status as _read_initial
+        _initial = _read_initial()
+        if _initial and _initial.get("running"):
+            loop_btn.disable()
+            loop_timer.active = True
+            loop_phase_label.set_text("Loop in progress...")
+
+    # --- Single Iteration ---
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        ui.label("Run Single Iteration").classes("text-h6 text-weight-bold")
         ui.label("Runs a single generate→judge iteration with current config.").classes(
             "text-caption text-grey-7"
         )
 
         def start_iteration():
-            run_btn.disable()
-            status.set_text("Running iteration...")
+            single_btn.disable()
+            single_status.set_text("Running iteration...")
 
             def _run():
                 import asyncio as _asyncio
@@ -189,8 +273,8 @@ def pipeline_monitoring_page():
                 return result
 
             def _done():
-                run_btn.enable()
-                status.set_text("Done! Refresh page to see results.")
+                single_btn.enable()
+                single_status.set_text("Done! Refresh page to see results.")
                 ui.notify("Iteration complete", type="positive")
 
             def _thread():
@@ -198,13 +282,13 @@ def pipeline_monitoring_page():
                     _run()
                     _done()
                 except Exception as e:
-                    status.set_text(f"Error: {e}")
-                    run_btn.enable()
+                    single_status.set_text(f"Error: {e}")
+                    single_btn.enable()
 
             threading.Thread(target=_thread, daemon=True).start()
 
-        run_btn = ui.button("Start Iteration", on_click=start_iteration, color="primary")
-        status = ui.label("").classes("text-caption text-grey-6")
+        single_btn = ui.button("Start Iteration", on_click=start_iteration, color="secondary")
+        single_status = ui.label("").classes("text-caption text-grey-6")
 
 
 @ui.page("/pipeline/review")
@@ -370,16 +454,26 @@ def pipeline_review_page():
             if judgment:
                 ui.label("Judge Scores").classes("text-subtitle2 text-weight-bold")
                 with ui.row().classes("gap-4"):
-                    for dim, score in judgment.get("scores", {}).items():
-                        color = "green" if score >= 4 else ("orange" if score >= 3 else "red")
-                        ui.badge(f"{dim}: {score}", color=color)
                     ui.badge(
                         f"Aggregate: {judgment['aggregate']:.1f}",
                         color="green" if judgment["decision"] == "accept" else "red",
                     )
                     ui.badge(judgment["decision"].upper(), color="green" if judgment["decision"] == "accept" else "red")
-                ui.label("Reasoning").classes("text-overline text-grey-7")
-                ui.label(judgment.get("reasoning", "")).classes("text-body2").style("white-space: pre-wrap;")
+
+                for part in ("preflection", "reflection"):
+                    part_j = judgment.get(part, {})
+                    if not part_j:
+                        continue
+                    ui.label(f"{part.title()} ({part_j.get('aggregate', 0):.1f})").classes(
+                        "text-overline text-grey-7 q-mt-sm"
+                    )
+                    with ui.row().classes("gap-2"):
+                        for dim, score in part_j.get("scores", {}).items():
+                            color = "green" if score >= 4 else ("orange" if score >= 3 else "red")
+                            ui.badge(f"{dim}: {score}", color=color)
+                    ui.label(part_j.get("reasoning", "")).classes("text-body2").style(
+                        "white-space: pre-wrap; font-size: 0.9em;"
+                    )
 
         gold_section.clear()
         with gold_section:

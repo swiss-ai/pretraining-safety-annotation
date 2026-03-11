@@ -48,7 +48,11 @@ def test_save_and_load_item():
     assert items[0]["item_id"] == "abc123"
 
     # Dedup: update with judgment
-    updated = {**record, "judgment": {"scores": {"relevance": 4}, "aggregate": 4.0, "decision": "accept", "reasoning": "good"}}
+    updated = {**record, "judgment": {
+        "preflection": {"scores": {"relevance": 4}, "aggregate": 4.0, "reasoning": "good pre"},
+        "reflection": {"scores": {"relevance": 4}, "aggregate": 4.0, "reasoning": "good ref"},
+        "aggregate": 4.0, "decision": "accept",
+    }}
     save_item(updated)
     latest = load_latest_items()
     assert len(latest) == 1
@@ -100,7 +104,7 @@ def test_save_and_load_review():
 
     save_review(
         item_id="abc123", iteration=1, reviewer_id="alice",
-        scores={"relevance": 4, "depth": 3, "charter_grounding": 5, "clarity": 4},
+        scores={"relevance": 4, "specificity": 3, "charter_grounding": 5, "voice_tone": 4},
         aggregate=4.0, decision="accept", notes="good",
     )
     reviews = load_reviews()
@@ -110,7 +114,7 @@ def test_save_and_load_review():
     # Dedup by (item_id, iteration, reviewer_id)
     save_review(
         item_id="abc123", iteration=1, reviewer_id="alice",
-        scores={"relevance": 5, "depth": 4, "charter_grounding": 5, "clarity": 5},
+        scores={"relevance": 5, "specificity": 4, "charter_grounding": 5, "voice_tone": 5},
         aggregate=4.75, decision="accept", notes="updated",
     )
     latest = load_latest_reviews()

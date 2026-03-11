@@ -62,8 +62,11 @@ def extract_charter_elements(text: str) -> list[str]:
     return result
 
 
+PHASE_ROUTES = {1: "/annotate", 2: "/pipeline", 3: "/pipeline/review"}
+
+
 def render_phase_bar(active_phase: int = 1, right_slot=None):
-    """Render a stepper-style phase bar with optional right-aligned slot.
+    """Render a stepper-style phase bar with clickable phase links.
 
     Args:
         active_phase: Currently active phase number (1-indexed).
@@ -96,8 +99,12 @@ def render_phase_bar(active_phase: int = 1, right_slot=None):
     for n in range(1, N_PHASES + 1):
         if n > 1:
             parts.append(connector(n - 1))
-        parts.append(_circle(n))
-        parts.append(_label(n))
+        route = PHASE_ROUTES.get(n, "#")
+        parts.append(
+            f'<a href="{route}" style="text-decoration:none;display:flex;align-items:center;">'
+            + _circle(n) + _label(n)
+            + '</a>'
+        )
 
     stepper_html = (
         '<div style="display:flex;align-items:center;padding:6px 0;">'

@@ -7,9 +7,9 @@ scoring:
   accept_threshold: 4
   dimensions:
     - relevance
-    - depth
+    - specificity
     - charter_grounding
-    - clarity
+    - voice_tone
 
 iteration:
   n_items: 50
@@ -20,3 +20,7 @@ prompts:
   generator: generator_v1.md
   judge: judge_v1.md
   improver: improver.md
+
+loop:
+  n_iterations: 5
+  improver_timeout_s: 600
