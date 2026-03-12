@@ -9,6 +9,7 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools scores <iteration>
     python -m pipeline.improver_tools gold [--limit N]
     python -m pipeline.improver_tools compare <item_id> <iteration>
+    python -m pipeline.improver_tools reviews [<iteration>] [--limit N]
     python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2,...] [--n N] [--phase A|B]
     python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--phase A|B]
     python -m pipeline.improver_tools run_batch [--phase A|B]
@@ -226,6 +227,72 @@ def cmd_compare(item_id: str, iteration: int) -> None:
         print(item.get("charter_elements", []))
         print("\n--- GOLD CHARTER ---")
         print(gold.get("charter_elements", []))
+        print()
+
+
+def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
+    """Print human reviews, optionally filtered by iteration.
+
+    Shows reviewer scores, decision, and notes alongside the judge's scores
+    for calibration comparison.
+    """
+    from pipeline.phase2.storage import load_latest_reviews
+
+    reviews = load_latest_reviews()
+    if not reviews:
+        print("No human reviews yet.")
+        return
+
+    # Filter by iteration if specified
+    filtered = list(reviews.values())
+    if iteration is not None:
+        filtered = [r for r in filtered if r["iteration"] == iteration]
+        items = load_items_for_iteration(iteration)
+    else:
+        items = []
+        # Load items for all reviewed iterations
+        seen_iters: set[int] = set()
+        for r in filtered:
+            if r["iteration"] not in seen_iters:
+                seen_iters.add(r["iteration"])
+                items.extend(load_items_for_iteration(r["iteration"]))
+
+    items_by_key = {(i["item_id"], i["iteration"]): i for i in items}
+
+    print(f"Human reviews ({len(filtered)} total, showing {min(limit, len(filtered))}):\n")
+    for r in filtered[:limit]:
+        item = items_by_key.get((r["item_id"], r["iteration"]))
+        judge_agg = ""
+        judge_decision = ""
+        if item and item.get("judgment"):
+            j = item["judgment"]
+            judge_agg = f"{j['aggregate']:.2f}"
+            judge_decision = j["decision"]
+
+        print(f"--- {r['item_id'][:16]} iter={r['iteration']} reviewer={r['reviewer_id']} ---")
+        print(f"  Human:  decision={r['decision']}  aggregate={r['aggregate']:.2f}")
+        if judge_agg:
+            print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
+
+        scores = r["scores"]
+        is_per_part = scores and isinstance(next(iter(scores.values())), dict)
+        if is_per_part:
+            for part in ("preflection", "reflection"):
+                human_s = scores.get(part, {})
+                judge_s = {}
+                if item and item.get("judgment"):
+                    judge_s = item["judgment"].get(part, {}).get("scores", {})
+                dims = sorted(set(human_s) | set(judge_s))
+                pairs = " ".join(
+                    f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}"
+                    for d in dims
+                )
+                print(f"  {part}: {pairs}  (human/judge)")
+        else:
+            print(f"  Scores: {scores}")
+
+        if r.get("notes"):
+            print(f"  Notes: {r['notes']}")
         print()
 
 
@@ -477,6 +544,9 @@ def main():
         cmd_gold(limit=_get_flag_int("--limit", 5))
     elif cmd == "compare":
         cmd_compare(args[1], int(args[2]))
+    elif cmd == "reviews":
+        iteration = int(args[1]) if len(args) > 1 and not args[1].startswith("-") else None
+        cmd_reviews(iteration=iteration, limit=_get_flag_int("--limit", 20))
     elif cmd == "test_generate":
         item_ids_str = _get_flag("--items")
         item_ids = item_ids_str.split(",") if item_ids_str else None

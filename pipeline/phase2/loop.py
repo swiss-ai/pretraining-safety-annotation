@@ -159,6 +159,8 @@ Run these via Bash (prefix with `uv run`):
   uv run python -m pipeline.improver_tools item <id> {latest_iter}   — full details as JSON
   uv run python -m pipeline.improver_tools gold                      — gold (human) annotations
   uv run python -m pipeline.improver_tools compare <id> {latest_iter} — generated vs gold
+  uv run python -m pipeline.improver_tools reviews {latest_iter}     — human reviews with judge comparison
+  uv run python -m pipeline.improver_tools reviews                   — all human reviews
 
 ## Test tools (run experiments WITHOUT modifying main data)
   uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--phase A]
@@ -242,6 +244,8 @@ Run these via Bash (prefix with `uv run`):
   uv run python -m pipeline.improver_tools item <id> {latest_iter}   — full details as JSON
   uv run python -m pipeline.improver_tools gold                      — gold (human) annotations
   uv run python -m pipeline.improver_tools compare <id> {latest_iter} — generated vs gold
+  uv run python -m pipeline.improver_tools reviews {latest_iter}     — human reviews with judge comparison
+  uv run python -m pipeline.improver_tools reviews                   — all human reviews
 
 ## Test tools (run experiments WITHOUT modifying main data)
   uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--phase B]
