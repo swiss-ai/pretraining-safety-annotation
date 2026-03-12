@@ -7,7 +7,7 @@ dotenv.load_dotenv()
 
 from nicegui import ui
 
-from pipeline.phase1.backup import start_backup_loop
+from pipeline.backup import start_backup_loop
 
 import pipeline.dashboard  # noqa: F401 — registers all routes
 

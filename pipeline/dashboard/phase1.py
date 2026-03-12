@@ -18,7 +18,7 @@ from pipeline.dashboard.shared import (
     highlight_charter_md,
     render_source_text,
 )
-from pipeline.phase1.backup import force_upload
+from pipeline.backup import force_upload
 from pipeline.phase1.storage import (
     load_annotator_ids,
     load_annotations_by_item,
