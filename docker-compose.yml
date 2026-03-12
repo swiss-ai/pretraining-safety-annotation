@@ -1,10 +1,13 @@
 services:
-  annotation:
+  dashboard:
     build: .
     ports:
       - "8600:8600"
     env_file:
       - .env
     volumes:
-      - ./data/annotation:/app/data/annotation
-      - ./data/pipeline:/app/data/pipeline
+      - ./data:/app/data
+      - claude-auth:/root/.claude
+
+volumes:
+  claude-auth:
