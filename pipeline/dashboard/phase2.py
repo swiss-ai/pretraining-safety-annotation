@@ -9,9 +9,9 @@ from pathlib import Path
 
 from nicegui import app, ui
 
-from pipeline.config import CHARTER_PATH, AppConfig, load_config, resolve_prompt_path
+from pipeline.config import AppConfig, load_config, resolve_prompt_path
 from pipeline.dashboard import render_header
-from pipeline.dashboard.shared import render_source_text
+from pipeline.dashboard.shared import CHARTER_TEXT, render_source_text
 from pipeline.phase2.storage import (
     load_items_for_iteration,
     load_latest_reviews,
@@ -21,10 +21,6 @@ from pipeline.phase2.storage import (
     load_test_results,
     save_review,
 )
-
-
-def _load_charter() -> str:
-    return CHARTER_PATH.read_text(encoding="utf-8")
 
 
 def _compute_calibration(reviews: list[dict], items_by_key: dict) -> dict:
@@ -757,7 +753,7 @@ def pipeline_review_page():
             ui.label("No iterations to review yet.").classes("text-h6 text-grey-6")
         return
 
-    charter_text = _load_charter()
+    charter_text = CHARTER_TEXT
     cfg = load_config()
     dimensions = cfg.phase2.scoring.dimensions
 

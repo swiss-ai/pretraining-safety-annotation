@@ -3,7 +3,7 @@
 import re
 import threading
 
-from pipeline.config import CHARTER_ELEMENT_IDS, CHARTER_PATH
+from pipeline.config import CHARTER_PATH, extract_charter_elements
 
 REFLECTION_MARKER_ID = "reflection-marker"
 N_PHASES = 3
@@ -25,20 +25,6 @@ _COPY_JS_TEMPLATE = """(e) => {{
     }}
     emit(e);
 }}"""
-
-_CHARTER_ID_SET = set(CHARTER_ELEMENT_IDS)
-
-
-def extract_charter_elements(text: str) -> list[str]:
-    """Extract charter element IDs ([X.Y] patterns) from text, preserving order."""
-    matches = re.findall(r"\[(\d+\.\d+)\]", text)
-    seen = set()
-    result = []
-    for m in matches:
-        if m in _CHARTER_ID_SET and m not in seen:
-            seen.add(m)
-            result.append(m)
-    return result
 
 
 def load_charter() -> str:

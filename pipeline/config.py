@@ -25,6 +25,22 @@ def load_charter_element_ids() -> list[str]:
 
 
 CHARTER_ELEMENT_IDS: list[str] = load_charter_element_ids()
+_CHARTER_ID_SET = set(CHARTER_ELEMENT_IDS)
+
+
+def extract_charter_elements(text: str) -> list[str]:
+    """Extract charter element IDs ([X.Y] patterns) from text, preserving order.
+
+    Only returns IDs that exist in the charter.
+    """
+    matches = re.findall(r"\[(\d+\.\d+)\]", text)
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in matches:
+        if m in _CHARTER_ID_SET and m not in seen:
+            seen.add(m)
+            result.append(m)
+    return result
 
 
 # --- Dataclasses ---

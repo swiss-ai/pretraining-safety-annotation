@@ -19,13 +19,13 @@ import dotenv
 dotenv.load_dotenv()
 
 import openai
-from dotenv import load_dotenv
 from tqdm.asyncio import tqdm_asyncio
 
 from pipeline.config import (
     CHARTER_PATH,
     PIPELINE_DATA_DIR,
     AppConfig,
+    extract_charter_elements,
     generator_api_name,
     judge_api_name,
     load_config,
@@ -128,18 +128,6 @@ def health_check(client: openai.AsyncOpenAI, model: str) -> None:
         raise RuntimeError(f"Health check failed for model={model}: {e}") from e
     finally:
         loop.close()
-
-
-def _extract_charter_refs(text: str) -> list[str]:
-    """Extract unique [X.Y] charter references from text, preserving order."""
-    import re
-    seen: set[str] = set()
-    result: list[str] = []
-    for m in re.findall(r"\[(\d+\.\d+)\]", text):
-        if m not in seen:
-            seen.add(m)
-            result.append(m)
-    return result
 
 
 def _parse_generation(raw: str) -> dict:
@@ -364,7 +352,7 @@ def generate_batch(
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         parsed = _parse_generation(raw)
-        charter_elements = _extract_charter_refs(parsed["reflection"])
+        charter_elements = extract_charter_elements(parsed["reflection"])
         record = {
             "item_id": item["item_id"],
             "iteration": iteration,
