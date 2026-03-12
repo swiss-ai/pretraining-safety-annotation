@@ -171,16 +171,18 @@ Run these via Bash (prefix with `uv run`):
 ## State
 Read your state file at {state_path} FIRST. It contains notes from previous iterations.
 
-## Strategy: use subagents for parallel exploration
-You have access to the Agent tool. Use it to parallelize your analysis:
+## Strategy: use Opus subagents for parallel exploration (IMPORTANT)
+You have access to the Agent tool. **Always use model="opus" for subagents** — they need
+strong reasoning. Parallelize aggressively; the bottleneck is wall-clock time, not tokens:
 - Spawn one subagent to analyze failures and low-scoring items in detail
 - Spawn another to compare generated outputs with gold annotations
+- Spawn another to review human reviews (the `reviews` command) and check judge calibration
 - Spawn another to check diversity patterns
 Then synthesize their findings to write improved prompts.
 
 ## Your task
 1. Read your state file: {state_path}
-2. Run query tools to gather data (use subagents to parallelize)
+2. Run query tools to gather data (**use Opus subagents to parallelize** — do NOT run queries sequentially)
 3. Read the improver instructions: {improver_path}
 4. Read the current judge prompt: {judge_path}
 5. Also read the generator prompt for context: {gen_path}
@@ -256,12 +258,18 @@ Run these via Bash (prefix with `uv run`):
 ## State
 Read your state file at {state_path} FIRST. It contains notes from previous iterations.
 
-## Strategy: use subagents for parallel exploration
-You have access to the Agent tool. Use it to parallelize your analysis.
+## Strategy: use Opus subagents for parallel exploration (IMPORTANT)
+You have access to the Agent tool. **Always use model="opus" for subagents** — they need
+strong reasoning. Parallelize aggressively; the bottleneck is wall-clock time, not tokens:
+- Spawn one subagent to analyze failures and low-scoring items in detail
+- Spawn another to compare generated outputs with gold annotations
+- Spawn another to review human reviews (the `reviews` command) and check judge calibration
+- Spawn another to check diversity patterns
+Then synthesize their findings to write improved prompts.
 
 ## Your task
 1. Read your state file: {state_path}
-2. Run query tools to gather data (use subagents to parallelize)
+2. Run query tools to gather data (**use Opus subagents to parallelize** — do NOT run queries sequentially)
 3. Read the improver instructions: {improver_path}
 4. Read the current generator prompt: {gen_path}
 5. Also read the (just-improved) judge prompt: {judge_path}
