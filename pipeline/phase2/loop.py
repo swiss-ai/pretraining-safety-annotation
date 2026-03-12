@@ -167,7 +167,11 @@ Then synthesize their findings to write improved prompts.
 7. Write improved judge to {model_dir}/judge_v{next_v}.md
 8. You may run up to {max_batches} `run_batch` calls to test your changes
 9. Update {state_path} with: what you changed, why, key metrics, and what to try next
-10. Print your analysis summary as the final output
+10. Print a **single final summary** as your last message. This summary is displayed in the dashboard. Structure it as:
+    - **What changed**: which prompt file, key modifications
+    - **Why**: what problems you identified, with evidence (scores, examples)
+    - **Results**: before/after metrics if you ran test batches
+    - **Next steps**: what to try in the next iteration
 
 IMPORTANT:
 - Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
@@ -243,7 +247,11 @@ You have access to the Agent tool. Use it to parallelize your analysis.
 8. You CAN also fix the judge if you spot issues, but primarily focus on the generator
 9. You may run up to {max_batches} `run_batch` calls to test your changes
 10. Update {state_path} with: what you changed, why, key metrics, and what to try next
-11. Print your analysis summary as the final output
+11. Print a **single final summary** as your last message. This summary is displayed in the dashboard. Structure it as:
+    - **What changed**: which prompt file, key modifications
+    - **Why**: what problems you identified, with evidence (scores, examples)
+    - **Results**: before/after metrics if you ran test batches
+    - **Next steps**: what to try in the next iteration
 
 IMPORTANT:
 - Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
@@ -450,6 +458,19 @@ def _extract_reasoning_from_log(log_path: Path) -> str:
     return "\n".join(result).strip()[:2000]
 
 
+def _extract_latest_status_from_log(log_path: Path) -> str:
+    """Extract the most recent substantive [text] line from a log for live status."""
+    if not log_path.exists():
+        return ""
+    for line in reversed(log_path.read_text().splitlines()):
+        if line.startswith("[text] "):
+            text = line[7:].strip()
+            # Skip markdown artifacts and very short lines
+            if len(text) > 5 and not text.startswith(("#", "---", "```", "|")):
+                return text[:300]
+    return ""
+
+
 ALLOWED_TOOLS = [
     "Read", "Glob", "Grep", "Bash(uv run python:*)",
     "Agent", "TaskCreate", "TaskUpdate", "TaskList",
@@ -503,7 +524,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
 
         now_a = datetime.now(timezone.utc).isoformat()
         status["phase_a"]["status"] = "done"
-        status["phase_a"]["reasoning"] = analysis_a[:2000]
+        status["phase_a"]["reasoning"] = _extract_reasoning_from_log(IMPROVER_LOG_A_PATH)
         status["phase_a"]["finished_at"] = now_a
 
         # --- Phase B: Generator Improvement ---
@@ -527,7 +548,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
 
         now_b = datetime.now(timezone.utc).isoformat()
         status["phase_b"]["status"] = "done"
-        status["phase_b"]["reasoning"] = analysis_b[:2000]
+        status["phase_b"]["reasoning"] = _extract_reasoning_from_log(IMPROVER_LOG_B_PATH)
         status["phase_b"]["finished_at"] = now_b
 
         status["phase"] = "done"
@@ -559,7 +580,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
 
 
 def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) -> None:
-    """Persist a loop run to loop_history.jsonl with prompt snapshots."""
+    """Persist a loop run to loop_history.jsonl with prompt snapshots and logs."""
     prompts_after = _snapshot_prompts(cfg)
 
     # Use log-extracted reasoning as fallback for empty reasoning
@@ -567,6 +588,12 @@ def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) 
         phase_data = status.get(phase_key, {})
         if not phase_data.get("reasoning") and phase_data.get("status") != "pending":
             phase_data["reasoning"] = _extract_reasoning_from_log(log_path)
+
+    # Capture full logs (files get overwritten on next run)
+    logs = {}
+    for key, path in [("phase_a", IMPROVER_LOG_A_PATH), ("phase_b", IMPROVER_LOG_B_PATH)]:
+        if path.exists():
+            logs[key] = path.read_text()
 
     record = {
         "started_at": status.get("started_at"),
@@ -577,6 +604,7 @@ def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) 
         "model_alias": cfg.phase2.generator.model,
         "prompts_before": prompts_before,
         "prompts_after": prompts_after,
+        "logs": logs,
     }
     save_loop_run(record)
 

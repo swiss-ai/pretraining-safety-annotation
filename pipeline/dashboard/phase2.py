@@ -287,7 +287,8 @@ def _render_loop_history():
         ui.label("Improver Loop History").classes("text-h6 text-weight-bold")
         ui.label(f"{len(history)} past loop run(s)").classes("text-caption text-grey-7")
 
-        for i, run in enumerate(reversed(history)):
+        with ui.scroll_area().style("max-height: 400px;"):
+          for i, run in enumerate(reversed(history)):
             run_idx = len(history) - i
             started = run.get("started_at", "?")[:19]
             finished = run.get("finished_at", "?")[:19]
@@ -308,7 +309,8 @@ def _render_loop_history():
                 if error:
                     ui.label(f"Error: {error}").classes("text-caption text-red q-mt-xs")
 
-                # Phase cards
+                # Phase cards with reasoning + logs
+                run_logs = run.get("logs", {})
                 with ui.row().classes("w-full gap-4 q-mt-sm"):
                     for phase_key, phase_label in [("phase_a", "Phase A: Judge"), ("phase_b", "Phase B: Generator")]:
                         phase = run.get(phase_key, {})
@@ -320,11 +322,19 @@ def _render_loop_history():
                                 ui.badge(label, color=color)
                             reasoning = phase.get("reasoning", "")
                             if reasoning:
-                                ui.label(reasoning).classes("text-body2 q-mt-xs").style(
-                                    "white-space: pre-wrap; font-size: 0.85em; max-height: 300px; overflow-y: auto;"
-                                )
+                                with ui.expansion("Summary", icon="summarize", value=True).classes("w-full"):
+                                    ui.markdown(reasoning).classes("text-body2").style(
+                                        "font-size: 0.85em; max-height: 300px; overflow-y: auto;"
+                                    )
                             else:
                                 ui.label("No reasoning recorded.").classes("text-grey-6 text-caption")
+
+                            phase_log = run_logs.get(phase_key, "")
+                            if phase_log:
+                                with ui.expansion("Full Log", icon="terminal").classes("w-full"):
+                                    ui.code(phase_log, language="text").classes("w-full").style(
+                                        "max-height: 400px; overflow-y: auto; font-size: 0.75em;"
+                                    )
 
                 # Prompt diffs — pair new versions against their predecessor
                 diffs = _compute_prompt_diffs(
@@ -480,7 +490,6 @@ def pipeline_monitoring_page():
             rows = [
                 {
                     **s,
-                    # Backward compat: old records have "model", new have "generator_model"
                     "model": s.get("generator_model", s.get("model", "unknown")),
                     "timestamp": s["timestamp"][:19],
                     "accept_reject": f"{s['n_acc']}/{s['n_rej']}",
@@ -495,10 +504,10 @@ def pipeline_monitoring_page():
             ]
             ui.table(columns=columns + extra_cols, rows=rows, row_key="iteration").classes("w-full")
 
-            # Analysis expansion per iteration
-            for run in runs:
-                with ui.expansion(f"Iteration {run['iteration']} Analysis").classes("w-full"):
-                    ui.markdown(run.get("analysis", "No analysis recorded.")).classes("text-body2")
+            with ui.scroll_area().style("max-height: 300px;"):
+                for run in runs:
+                    with ui.expansion(f"Iteration {run['iteration']} Analysis").classes("w-full"):
+                        ui.markdown(run.get("analysis", "No analysis recorded.")).classes("text-body2")
 
     # --- Loop History ---
     _render_loop_history()
@@ -563,10 +572,15 @@ def pipeline_monitoring_page():
             return "\n".join(lines[-n_lines:])
 
         def _update_from_status(st: dict) -> None:
-            """Update UI elements from a loop status dict."""
+            """Update UI elements from a loop status dict.
+
+            While running: shows the agent's most recent status line.
+            When done: shows the final analysis summary extracted from the log.
+            """
             from pipeline.phase2.loop import (
                 IMPROVER_LOG_A_PATH,
                 IMPROVER_LOG_B_PATH,
+                _extract_latest_status_from_log,
                 _extract_reasoning_from_log,
             )
 
@@ -581,11 +595,15 @@ def pipeline_monitoring_page():
                 badge._props["color"] = color
                 badge.update()
 
-                reasoning = phase_data.get("reasoning", "")
-                if not reasoning and phase_status != "pending":
-                    reasoning = _extract_reasoning_from_log(log_path)
-                if reasoning:
-                    text_label.set_text(reasoning[:1000])
+                if phase_status == "running":
+                    # Live: show most recent agent message
+                    text_label.set_text(_extract_latest_status_from_log(log_path))
+                elif phase_status in ("done", "error"):
+                    # Completed: show final summary
+                    reasoning = phase_data.get("reasoning", "")
+                    if not reasoning:
+                        reasoning = _extract_reasoning_from_log(log_path)
+                    text_label.set_text(reasoning)
 
             if st.get("error"):
                 loop_error_label.set_text(f"Error: {st['error']}")
