@@ -441,37 +441,14 @@ def overview_page():
                                 ui.label(ann_author).classes("text-subtitle2 text-weight-bold")
                                 ui.label(rec["timestamp"][:19]).classes("text-caption text-grey-6")
 
-                                ui.label("Analysis").classes("text-overline text-grey-7 q-mt-sm")
-                                ui.label(rec["analysis"]).classes("text-body2").style(
-                                    "white-space: pre-wrap;"
-                                )
-
-                                ui.label("Preflection").classes("text-overline text-grey-7 q-mt-sm")
-                                ui.label(rec["preflection"]).classes("text-body2").style(
-                                    "white-space: pre-wrap;"
-                                )
-
-                                ui.label("Reflection").classes("text-overline text-grey-7 q-mt-sm")
-                                ui.label(rec["reflection"]).classes("text-body2").style(
-                                    "white-space: pre-wrap;"
-                                )
-
-                                fallback_elems = rec.get("charter_elements", [])
-                                refl_elems = rec.get("reflection_charter_elements", fallback_elems)
-                                if refl_elems:
-                                    ui.label("Charter Elements").classes("text-overline text-grey-7 q-mt-sm")
-                                    with ui.row().classes("gap-1"):
-                                        for eid in refl_elems:
-                                            ui.badge(eid, color="teal-3").props("outline")
-
-                                # -- Comments threads (per part) --
                                 all_comments = comments_by_ann.get((ann_item_id, ann_author), [])
-                                for part_key, part_label in [("general", "General"), ("preflection", "Preflection"), ("reflection", "Reflection")]:
+
+                                def _render_comment_thread(part_key, part_label):
                                     part_comments = [c for c in all_comments if c.get("target_part", "general") == part_key]
                                     with ui.expansion(
                                         f"{part_label} ({len(part_comments)})",
                                         icon="chat_bubble_outline",
-                                    ).classes("w-full q-mt-sm"):
+                                    ).classes("w-full"):
                                         for c in part_comments:
                                             with ui.row().classes("items-start gap-2 q-mb-xs"):
                                                 ui.label(c["commenter_id"]).classes(
@@ -511,6 +488,35 @@ def overview_page():
                                             ui.button(
                                                 "Post", on_click=make_submit(), color="primary",
                                             ).props("flat dense size=sm")
+
+                                ui.label("Analysis").classes("text-overline text-grey-7 q-mt-sm")
+                                ui.label(rec["analysis"]).classes("text-body2").style(
+                                    "white-space: pre-wrap;"
+                                )
+
+                                ui.label("Reflection").classes("text-overline text-grey-7 q-mt-sm")
+                                ui.label(rec["reflection"]).classes("text-body2").style(
+                                    "white-space: pre-wrap;"
+                                )
+
+                                fallback_elems = rec.get("charter_elements", [])
+                                refl_elems = rec.get("reflection_charter_elements", fallback_elems)
+                                if refl_elems:
+                                    ui.label("Charter Elements").classes("text-overline text-grey-7 q-mt-sm")
+                                    with ui.row().classes("gap-1"):
+                                        for eid in refl_elems:
+                                            ui.badge(eid, color="teal-3").props("outline")
+
+                                _render_comment_thread("reflection", "Reflection")
+
+                                ui.label("Preflection").classes("text-overline text-grey-7 q-mt-sm")
+                                ui.label(rec["preflection"]).classes("text-body2").style(
+                                    "white-space: pre-wrap;"
+                                )
+
+                                _render_comment_thread("preflection", "Preflection")
+
+                                _render_comment_thread("general", "General Comments")
 
     annotator_filter.on("update:model-value", lambda _: render_annotations())
     source_filter.on("update:model-value", lambda _: render_annotations())
