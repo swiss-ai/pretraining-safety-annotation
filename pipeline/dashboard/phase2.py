@@ -292,7 +292,7 @@ def _render_loop_history():
         ui.label("Improver Loop History").classes("text-h6 text-weight-bold")
         ui.label(f"{len(history)} past loop run(s)").classes("text-caption text-grey-7")
 
-        with ui.scroll_area().style("max-height: 400px;"):
+        with ui.scroll_area().style("max-height: 700px;"):
           for i, run in enumerate(reversed(history)):
             run_idx = len(history) - i
             started = run.get("started_at", "?")[:19]
