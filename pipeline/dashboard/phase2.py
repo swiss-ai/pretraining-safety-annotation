@@ -292,7 +292,7 @@ def _render_loop_history():
         ui.label("Improver Loop History").classes("text-h6 text-weight-bold")
         ui.label(f"{len(history)} past loop run(s)").classes("text-caption text-grey-7")
 
-        with ui.scroll_area().style("max-height: 700px;"):
+        with ui.scroll_area().style("max-height: 1200px;"):
           for i, run in enumerate(reversed(history)):
             run_idx = len(history) - i
             started = run.get("started_at", "?")[:19]
@@ -847,7 +847,9 @@ def pipeline_review_page():
                     judge_section = ui.column().classes("w-full gap-1")
 
                 # Human annotation (for gold items)
-                gold_section = ui.column().classes("w-full gap-1")
+                gold_expansion = ui.expansion("Human Annotation (Gold)", icon="person").classes("w-full")
+                with gold_expansion:
+                    gold_section = ui.column().classes("w-full gap-1")
 
                 ui.separator()
 
@@ -978,6 +980,7 @@ def pipeline_review_page():
                     )
 
         gold_section.clear()
+        gold_expansion.set_visibility(bool(item.get("is_gold")))
         with gold_section:
             if item.get("is_gold"):
                 _show_gold_annotation(item["item_id"])
@@ -1015,7 +1018,6 @@ def pipeline_review_page():
             ui.label("No human annotations found for this gold item.").classes("text-grey-6")
             return
 
-        ui.label("Human Annotation (Gold)").classes("text-subtitle2 text-weight-bold")
         for rec in gold_records:
             with ui.card().classes("w-full q-pa-sm"):
                 ui.label(f"Annotator: {rec['annotator_id']}").classes("text-caption text-grey-6")
