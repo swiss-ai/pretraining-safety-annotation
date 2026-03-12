@@ -16,6 +16,7 @@ from pipeline.phase2.storage import (
     load_latest_reviews,
     load_reviews,
     load_runs,
+    load_test_results,
     save_review,
 )
 
@@ -82,6 +83,17 @@ def _compute_calibration(reviews: list[dict], items_by_key: dict) -> dict:
         "n_reviews": len(reviews),
         "n_paired": len(aggregate_pairs),
     }
+
+
+def _phase_badge(status: str) -> tuple[str, str]:
+    """Return (label, color) for a phase status badge."""
+    colors = {
+        "pending": "grey",
+        "running": "blue",
+        "done": "green",
+        "error": "red",
+    }
+    return status.upper(), colors.get(status, "grey")
 
 
 @ui.page("/pipeline")
@@ -182,7 +194,7 @@ def pipeline_monitoring_page():
                 }).classes("w-full").style("height: 250px;")
 
             with ui.card().classes("flex-1 q-pa-md"):
-                ui.label("Judge–Human Correlation").classes("text-subtitle2 text-weight-bold")
+                ui.label("Judge-Human Correlation").classes("text-subtitle2 text-weight-bold")
                 has_any = any(c is not None for c in calibration_corrs)
                 if not has_any:
                     ui.label("No human reviews yet.").classes("text-grey-6")
@@ -237,63 +249,130 @@ def pipeline_monitoring_page():
                 with ui.expansion(f"Iteration {run['iteration']} Analysis").classes("w-full"):
                     ui.markdown(run.get("analysis", "No analysis recorded.")).classes("text-body2")
 
-    # --- Autonomous Loop ---
+    # --- Two-Phase Improver Loop ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Autonomous Loop").classes("text-h6 text-weight-bold")
+        ui.label("Autonomous Improver Loop").classes("text-h6 text-weight-bold")
         ui.label(
-            "Runs generate→judge→improve cycles. A Claude subprocess improves prompts between iterations."
+            "Two-phase loop: Phase A improves judge prompts, Phase B improves generator prompts. "
+            "Each phase spawns an Opus agent with autonomous tool access."
         ).classes("text-caption text-grey-7")
 
-        loop_progress = ui.linear_progress(value=0, show_value=False).classes("w-full q-mt-sm")
-        loop_phase_label = ui.label("").classes("text-caption text-grey-6")
+        # Phase cards
+        with ui.row().classes("w-full gap-4 q-mt-sm"):
+            phase_a_card = ui.card().classes("flex-1 q-pa-sm")
+            with phase_a_card:
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Phase A: Judge").classes("text-subtitle2 text-weight-bold")
+                    phase_a_badge = ui.badge("PENDING", color="grey")
+                phase_a_reasoning = ui.expansion("Reasoning", icon="psychology").classes("w-full")
+                with phase_a_reasoning:
+                    phase_a_text = ui.label("").classes("text-body2").style(
+                        "white-space: pre-wrap; font-size: 0.85em;"
+                    )
+
+            phase_b_card = ui.card().classes("flex-1 q-pa-sm")
+            with phase_b_card:
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Phase B: Generator").classes("text-subtitle2 text-weight-bold")
+                    phase_b_badge = ui.badge("PENDING", color="grey")
+                phase_b_reasoning = ui.expansion("Reasoning", icon="psychology").classes("w-full")
+                with phase_b_reasoning:
+                    phase_b_text = ui.label("").classes("text-body2").style(
+                        "white-space: pre-wrap; font-size: 0.85em;"
+                    )
+
         loop_error_label = ui.label("").classes("text-caption text-red")
 
-        loop_results_container = ui.column().classes("w-full gap-1 q-mt-sm")
+        # Test results expansion
+        with ui.expansion("Test Results", icon="science").classes("w-full q-mt-sm"):
+            test_results_container = ui.column().classes("w-full gap-1")
 
-        with ui.expansion("Improver Log", icon="terminal").classes("w-full q-mt-sm"):
-            improver_log_display = ui.code("", language="text").classes("w-full").style(
-                "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
-            )
+        # Log viewer with tabs
+        with ui.expansion("Improver Logs", icon="terminal").classes("w-full q-mt-sm"):
+            with ui.tabs().classes("w-full") as log_tabs:
+                tab_a = ui.tab("Phase A")
+                tab_b = ui.tab("Phase B")
+            with ui.tab_panels(log_tabs, value=tab_a).classes("w-full"):
+                with ui.tab_panel(tab_a):
+                    log_a_display = ui.code("", language="text").classes("w-full").style(
+                        "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
+                    )
+                with ui.tab_panel(tab_b):
+                    log_b_display = ui.code("", language="text").classes("w-full").style(
+                        "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
+                    )
 
-        def _tail_improver_log(n_lines: int = 50) -> str:
-            from pipeline.phase2.loop import IMPROVER_LOG_PATH
-            if not IMPROVER_LOG_PATH.exists():
+        def _tail_log(log_path: Path, n_lines: int = 50) -> str:
+            if not log_path.exists():
                 return ""
-            lines = IMPROVER_LOG_PATH.read_text().splitlines()
+            lines = log_path.read_text().splitlines()
             return "\n".join(lines[-n_lines:])
 
         def _poll_loop_status():
-            from pipeline.phase2.loop import read_status
+            from pipeline.phase2.loop import (
+                IMPROVER_LOG_A_PATH,
+                IMPROVER_LOG_B_PATH,
+                read_status,
+            )
             st = read_status()
             if st is None:
                 return
-            total = st.get("total_iterations", 1) or 1
-            current = st.get("loop_iteration", 0)
-            loop_progress.set_value(current / total)
-            phase = st.get("phase", "")
-            loop_phase_label.set_text(
-                f"Iteration {current}/{total} — {phase}"
-                if st.get("running") else f"Loop {phase}"
-            )
+
+            # Update phase badges
+            for phase_key, badge in [("phase_a", phase_a_badge), ("phase_b", phase_b_badge)]:
+                phase_data = st.get(phase_key, {})
+                phase_status = phase_data.get("status", "pending")
+                label, color = _phase_badge(phase_status)
+                badge.set_text(label)
+                badge._props["color"] = color
+                badge.update()
+
+            # Update reasoning text
+            pa = st.get("phase_a", {})
+            pb = st.get("phase_b", {})
+            if pa.get("reasoning"):
+                phase_a_text.set_text(pa["reasoning"][:1000])
+            if pb.get("reasoning"):
+                phase_b_text.set_text(pb["reasoning"][:1000])
+
             if st.get("error"):
                 loop_error_label.set_text(f"Error: {st['error']}")
             else:
                 loop_error_label.set_text("")
 
-            if phase == "improving" or (not st.get("running") and phase in ("done", "error")):
-                improver_log_display.set_content(_tail_improver_log())
+            # Update logs
+            current_phase = st.get("phase", "")
+            if current_phase in ("A", "B", "done", "error", "interrupted"):
+                log_a_display.set_content(_tail_log(IMPROVER_LOG_A_PATH))
+                log_b_display.set_content(_tail_log(IMPROVER_LOG_B_PATH))
 
-            results = st.get("results", [])
-            loop_results_container.clear()
+            # Update test results
+            results = load_test_results()
+            test_results_container.clear()
             if results:
-                with loop_results_container:
+                with test_results_container:
                     cols = [
-                        {"name": "iter", "label": "#", "field": "loop_iteration"},
-                        {"name": "accepted", "label": "Accepted", "field": "n_accepted"},
-                        {"name": "rejected", "label": "Rejected", "field": "n_rejected"},
-                        {"name": "score", "label": "Mean Score", "field": "mean_score"},
+                        {"name": "test_id", "label": "Test ID", "field": "test_id"},
+                        {"name": "type", "label": "Type", "field": "type"},
+                        {"name": "phase", "label": "Phase", "field": "phase"},
+                        {"name": "prompt", "label": "Prompt", "field": "prompt"},
+                        {"name": "n_items", "label": "Items", "field": "n_items"},
+                        {"name": "mean_score", "label": "Mean Score", "field": "mean_score"},
+                        {"name": "timestamp", "label": "Time", "field": "timestamp"},
                     ]
-                    ui.table(columns=cols, rows=results, row_key="loop_iteration").classes("w-full")
+                    rows = []
+                    for r in results[-20:]:  # show last 20
+                        s = r.get("summary", {})
+                        rows.append({
+                            "test_id": r.get("test_id", ""),
+                            "type": r.get("type", ""),
+                            "phase": r.get("phase", ""),
+                            "prompt": r.get("prompt", ""),
+                            "n_items": s.get("n_items", ""),
+                            "mean_score": f"{s['mean_score']:.2f}" if isinstance(s.get("mean_score"), (int, float)) else "",
+                            "timestamp": r.get("timestamp", "")[:19],
+                        })
+                    ui.table(columns=cols, rows=rows, row_key="test_id").classes("w-full")
 
             if not st.get("running"):
                 loop_timer.active = False
@@ -306,20 +385,17 @@ def pipeline_monitoring_page():
             loop_btn.disable()
             single_btn.disable()
             loop_error_label.set_text("")
-            loop_phase_label.set_text("Starting loop...")
             loop_timer.active = True
 
             def _thread():
-                import asyncio as _asyncio
-                from pipeline.phase2.loop import run_loop
+                from pipeline.phase2.loop import run_improver_loop
                 cfg = load_config()
-                _asyncio.run(run_loop(n_iterations=cfg.phase2.loop.n_iterations, cfg=cfg))
+                run_improver_loop(cfg=cfg)
 
             threading.Thread(target=_thread, daemon=True).start()
 
-        cfg_for_label = load_config()
         loop_btn = ui.button(
-            f"Start Loop ({cfg_for_label.phase2.loop.n_iterations} iterations)",
+            "Start Improver Loop",
             on_click=start_loop,
             color="primary",
         )
@@ -330,12 +406,11 @@ def pipeline_monitoring_page():
         if _initial and _initial.get("running"):
             loop_btn.disable()
             loop_timer.active = True
-            loop_phase_label.set_text("Loop in progress...")
 
     # --- Single Iteration ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
         ui.label("Run Single Iteration").classes("text-h6 text-weight-bold")
-        ui.label("Runs a single generate→judge iteration with current config.").classes(
+        ui.label("Runs a single generate->judge iteration with current config.").classes(
             "text-caption text-grey-7"
         )
 

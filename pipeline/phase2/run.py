@@ -25,6 +25,7 @@ from tqdm.asyncio import tqdm_asyncio
 from pipeline.config import (
     ANNOTATION_DATA_DIR,
     CHARTER_PATH,
+    PIPELINE_DATA_DIR,
     AppConfig,
     generator_api_name,
     judge_api_name,
@@ -41,6 +42,16 @@ from pipeline.storage import compute_item_id
 
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
+
+
+def make_api_client(cfg: AppConfig) -> tuple[openai.AsyncOpenAI, asyncio.Semaphore]:
+    """Create an OpenAI client and concurrency semaphore from config."""
+    load_dotenv()
+    api_key = os.environ.get("SWISS_AI_API_KEY")
+    assert api_key, "SWISS_AI_API_KEY not set in environment"
+    client = openai.AsyncOpenAI(api_key=api_key, base_url=cfg.phase2.endpoint)
+    semaphore = asyncio.Semaphore(cfg.phase2.iteration.max_concurrent)
+    return client, semaphore
 
 FINEWEB_DATASET = "locuslab/fineweb_annotated"
 FINEWEB_SUBSETS = [f"score_{i}" for i in range(6)]
@@ -184,41 +195,77 @@ def _load_gold_items() -> list[dict]:
     return records
 
 
-def _sample_fresh_items(n: int, seed: int, exclude_ids: set[str]) -> list[dict]:
-    """Sample fresh random FineWeb items, excluding already-used IDs."""
-    rng = random.Random(seed)
-    items = []
+FINEWEB_CACHE_PATH = PIPELINE_DATA_DIR / "fineweb_cache.jsonl"
+FINEWEB_CACHE_SIZE = 500
 
+
+def _load_or_build_cache(seed: int) -> list[dict]:
+    """Load cached FineWeb texts, or stream from HF and cache locally.
+
+    Caches FINEWEB_CACHE_SIZE raw items (text + subset) to avoid repeated
+    HF downloads. The cache is a simple JSONL file.
+    """
+    if FINEWEB_CACHE_PATH.exists():
+        records = []
+        for line in FINEWEB_CACHE_PATH.read_text().splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+        if records:
+            print(f"Loaded {len(records)} items from FineWeb cache")
+            return records
+
+    print(f"Building FineWeb cache ({FINEWEB_CACHE_SIZE} items)...")
     from datasets import load_dataset
 
+    records = []
     for subset in FINEWEB_SUBSETS:
         ds = load_dataset(FINEWEB_DATASET, subset, split="train", streaming=True)
         ds = ds.shuffle(seed=seed, buffer_size=10_000)
         for row in ds:
-            if len(items) >= n:
+            if len(records) >= FINEWEB_CACHE_SIZE:
                 break
-            text = row["text"]
-            item_id = compute_item_id(text)
-            if item_id in exclude_ids:
-                continue
-            min_pos = max(1, int(len(text) * 0.1))
-            max_pos = max(min_pos + 1, int(len(text) * 0.9))
-            char_pos = rng.randint(min_pos, max_pos)
-            space_idx = text.find(" ", char_pos)
-            if space_idx != -1 and space_idx - char_pos < 50:
-                char_pos = space_idx
-            items.append({
-                "item_id": item_id,
-                "subset": subset,
-                "text": text,
-                "reflection_point": char_pos,
-                "is_gold": False,
-            })
-            exclude_ids.add(item_id)
-        if len(items) >= n:
+            records.append({"text": row["text"], "subset": subset})
+        if len(records) >= FINEWEB_CACHE_SIZE:
             break
 
-    assert len(items) >= n, f"Could only sample {len(items)}/{n} fresh items"
+    PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(FINEWEB_CACHE_PATH, "w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+    print(f"Cached {len(records)} items to {FINEWEB_CACHE_PATH}")
+    return records
+
+
+def _sample_fresh_items(n: int, seed: int, exclude_ids: set[str]) -> list[dict]:
+    """Sample fresh random FineWeb items, excluding already-used IDs."""
+    rng = random.Random(seed)
+    cache = _load_or_build_cache(seed)
+    rng.shuffle(cache)
+
+    items = []
+    for row in cache:
+        if len(items) >= n:
+            break
+        text = row["text"]
+        item_id = compute_item_id(text)
+        if item_id in exclude_ids:
+            continue
+        min_pos = max(1, int(len(text) * 0.1))
+        max_pos = max(min_pos + 1, int(len(text) * 0.9))
+        char_pos = rng.randint(min_pos, max_pos)
+        space_idx = text.find(" ", char_pos)
+        if space_idx != -1 and space_idx - char_pos < 50:
+            char_pos = space_idx
+        items.append({
+            "item_id": item_id,
+            "subset": row["subset"],
+            "text": text,
+            "reflection_point": char_pos,
+            "is_gold": False,
+        })
+        exclude_ids.add(item_id)
+
+    assert len(items) >= n, f"Could only sample {len(items)}/{n} fresh items (cache has {len(cache)})"
     return items[:n]
 
 
@@ -253,11 +300,12 @@ def generate_batch(
     iteration: int,
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
+    save: bool = True,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
     Runs API calls concurrently via a temporary event loop.
-    Saves each item to JSONL progressively as it completes.
+    When save=True, saves each item to JSONL progressively as it completes.
     Returns the list of completed item records.
     """
     prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -305,7 +353,8 @@ def generate_batch(
             ).isoformat(),
             "judgment": None,
         }
-        save_item(record)
+        if save:
+            save_item(record)
         return record
 
     coros = [process_one(item) for item in items]
@@ -364,12 +413,14 @@ def judge_batch(
     accept_threshold: float,
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
+    save: bool = True,
 ) -> list[dict]:
     """Judge generated reflections. Judges preflection and reflection separately.
 
     Runs API calls concurrently via a temporary event loop.
     Preflection is judged against the full text.
     Reflection is judged against only the context up to the reflection point.
+    When save=True, saves each judged item to JSONL progressively.
 
     Returns the list of judged item records.
     """
@@ -412,7 +463,8 @@ def judge_batch(
             ).isoformat(),
         }
         judged = {**item, "judgment": judgment}
-        save_item(judged)
+        if save:
+            save_item(judged)
         return judged
 
     coros = [judge_one(item) for item in items]
@@ -425,10 +477,6 @@ def run_iteration(cfg: AppConfig, phase_callback=None) -> dict:
     Orchestrates: select items -> generate -> judge -> save run record.
     phase_callback: optional callable(str) for granular progress reporting.
     """
-    load_dotenv()
-    api_key = os.environ.get("SWISS_AI_API_KEY")
-    assert api_key, "SWISS_AI_API_KEY not set in environment"
-
     runs = load_runs()
     iteration = len(runs) + 1
     seed = 42 + iteration
@@ -437,8 +485,7 @@ def run_iteration(cfg: AppConfig, phase_callback=None) -> dict:
     print(f"ITERATION {iteration}")
     print(f"{'='*60}")
 
-    client = openai.AsyncOpenAI(api_key=api_key, base_url=cfg.phase2.endpoint)
-    semaphore = asyncio.Semaphore(cfg.phase2.iteration.max_concurrent)
+    client, semaphore = make_api_client(cfg)
 
     gen_model = generator_api_name(cfg)
     jdg_model = judge_api_name(cfg)

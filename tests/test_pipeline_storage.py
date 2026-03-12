@@ -1,4 +1,4 @@
-"""Tests for pipeline storage: write/read/dedup for runs, items, reviews."""
+"""Tests for pipeline storage: write/read/dedup for runs, items, reviews, test results."""
 
 import json
 import tempfile
@@ -12,7 +12,9 @@ import pytest
 def tmp_data_dir(tmp_path):
     """Redirect pipeline storage to a temp directory."""
     with patch("pipeline.phase2.storage.PIPELINE_DATA_DIR", tmp_path):
-        yield tmp_path
+        # Also patch the TEST_RESULTS_PATH since it's computed at import time
+        with patch("pipeline.phase2.storage.TEST_RESULTS_PATH", tmp_path / "test_results.jsonl"):
+            yield tmp_path
 
 
 def test_save_and_load_run():
@@ -128,3 +130,42 @@ def test_empty_loads():
     assert load_runs() == []
     assert load_items() == []
     assert load_reviews() == []
+
+
+def test_save_and_load_test_result():
+    from pipeline.phase2.storage import load_test_results, save_test_result
+
+    record = {
+        "test_id": "tg_20260312_143022",
+        "type": "generate",
+        "phase": "A",
+        "prompt": "judge_v3.md",
+        "model_alias": "glm45",
+        "items": [{"item_id": "abc123"}],
+        "summary": {"n_items": 1, "mean_score": 3.4, "n_accepted": 0},
+        "timestamp": "2026-03-12T14:30:22",
+    }
+    save_test_result(record)
+    results = load_test_results()
+    assert len(results) == 1
+    assert results[0]["test_id"] == "tg_20260312_143022"
+    assert results[0]["type"] == "generate"
+
+
+def test_load_test_results_filter_by_phase():
+    from pipeline.phase2.storage import load_test_results, save_test_result
+
+    save_test_result({"test_id": "t1", "type": "generate", "phase": "A", "timestamp": "t"})
+    save_test_result({"test_id": "t2", "type": "judge", "phase": "B", "timestamp": "t"})
+    save_test_result({"test_id": "t3", "type": "batch", "phase": "A", "timestamp": "t"})
+
+    all_results = load_test_results()
+    assert len(all_results) == 3
+
+    phase_a = load_test_results(phase="A")
+    assert len(phase_a) == 2
+    assert all(r["phase"] == "A" for r in phase_a)
+
+    phase_b = load_test_results(phase="B")
+    assert len(phase_b) == 1
+    assert phase_b[0]["test_id"] == "t2"

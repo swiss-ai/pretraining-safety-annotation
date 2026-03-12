@@ -25,7 +25,10 @@ phase2:
     model: glm45
     prompt: judge_v1.md
   improver:
-    prompt: improver.md
+    judge_prompt: improver_judge.md
+    generator_prompt: improver_generator.md
+    max_batches_per_phase: 5
+    timeout_s: 900
   scoring:
     scale_min: 1
     scale_max: 5
@@ -39,9 +42,7 @@ phase2:
     n_items: 20
     n_gold: 10
     max_concurrent: 20
-  loop:
-    n_iterations: 5
-    improver_timeout_s: 600
+  loop: {}
 
 dashboard:
   port: 8600

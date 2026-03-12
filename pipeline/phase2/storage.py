@@ -106,6 +106,25 @@ def load_latest_reviews() -> dict[tuple[str, int, str], dict]:
     return latest
 
 
+# --- Test Results ---
+
+TEST_RESULTS_PATH = PIPELINE_DATA_DIR / "test_results.jsonl"
+
+
+def save_test_result(record: dict) -> None:
+    """Append a test result record (from test_generate, test_judge, or run_batch)."""
+    _ensure_dir()
+    append_jsonl(TEST_RESULTS_PATH, record)
+
+
+def load_test_results(phase: str | None = None) -> list[dict]:
+    """Load test results, optionally filtered by phase ('A' or 'B')."""
+    results = load_jsonl(TEST_RESULTS_PATH)
+    if phase is not None:
+        results = [r for r in results if r.get("phase") == phase]
+    return results
+
+
 def save_review(
     item_id: str,
     iteration: int,

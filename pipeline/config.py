@@ -44,7 +44,10 @@ class RoleConfig:
 
 @dataclass
 class ImproverConfig:
-    prompt: str = "improver.md"
+    judge_prompt: str = "improver_judge.md"
+    generator_prompt: str = "improver_generator.md"
+    max_batches_per_phase: int = 5
+    timeout_s: int = 900
 
 
 @dataclass
@@ -66,8 +69,7 @@ class IterationConfig:
 
 @dataclass
 class LoopConfig:
-    n_iterations: int = 5
-    improver_timeout_s: int = 600
+    pass
 
 
 @dataclass
