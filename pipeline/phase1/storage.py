@@ -1,36 +1,36 @@
-"""Phase 1 annotation persistence via append-only JSONL files."""
+"""Phase 1 annotation persistence via SQLite."""
 
+import json
 from datetime import datetime, timezone
-from pathlib import Path
 
-from pipeline.config import ANNOTATION_DATA_DIR
-from pipeline.storage import append_jsonl, load_jsonl
-
-
-def annotations_path() -> Path:
-    """Return the JSONL file path for annotations."""
-    ANNOTATION_DATA_DIR.mkdir(exist_ok=True)
-    return ANNOTATION_DATA_DIR / "annotations.jsonl"
+from pipeline.storage import _get_conn
 
 
 def load_annotations() -> list[dict]:
-    """Load all annotation records (no dedup)."""
-    return load_jsonl(annotations_path())
+    """Load all annotation records."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM annotations ORDER BY timestamp").fetchall()
+    return [_row_to_annotation(r) for r in rows]
 
 
 def load_latest_annotations() -> dict[tuple[str, str], dict]:
-    """Load annotations keyed by (item_id, annotator_id). Last entry per key wins."""
-    latest: dict[tuple[str, str], dict] = {}
-    for record in load_annotations():
-        key = (record["item_id"], record["annotator_id"])
-        latest[key] = record
-    return latest
+    """Load annotations keyed by (item_id, annotator_id).
+
+    Dedup is implicit via PRIMARY KEY — each key has exactly one row.
+    """
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM annotations").fetchall()
+    return {
+        (r["item_id"], r["annotator_id"]): _row_to_annotation(r)
+        for r in rows
+    }
 
 
 def load_annotator_ids() -> list[str]:
     """Return sorted list of unique annotator IDs from existing annotations."""
-    annotations = load_annotations()
-    return sorted({r["annotator_id"] for r in annotations})
+    conn = _get_conn()
+    rows = conn.execute("SELECT DISTINCT annotator_id FROM annotations ORDER BY annotator_id").fetchall()
+    return [r["annotator_id"] for r in rows]
 
 
 def save_annotation(
@@ -45,25 +45,27 @@ def save_annotation(
     reflection_charter_elements: list[str],
     presentation_order: int,
 ) -> None:
-    """Append a single annotation record (includes full source text)."""
-    record = {
-        "item_id": item_id,
-        "annotator_id": annotator_id,
-        "subset": subset,
-        "text": text,
-        "reflection_point": reflection_point,
-        "analysis": analysis,
-        "preflection": preflection,
-        "reflection": reflection,
-        "reflection_charter_elements": reflection_charter_elements,
-        "presentation_order": presentation_order,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    append_jsonl(annotations_path(), record)
+    """Upsert a single annotation record."""
+    conn = _get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO annotations
+           (item_id, annotator_id, subset, text, reflection_point,
+            analysis, preflection, reflection, reflection_charter_elements,
+            presentation_order, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            item_id, annotator_id, subset, text, reflection_point,
+            analysis, preflection, reflection,
+            json.dumps(reflection_charter_elements),
+            presentation_order,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
 
 
 def load_annotations_by_item() -> dict[str, list[dict]]:
-    """Load all annotations grouped by item_id (latest per annotator)."""
+    """Load all annotations grouped by item_id."""
     latest = load_latest_annotations()
     by_item: dict[str, list[dict]] = {}
     for (item_id, _), record in latest.items():
@@ -73,25 +75,16 @@ def load_annotations_by_item() -> dict[str, list[dict]]:
 
 # --- Comments ---
 
-def comments_path() -> Path:
-    """Return the JSONL file path for annotation comments."""
-    ANNOTATION_DATA_DIR.mkdir(exist_ok=True)
-    return ANNOTATION_DATA_DIR / "comments.jsonl"
-
-
-def load_comments() -> list[dict]:
-    """Load all comment records."""
-    return load_jsonl(comments_path())
-
-
 def load_comments_by_annotation() -> dict[tuple[str, str], list[dict]]:
     """Load comments keyed by (item_id, target_annotator_id), sorted by timestamp."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM comments ORDER BY timestamp"
+    ).fetchall()
     by_annotation: dict[tuple[str, str], list[dict]] = {}
-    for comment in load_comments():
-        key = (comment["item_id"], comment["target_annotator_id"])
-        by_annotation.setdefault(key, []).append(comment)
-    for comments in by_annotation.values():
-        comments.sort(key=lambda c: c["timestamp"])
+    for r in rows:
+        key = (r["item_id"], r["target_annotator_id"])
+        by_annotation.setdefault(key, []).append(dict(r))
     return by_annotation
 
 
@@ -100,13 +93,32 @@ def save_comment(
     target_annotator_id: str,
     commenter_id: str,
     comment: str,
+    target_part: str = "general",
 ) -> None:
-    """Append a comment on an annotation."""
-    record = {
-        "item_id": item_id,
-        "target_annotator_id": target_annotator_id,
-        "commenter_id": commenter_id,
-        "comment": comment,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    append_jsonl(comments_path(), record)
+    """Insert a comment on an annotation."""
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO comments
+           (item_id, target_annotator_id, commenter_id, target_part, comment, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            item_id, target_annotator_id, commenter_id,
+            target_part, comment,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+
+
+def delete_comment(comment_id: int) -> None:
+    """Hard-delete a comment by its row id."""
+    conn = _get_conn()
+    conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+    conn.commit()
+
+
+def _row_to_annotation(row: dict) -> dict:
+    """Convert a sqlite3.Row to a plain dict, deserializing JSON fields."""
+    d = dict(row)
+    d["reflection_charter_elements"] = json.loads(d["reflection_charter_elements"])
+    return d

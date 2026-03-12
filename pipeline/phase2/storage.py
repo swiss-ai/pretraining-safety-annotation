@@ -1,39 +1,18 @@
-"""Phase 2 pipeline persistence via append-only JSONL files."""
+"""Phase 2 pipeline persistence via SQLite."""
 
+import json
 from datetime import datetime, timezone
-from pathlib import Path
 
-from pipeline.config import PIPELINE_DATA_DIR
-from pipeline.storage import append_jsonl, load_jsonl
-
-
-def _ensure_dir() -> Path:
-    PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return PIPELINE_DATA_DIR
-
-
-# --- Paths ---
-
-def runs_path() -> Path:
-    """Return the JSONL file path for iteration run logs."""
-    return _ensure_dir() / "runs.jsonl"
-
-
-def items_path() -> Path:
-    """Return the JSONL file path for generated items."""
-    return _ensure_dir() / "items.jsonl"
-
-
-def reviews_path() -> Path:
-    """Return the JSONL file path for human reviews."""
-    return _ensure_dir() / "reviews.jsonl"
+from pipeline.storage import _get_conn
 
 
 # --- Runs ---
 
 def load_runs() -> list[dict]:
     """Load all iteration run records."""
-    return load_jsonl(runs_path())
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
+    return [_row_to_run(r) for r in rows]
 
 
 def save_run(
@@ -48,97 +27,91 @@ def save_run(
     analysis: str,
 ) -> None:
     """Append a completed iteration run record."""
-    record = {
-        "iteration": iteration,
-        "gen_prompt": gen_prompt,
-        "judge_prompt": judge_prompt,
-        "generator_model": generator_model,
-        "judge_model": judge_model,
-        "n_items": n_items,
-        "n_gold": n_gold,
-        "config": config,
-        "analysis": analysis,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    append_jsonl(runs_path(), record)
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO runs
+           (iteration, gen_prompt, judge_prompt, generator_model, judge_model,
+            n_items, n_gold, config, analysis, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            iteration, gen_prompt, judge_prompt, generator_model, judge_model,
+            n_items, n_gold, json.dumps(config), analysis,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
 
 
 # --- Items ---
 
 def load_items() -> list[dict]:
-    """Load all item records (no dedup)."""
-    return load_jsonl(items_path())
+    """Load all item records."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM items ORDER BY timestamp").fetchall()
+    return [_row_to_item(r) for r in rows]
 
 
 def load_latest_items() -> dict[tuple[str, int], dict]:
-    """Load items deduped by (item_id, iteration). Last record per key wins."""
-    latest: dict[tuple[str, int], dict] = {}
-    for record in load_items():
-        key = (record["item_id"], record["iteration"])
-        latest[key] = record
-    return latest
+    """Load items keyed by (item_id, iteration). Dedup is implicit via PRIMARY KEY."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM items").fetchall()
+    return {
+        (r["item_id"], r["iteration"]): _row_to_item(r)
+        for r in rows
+    }
 
 
 def load_items_for_iteration(iteration: int) -> list[dict]:
-    """Load latest items for a specific iteration."""
-    latest = load_latest_items()
-    return [v for k, v in latest.items() if k[1] == iteration]
+    """Load items for a specific iteration."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM items WHERE iteration = ?", (iteration,)
+    ).fetchall()
+    return [_row_to_item(r) for r in rows]
 
 
 def save_item(record: dict) -> None:
-    """Append a single item record (generation or generation+judgment)."""
-    append_jsonl(items_path(), record)
+    """Upsert a single item record (generation or generation+judgment)."""
+    conn = _get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO items
+           (item_id, iteration, is_gold, subset, text, reflection_point,
+            gen_prompt, model, analysis, preflection, reflection,
+            charter_elements, raw_response, reasoning, latency_ms,
+            timestamp, judgment)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            record["item_id"], record["iteration"],
+            int(record.get("is_gold", False)), record["subset"],
+            record["text"], record["reflection_point"],
+            record["gen_prompt"], record["model"],
+            record["analysis"], record["preflection"], record["reflection"],
+            json.dumps(record["charter_elements"]),
+            record["raw_response"], record.get("reasoning"),
+            record["latency_ms"], record["timestamp"],
+            json.dumps(record["judgment"]) if record.get("judgment") is not None else None,
+        ),
+    )
+    conn.commit()
 
 
 # --- Reviews ---
 
 def load_reviews() -> list[dict]:
-    """Load all human review records (cumulative, never deleted)."""
-    return load_jsonl(reviews_path())
+    """Load all human review records."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM reviews ORDER BY timestamp").fetchall()
+    return [_row_to_review(r) for r in rows]
 
 
 def load_latest_reviews() -> dict[tuple[str, int, str], dict]:
-    """Load reviews deduped by (item_id, iteration, reviewer_id). Last wins."""
-    latest: dict[tuple[str, int, str], dict] = {}
-    for record in load_reviews():
-        key = (record["item_id"], record["iteration"], record["reviewer_id"])
-        latest[key] = record
-    return latest
-
-
-# --- Test Results ---
-
-TEST_RESULTS_PATH = PIPELINE_DATA_DIR / "test_results.jsonl"
-
-
-def save_test_result(record: dict) -> None:
-    """Append a test result record (from test_generate, test_judge, or run_batch)."""
-    _ensure_dir()
-    append_jsonl(TEST_RESULTS_PATH, record)
-
-
-def load_test_results(phase: str | None = None) -> list[dict]:
-    """Load test results, optionally filtered by phase ('A' or 'B')."""
-    results = load_jsonl(TEST_RESULTS_PATH)
-    if phase is not None:
-        results = [r for r in results if r.get("phase") == phase]
-    return results
-
-
-# --- Loop History ---
-
-LOOP_HISTORY_PATH = PIPELINE_DATA_DIR / "loop_history.jsonl"
-
-
-def save_loop_run(record: dict) -> None:
-    """Append a completed loop run record."""
-    _ensure_dir()
-    append_jsonl(LOOP_HISTORY_PATH, record)
-
-
-def load_loop_history() -> list[dict]:
-    """Load all loop run records."""
-    return load_jsonl(LOOP_HISTORY_PATH)
+    """Load reviews keyed by (item_id, iteration, reviewer_id). Dedup is implicit."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM reviews").fetchall()
+    return {
+        (r["item_id"], r["iteration"], r["reviewer_id"]): _row_to_review(r)
+        for r in rows
+    }
 
 
 def save_review(
@@ -150,18 +123,85 @@ def save_review(
     decision: str,
     notes: str,
 ) -> None:
-    """Append a human review record.
+    """Upsert a human review record.
 
     scores is keyed by part: {"preflection": {dim: int}, "reflection": {dim: int}}.
     """
-    record = {
-        "item_id": item_id,
-        "iteration": iteration,
-        "reviewer_id": reviewer_id,
-        "scores": scores,
-        "aggregate": aggregate,
-        "decision": decision,
-        "notes": notes,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    append_jsonl(reviews_path(), record)
+    conn = _get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO reviews
+           (item_id, iteration, reviewer_id, scores, aggregate, decision, notes, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            item_id, iteration, reviewer_id,
+            json.dumps(scores), aggregate, decision, notes,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+
+
+# --- Test Results ---
+
+def save_test_result(record: dict) -> None:
+    """Append a test result record (from test_generate, test_judge, or run_batch)."""
+    conn = _get_conn()
+    ts = record.get("timestamp", datetime.now(timezone.utc).isoformat())
+    conn.execute(
+        "INSERT INTO test_results (data, timestamp) VALUES (?, ?)",
+        (json.dumps(record), ts),
+    )
+    conn.commit()
+
+
+def load_test_results(phase: str | None = None) -> list[dict]:
+    """Load test results, optionally filtered by phase ('A' or 'B')."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM test_results ORDER BY id").fetchall()
+    results = [json.loads(r["data"]) for r in rows]
+    if phase is not None:
+        results = [r for r in results if r.get("phase") == phase]
+    return results
+
+
+# --- Loop History ---
+
+def save_loop_run(record: dict) -> None:
+    """Append a completed loop run record."""
+    conn = _get_conn()
+    ts = record.get("finished_at", datetime.now(timezone.utc).isoformat())
+    conn.execute(
+        "INSERT INTO loop_history (data, timestamp) VALUES (?, ?)",
+        (json.dumps(record), ts),
+    )
+    conn.commit()
+
+
+def load_loop_history() -> list[dict]:
+    """Load all loop run records."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT * FROM loop_history ORDER BY id").fetchall()
+    return [json.loads(r["data"]) for r in rows]
+
+
+# --- Row converters ---
+
+def _row_to_run(row) -> dict:
+    d = dict(row)
+    d["config"] = json.loads(d["config"])
+    d.pop("id", None)
+    return d
+
+
+def _row_to_item(row) -> dict:
+    d = dict(row)
+    d["is_gold"] = bool(d["is_gold"])
+    d["charter_elements"] = json.loads(d["charter_elements"])
+    d["judgment"] = json.loads(d["judgment"]) if d["judgment"] is not None else None
+    return d
+
+
+def _row_to_review(row) -> dict:
+    d = dict(row)
+    d["scores"] = json.loads(d["scores"])
+    return d

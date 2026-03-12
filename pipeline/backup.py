@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 BACKUP_STATE_PATH = DATA_DIR / ".backup_state.json"
 IDLE_TIMEOUT_S = 10 * 60  # 10 minutes
 POLL_INTERVAL_S = 30
-IGNORE_PATTERNS = [".backup_state.json", ".cache/", "__pycache__/"]
+IGNORE_PATTERNS = [".backup_state.json", ".cache/", "__pycache__/", "*.db-wal", "*.db-shm"]
 
 
 def _get_repo() -> str | None:
@@ -92,6 +92,8 @@ def _download(api: HfApi, repo: str) -> None:
 
 def _upload(api: HfApi, repo: str) -> None:
     """Upload entire data/ folder to HuggingFace."""
+    from pipeline.storage import checkpoint
+    checkpoint()
     api.upload_folder(
         folder_path=str(DATA_DIR),
         repo_id=repo,

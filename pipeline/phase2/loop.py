@@ -29,7 +29,7 @@ from pipeline.config import (
     load_config,
     resolve_prompt_path,
 )
-from pipeline.phase2.storage import items_path, save_loop_run
+from pipeline.phase2.storage import save_loop_run
 
 STATUS_PATH = PIPELINE_DATA_DIR / "loop_status.json"
 IMPROVER_LOG_A_PATH = PIPELINE_DATA_DIR / "improver_log_A.txt"

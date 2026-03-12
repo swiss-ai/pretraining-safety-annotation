@@ -1,7 +1,6 @@
 """Tests for pipeline storage: write/read/dedup for runs, items, reviews, test results."""
 
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,12 +9,14 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def tmp_data_dir(tmp_path):
-    """Redirect pipeline storage to a temp directory."""
-    with patch("pipeline.phase2.storage.PIPELINE_DATA_DIR", tmp_path):
-        # Also patch module-level paths computed at import time
-        with patch("pipeline.phase2.storage.TEST_RESULTS_PATH", tmp_path / "test_results.jsonl"):
-            with patch("pipeline.phase2.storage.LOOP_HISTORY_PATH", tmp_path / "loop_history.jsonl"):
-                yield tmp_path
+    """Redirect SQLite storage to a temp directory."""
+    test_db = tmp_path / "test.db"
+    with patch("pipeline.storage.DB_PATH", test_db):
+        # Clear any cached thread-local connection so a new one is created
+        from pipeline.storage import _local
+        _local.conn = None
+        yield tmp_path
+        _local.conn = None
 
 
 def test_save_and_load_run():
@@ -199,3 +200,132 @@ def test_load_test_results_filter_by_phase():
     phase_b = load_test_results(phase="B")
     assert len(phase_b) == 1
     assert phase_b[0]["test_id"] == "t2"
+
+
+# --- New tests for comment features ---
+
+def test_comment_target_part():
+    from pipeline.phase1.storage import load_comments_by_annotation, save_comment
+
+    save_comment("item1", "alice", "bob", "general comment", target_part="general")
+    save_comment("item1", "alice", "bob", "preflection note", target_part="preflection")
+    save_comment("item1", "alice", "bob", "reflection feedback", target_part="reflection")
+
+    by_ann = load_comments_by_annotation()
+    comments = by_ann[("item1", "alice")]
+    assert len(comments) == 3
+
+    general = [c for c in comments if c["target_part"] == "general"]
+    assert len(general) == 1
+    assert general[0]["comment"] == "general comment"
+
+    pre = [c for c in comments if c["target_part"] == "preflection"]
+    assert len(pre) == 1
+
+    refl = [c for c in comments if c["target_part"] == "reflection"]
+    assert len(refl) == 1
+
+
+def test_delete_comment():
+    from pipeline.phase1.storage import delete_comment, load_comments_by_annotation, save_comment
+
+    save_comment("item1", "alice", "bob", "to delete", target_part="general")
+    save_comment("item1", "alice", "bob", "to keep", target_part="general")
+
+    by_ann = load_comments_by_annotation()
+    comments = by_ann[("item1", "alice")]
+    assert len(comments) == 2
+
+    delete_comment(comments[0]["id"])
+
+    by_ann = load_comments_by_annotation()
+    comments = by_ann[("item1", "alice")]
+    assert len(comments) == 1
+    assert comments[0]["comment"] == "to keep"
+
+
+def test_annotation_roundtrip():
+    from pipeline.phase1.storage import load_latest_annotations, save_annotation
+
+    save_annotation(
+        item_id="item1", annotator_id="alice", subset="score_3",
+        text="hello world", reflection_point=5,
+        analysis="analysis text", preflection="pre text",
+        reflection="refl text",
+        reflection_charter_elements=["1.1", "2.3"],
+        presentation_order=0,
+    )
+    latest = load_latest_annotations()
+    assert len(latest) == 1
+    ann = latest[("item1", "alice")]
+    assert ann["reflection_charter_elements"] == ["1.1", "2.3"]
+    assert ann["analysis"] == "analysis text"
+
+
+def test_migration_script(tmp_path):
+    """Test that the migration script correctly converts JSONL to SQLite."""
+    import sqlite3
+
+    # Create fake JSONL files
+    ann_dir = tmp_path / "annotation"
+    ann_dir.mkdir()
+    pipe_dir = tmp_path / "pipeline"
+    pipe_dir.mkdir()
+
+    # Annotations with duplicate (last wins)
+    anns = [
+        {"item_id": "i1", "annotator_id": "a1", "subset": "s0", "text": "t",
+         "reflection_point": 1, "analysis": "old", "preflection": "p",
+         "reflection": "r", "reflection_charter_elements": [], "presentation_order": 0,
+         "timestamp": "2025-01-01T00:00:00"},
+        {"item_id": "i1", "annotator_id": "a1", "subset": "s0", "text": "t",
+         "reflection_point": 1, "analysis": "new", "preflection": "p",
+         "reflection": "r", "reflection_charter_elements": ["1.1"], "presentation_order": 1,
+         "timestamp": "2025-01-01T01:00:00"},
+    ]
+    (ann_dir / "annotations.jsonl").write_text("\n".join(json.dumps(a) for a in anns))
+
+    # Comments
+    comments = [
+        {"item_id": "i1", "target_annotator_id": "a1", "commenter_id": "b1",
+         "comment": "nice", "timestamp": "2025-01-01T02:00:00"},
+    ]
+    (ann_dir / "comments.jsonl").write_text("\n".join(json.dumps(c) for c in comments))
+
+    # Items
+    items = [
+        {"item_id": "x1", "iteration": 1, "is_gold": False, "subset": "s0",
+         "text": "hello", "reflection_point": 2, "gen_prompt": "g.md",
+         "model": "m", "analysis": "a", "preflection": "p", "reflection": "r",
+         "charter_elements": [], "raw_response": "raw", "reasoning": None,
+         "latency_ms": 50, "timestamp": "2025-01-01", "judgment": None},
+    ]
+    (pipe_dir / "items.jsonl").write_text("\n".join(json.dumps(i) for i in items))
+
+    # Empty files for the rest
+    (pipe_dir / "reviews.jsonl").write_text("")
+    (pipe_dir / "runs.jsonl").write_text("")
+    (pipe_dir / "test_results.jsonl").write_text("")
+    (pipe_dir / "loop_history.jsonl").write_text("")
+
+    # Run migration with patched paths
+    with patch("pipeline.config.ANNOTATION_DATA_DIR", ann_dir), \
+         patch("pipeline.config.PIPELINE_DATA_DIR", pipe_dir), \
+         patch("scripts.migrate_jsonl_to_sqlite.ANNOTATION_DATA_DIR", ann_dir), \
+         patch("scripts.migrate_jsonl_to_sqlite.PIPELINE_DATA_DIR", pipe_dir):
+        from scripts.migrate_jsonl_to_sqlite import migrate
+        migrate()
+
+    # Verify
+    from pipeline.storage import _get_conn
+    conn = _get_conn()
+    ann_rows = conn.execute("SELECT * FROM annotations").fetchall()
+    assert len(ann_rows) == 1
+    assert ann_rows[0]["analysis"] == "new"  # last-wins dedup
+
+    comment_rows = conn.execute("SELECT * FROM comments").fetchall()
+    assert len(comment_rows) == 1
+    assert comment_rows[0]["target_part"] == "general"
+
+    item_rows = conn.execute("SELECT * FROM items").fetchall()
+    assert len(item_rows) == 1
