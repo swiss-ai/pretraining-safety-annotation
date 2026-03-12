@@ -102,86 +102,134 @@ def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _word_diff_html(old_line: str, new_line: str) -> tuple[str, str]:
+    """Produce word-level highlighted HTML for a changed line pair.
+
+    Returns (old_html, new_html) with inline <span> highlights on the
+    words that actually differ.
+    """
+    old_words = old_line.split(" ")
+    new_words = new_line.split(" ")
+    sm = difflib.SequenceMatcher(None, old_words, new_words)
+
+    old_parts: list[str] = []
+    new_parts: list[str] = []
+    DEL = '<span style="background:#b3443a;border-radius:3px;padding:0 2px;">{}</span>'
+    INS = '<span style="background:#2ea04e;border-radius:3px;padding:0 2px;">{}</span>'
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            old_parts.append(_esc(" ".join(old_words[i1:i2])))
+            new_parts.append(_esc(" ".join(new_words[j1:j2])))
+        elif tag == "replace":
+            old_parts.append(DEL.format(_esc(" ".join(old_words[i1:i2]))))
+            new_parts.append(INS.format(_esc(" ".join(new_words[j1:j2]))))
+        elif tag == "delete":
+            old_parts.append(DEL.format(_esc(" ".join(old_words[i1:i2]))))
+        elif tag == "insert":
+            new_parts.append(INS.format(_esc(" ".join(new_words[j1:j2]))))
+
+    return " ".join(old_parts), " ".join(new_parts)
+
+
 def _prompt_diff_html(before: str, after: str, filename: str) -> str:
-    """Generate a GitHub-style inline diff view with line numbers and colored backgrounds."""
+    """Generate a side-by-side diff with word-level highlighting."""
     before_lines = before.splitlines()
     after_lines = after.splitlines()
 
     n_add = n_del = 0
-    rows: list[str] = []
 
-    ROW = (
-        '<tr style="background:{bg};">'
-        '<td style="padding:0 8px;color:#888;text-align:right;user-select:none;'
-        'border-right:1px solid #444;min-width:35px;font-size:0.8em;">{old_ln}</td>'
-        '<td style="padding:0 8px;color:#888;text-align:right;user-select:none;'
-        'border-right:1px solid #444;min-width:35px;font-size:0.8em;">{new_ln}</td>'
-        '<td style="padding:0 4px;color:{sign_color};user-select:none;'
-        'font-weight:bold;width:1em;text-align:center;">{sign}</td>'
-        '<td style="padding:0 6px;white-space:pre-wrap;word-break:break-word;">{text}</td>'
-        '</tr>'
-    )
-    HUNK = (
-        '<tr style="background:#1a3a5c;">'
-        '<td colspan="4" style="padding:4px 12px;color:#58a6ff;font-size:0.85em;">{text}</td>'
-        '</tr>'
-    )
+    # Collect aligned row pairs: (left_ln, left_html, left_bg, right_ln, right_html, right_bg)
+    rows: list[tuple] = []
+    CTX_BG = "transparent"
+    DEL_BG = "rgba(248,81,73,0.10)"
+    INS_BG = "rgba(63,185,80,0.10)"
 
-    for group in difflib.SequenceMatcher(None, before_lines, after_lines).get_grouped_opcodes(3):
-        # Hunk header
-        i1, _, j1, _ = group[0][1], group[0][2], group[0][3], group[0][4]
-        i2, j2 = group[-1][2], group[-1][4]
-        rows.append(HUNK.format(text=f"@@ -{i1+1},{i2-i1} +{j1+1},{j2-j1} @@"))
-
+    for group in difflib.SequenceMatcher(None, before_lines, after_lines).get_grouped_opcodes(8):
         for tag, a0, a1, b0, b1 in group:
             if tag == "equal":
-                for i, line in enumerate(before_lines[a0:a1]):
-                    rows.append(ROW.format(
-                        bg="transparent", old_ln=a0+i+1, new_ln=b0+i+1,
-                        sign=" ", sign_color="#666", text=_esc(line),
+                for i in range(a1 - a0):
+                    rows.append((
+                        a0 + i + 1, _esc(before_lines[a0 + i]), CTX_BG,
+                        b0 + i + 1, _esc(after_lines[b0 + i]), CTX_BG,
                     ))
             elif tag == "replace":
-                for i, line in enumerate(before_lines[a0:a1]):
-                    n_del += 1
-                    rows.append(ROW.format(
-                        bg="rgba(248,81,73,0.15)", old_ln=a0+i+1, new_ln="",
-                        sign="-", sign_color="#ff7b72", text=_esc(line),
-                    ))
-                for i, line in enumerate(after_lines[b0:b1]):
-                    n_add += 1
-                    rows.append(ROW.format(
-                        bg="rgba(63,185,80,0.15)", old_ln="", new_ln=b0+i+1,
-                        sign="+", sign_color="#3fb950", text=_esc(line),
-                    ))
+                old_lines = before_lines[a0:a1]
+                new_lines = after_lines[b0:b1]
+                # Pair up lines for word-level diff, pad shorter side
+                max_len = max(len(old_lines), len(new_lines))
+                for i in range(max_len):
+                    if i < len(old_lines) and i < len(new_lines):
+                        old_html, new_html = _word_diff_html(old_lines[i], new_lines[i])
+                        rows.append((a0 + i + 1, old_html, DEL_BG, b0 + i + 1, new_html, INS_BG))
+                        n_del += 1
+                        n_add += 1
+                    elif i < len(old_lines):
+                        rows.append((a0 + i + 1, _esc(old_lines[i]), DEL_BG, "", "", INS_BG))
+                        n_del += 1
+                    else:
+                        rows.append(("", "", DEL_BG, b0 + i + 1, _esc(new_lines[i]), INS_BG))
+                        n_add += 1
             elif tag == "delete":
                 for i, line in enumerate(before_lines[a0:a1]):
+                    rows.append((a0 + i + 1, _esc(line), DEL_BG, "", "", INS_BG))
                     n_del += 1
-                    rows.append(ROW.format(
-                        bg="rgba(248,81,73,0.15)", old_ln=a0+i+1, new_ln="",
-                        sign="-", sign_color="#ff7b72", text=_esc(line),
-                    ))
             elif tag == "insert":
                 for i, line in enumerate(after_lines[b0:b1]):
+                    rows.append(("", "", DEL_BG, b0 + i + 1, _esc(line), INS_BG))
                     n_add += 1
-                    rows.append(ROW.format(
-                        bg="rgba(63,185,80,0.15)", old_ln="", new_ln=b0+i+1,
-                        sign="+", sign_color="#3fb950", text=_esc(line),
-                    ))
 
     if not rows:
         return "<em>No changes</em>"
 
+    # Build stats bar
     stats = (
-        f'<div style="padding:8px 12px;border-bottom:1px solid #444;font-size:0.85em;">'
-        f'<span style="color:#3fb950;font-weight:bold;">+{n_add}</span>'
-        f'<span style="color:#666;margin:0 6px;">/</span>'
-        f'<span style="color:#ff7b72;font-weight:bold;">-{n_del}</span>'
-        f'<span style="color:#888;margin-left:12px;">{_esc(filename)}</span>'
-        f'</div>'
+        '<div style="padding:8px 14px;border-bottom:1px solid #30363d;display:flex;'
+        'align-items:center;gap:12px;">'
+        f'<span style="font-weight:600;color:#c9d1d9;">{_esc(filename)}</span>'
+        f'<span style="background:#238636;color:#fff;padding:1px 8px;border-radius:10px;'
+        f'font-size:0.8em;font-weight:600;">+{n_add}</span>'
+        f'<span style="background:#da3633;color:#fff;padding:1px 8px;border-radius:10px;'
+        f'font-size:0.8em;font-weight:600;">-{n_del}</span>'
+        '</div>'
     )
+
+    # Cell styles
+    LN = ('padding:1px 8px;color:#484f58;text-align:right;user-select:none;'
+          'vertical-align:top;white-space:nowrap;width:1%;font-size:0.85em;')
+    CELL = ('padding:1px 10px;white-space:pre-wrap;word-break:break-word;'
+            'vertical-align:top;line-height:1.55;')
+    SEP = 'width:1px;background:#30363d;'
+
+    html_rows: list[str] = []
+    for left_ln, left_html, left_bg, right_ln, right_html, right_bg in rows:
+        html_rows.append(
+            f'<tr>'
+            f'<td style="{LN}background:{left_bg};">{left_ln}</td>'
+            f'<td style="{CELL}background:{left_bg};">{left_html}</td>'
+            f'<td style="{SEP}"></td>'
+            f'<td style="{LN}background:{right_bg};">{right_ln}</td>'
+            f'<td style="{CELL}background:{right_bg};">{right_html}</td>'
+            f'</tr>'
+        )
+
+    # Column headers
+    header = (
+        '<tr style="border-bottom:1px solid #30363d;">'
+        '<td colspan="2" style="padding:6px 10px;color:#8b949e;font-weight:600;'
+        'font-size:0.85em;text-align:center;">Before</td>'
+        f'<td style="{SEP}"></td>'
+        '<td colspan="2" style="padding:6px 10px;color:#8b949e;font-weight:600;'
+        'font-size:0.85em;text-align:center;">After</td>'
+        '</tr>'
+    )
+
     table = (
-        f'<table style="width:100%;border-collapse:collapse;font-family:monospace;'
-        f'font-size:0.82em;line-height:1.5;">{"".join(rows)}</table>'
+        f'<table style="width:100%;border-collapse:collapse;font-family:\'SF Mono\','
+        f'Menlo,Consolas,monospace;font-size:0.82em;table-layout:fixed;">'
+        f'<colgroup><col style="width:30px"><col style="width:calc(50% - 30px)">'
+        f'<col style="width:1px"><col style="width:30px"><col style="width:calc(50% - 30px)">'
+        f'</colgroup>{header}{"".join(html_rows)}</table>'
     )
     return stats + table
 
@@ -257,7 +305,8 @@ def _render_loop_history():
                                 html = _prompt_diff_html(before, after, filename)
                                 ui.html(
                                     f'<div style="background:#0d1117;border:1px solid #30363d;'
-                                    f'border-radius:6px;overflow:hidden;">{html}</div>'
+                                    f'border-radius:6px;overflow:hidden;max-height:600px;'
+                                    f'overflow-y:auto;">{html}</div>'
                                 )
                 elif prompts_before:
                     ui.label("No prompt changes in this run.").classes("text-grey-6 text-caption q-mt-xs")
