@@ -11,7 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import glob
 import json
 import os
@@ -34,6 +33,7 @@ from pipeline.config import (
 from pipeline.storage import items_path
 
 STATUS_PATH = PIPELINE_DATA_DIR / "loop_status.json"
+IMPROVER_LOG_PATH = PIPELINE_DATA_DIR / "improver_log.txt"
 
 
 def write_status(status: dict) -> None:
@@ -94,11 +94,54 @@ def _update_config(cfg: PipelineConfig, new_gen: str, new_judge: str) -> Pipelin
     return load_config()
 
 
+def _write_improver_summary(iteration: int) -> Path:
+    """Write a condensed summary of iteration results for the improver to read.
+
+    Strips bulky fields (full text, raw_response) and keeps only what's
+    needed for analysis: scores, decisions, generated outputs, charter elements.
+    """
+    from pipeline.storage import load_items_for_iteration
+
+    items = load_items_for_iteration(iteration)
+    summary_path = PIPELINE_DATA_DIR / f"improver_input_iter{iteration}.jsonl"
+
+    with open(summary_path, "w") as f:
+        for item in items:
+            judgment = item.get("judgment", {})
+            record = {
+                "item_id": item["item_id"],
+                "is_gold": item.get("is_gold", False),
+                "subset": item["subset"],
+                "text_preview": item["text"][:300],
+                "reflection_point": item["reflection_point"],
+                "analysis": item.get("analysis", ""),
+                "preflection": item.get("preflection", ""),
+                "reflection": item.get("reflection", ""),
+                "charter_elements": item.get("charter_elements", []),
+                "judgment": {
+                    "decision": judgment.get("decision"),
+                    "aggregate": judgment.get("aggregate"),
+                    "preflection": {
+                        "scores": judgment.get("preflection", {}).get("scores"),
+                        "reasoning": judgment.get("preflection", {}).get("reasoning"),
+                    },
+                    "reflection": {
+                        "scores": judgment.get("reflection", {}).get("scores"),
+                        "reasoning": judgment.get("reflection", {}).get("reasoning"),
+                    },
+                } if judgment else None,
+            }
+            f.write(json.dumps(record) + "\n")
+
+    return summary_path
+
+
 def run_improver(iteration: int, cfg: PipelineConfig) -> str:
     """Spawn a sandboxed Claude CLI to analyze results and improve prompts.
 
-    The subprocess is restricted to Read/Glob/Grep/Write via --allowedTools,
-    and Write is further scoped to the model's prompt directory only.
+    Pre-extracts a condensed summary of iteration results (no full texts
+    or raw API responses) so the improver can read it without needing
+    Bash/python. The subprocess is restricted to Read/Glob/Grep/Write.
     Returns the analysis text from Claude's stdout.
     """
     slug = model_slug(cfg.model)
@@ -107,48 +150,204 @@ def run_improver(iteration: int, cfg: PipelineConfig) -> str:
     judge_path = resolve_prompt_path(cfg.prompts.judge, cfg.model)
     improver_path = _INIT_PROMPTS_DIR / cfg.prompts.improver
     gold_path = PROJECT_ROOT / "data" / "annotation" / "annotations.jsonl"
-    items_file = items_path()
+
+    summary_path = _write_improver_summary(iteration)
 
     current_gen_v = _extract_version(cfg.prompts.generator)
     next_v = current_gen_v + 1
 
-    rel_model_dir = model_dir.relative_to(PROJECT_ROOT)
+    state_path = model_dir / "state.md"
+    if not state_path.exists():
+        state_path.write_text("# Improver State\n\nNo previous iterations.\n")
 
     prompt = f"""You are improving prompts for a pretraining data annotation pipeline.
 
+## Query tools
+Run these via Bash (prefix with `uv run`). They are your primary data access tools:
+  uv run python -m pipeline.improver_tools summary {iteration}     — aggregate stats, per-dimension means
+  uv run python -m pipeline.improver_tools failures {iteration}    — rejected items with judge reasoning
+  uv run python -m pipeline.improver_tools diversity {iteration}   — opening phrases for diversity check
+  uv run python -m pipeline.improver_tools scores {iteration}      — compact scores table for all items
+  uv run python -m pipeline.improver_tools show <id> {iteration}   — full text + preflection + reflection
+  uv run python -m pipeline.improver_tools item <id> {iteration}   — full details as JSON
+  uv run python -m pipeline.improver_tools gold                    — show gold (human) annotations for reference
+  uv run python -m pipeline.improver_tools compare <id> {iteration} — side-by-side generated vs gold for an item
+
+## State
+Read your state file at {state_path} FIRST. It contains notes from previous iterations.
+
+## Strategy: use subagents for parallel exploration
+You have access to the Agent tool. Use it to parallelize your analysis:
+- Spawn one subagent to analyze failures and low-scoring items in detail
+- Spawn another to compare generated outputs with gold annotations
+- Spawn another to check diversity patterns
+Then synthesize their findings to write improved prompts.
+
 ## Your task
-1. Read iteration {iteration} results from {items_file}
-2. Read the improver instructions from {improver_path}
-3. Read the current generator prompt: {gen_path}
-4. Read the current judge prompt: {judge_path}
-5. Read gold annotations from {gold_path} for comparison
-6. Analyze failures following the improver instructions
-7. Write improved generator to {model_dir}/generator_v{next_v}.md
-8. Write improved judge to {model_dir}/judge_v{next_v}.md
+1. Read your state file: {state_path}
+2. Run the query tools to gather data (use subagents to parallelize):
+   - `summary` and `scores` for overall stats
+   - `failures` for what went wrong
+   - `diversity` for output variety
+   - `gold` and `compare` to see how gold annotations differ from generated output
+3. Read the improver instructions: {improver_path}
+4. Read the current prompts: {gen_path} and {judge_path}
+5. Analyze failures following the improver instructions
+6. Write improved generator to {model_dir}/generator_v{next_v}.md
+7. Write improved judge to {model_dir}/judge_v{next_v}.md
+8. Update {state_path} with: what you changed, why, key metrics, and what to try next
 9. Print your analysis summary as the final output
 
-You can ONLY write files inside {model_dir}/. Do NOT modify any other files.
+IMPORTANT:
+- Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
+- Do NOT pipe commands together (e.g. `cmd1 | cmd2`). Run them as separate Bash calls.
+- You can ONLY write files inside {model_dir}/. Do NOT modify any other files.
+- Do NOT overfit to individual examples, especially gold ones. Gold annotations are noisy
+  and imperfect — use them to understand the *style and spirit* of good annotations, not as
+  ground truth to copy. Focus on systematic patterns across many items.
+- The generator and judge prompts must NOT hardcode specific charter/constitution content
+  (e.g. specific principle numbers or names). The constitution may change. The prompts should
+  reference the charter generically (e.g. "relevant charter elements") and work with whatever
+  charter is provided at runtime.
 """
 
-    allowed = f"Read Glob Grep Write({rel_model_dir}/*)"
-    disallowed = "Bash Edit Agent NotebookEdit"
+    allowed_tools = [
+        "Read", "Glob", "Grep", "Bash(uv run python:*)",
+        "Agent", "TaskCreate", "TaskUpdate", "TaskList",
+        "Write",
+    ]
+    settings = json.dumps({
+        "permissions": {
+            "allow": allowed_tools,
+            "deny": ["Edit", "NotebookEdit"],
+        }
+    })
     cmd = [
         "claude",
         "--print",
         "--model", "opus",
-        "--allowedTools", allowed,
-        "--disallowedTools", disallowed,
+        "--verbose",
+        "--output-format", "stream-json",
+        "--settings", settings,
         "--", prompt,
     ]
-    result = subprocess.run(
+
+    PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    IMPROVER_LOG_PATH.write_text("")  # clear previous log
+
+    proc = subprocess.Popen(
         cmd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=None,  # inherit parent's stderr
         text=True,
-        timeout=cfg.loop.improver_timeout_s,
         cwd=str(PROJECT_ROOT),
     )
-    assert result.returncode == 0, f"Claude improver failed: {result.stderr[-500:]}"
-    return result.stdout
+
+    import threading
+
+    final_text_holder: list[str] = []
+
+    def _reader():
+        final_text_holder.append(_stream_improver_output(proc, IMPROVER_LOG_PATH))
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
+
+    try:
+        # Poll so KeyboardInterrupt can be delivered between iterations
+        while reader_thread.is_alive():
+            reader_thread.join(timeout=0.5)
+    except KeyboardInterrupt:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        raise
+
+    assert proc.returncode == 0, (
+        f"Claude improver failed (rc={proc.returncode}). See {IMPROVER_LOG_PATH}"
+    )
+    return final_text_holder[0] if final_text_holder else ""
+
+
+def _stream_improver_output(proc: subprocess.Popen, log_path: Path) -> str:
+    """Read stream-json events from the improver subprocess.
+
+    Writes a human-readable log of tool use and text output to log_path
+    and to stderr. Returns the final concatenated text result.
+    """
+    final_text_parts = []
+
+    with open(log_path, "a") as log:
+        for raw_line in proc.stdout:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = event.get("type", "")
+
+            if msg_type == "assistant":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") == "text":
+                        text = block["text"]
+                        final_text_parts.append(text)
+                        _log_line(log, f"[text] {text}")
+                    elif block.get("type") == "tool_use":
+                        name = block.get("name", "?")
+                        inp = block.get("input", {})
+                        summary = _summarize_tool_input(name, inp)
+                        _log_line(log, f"[tool] {name}: {summary}")
+
+            elif msg_type == "user":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_result":
+                        tool_id = block.get("tool_use_id", "?")
+                        if block.get("is_error"):
+                            content = block.get("content", "")
+                            _log_line(log, f"[FAIL] {content[:300]}")
+                        else:
+                            content = str(block.get("content", ""))
+                            preview = content[:100].replace("\n", " ")
+                            _log_line(log, f"[ok]   {preview}")
+
+            elif msg_type == "result":
+                result_text = event.get("result", "")
+                if result_text and not final_text_parts:
+                    final_text_parts.append(result_text)
+                _log_line(log, f"[done] cost=${event.get('cost_usd', '?')}")
+
+    return "\n".join(final_text_parts)
+
+
+def _log_line(log_file, line: str) -> None:
+    """Write a line to both the log file and stderr."""
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()
+    log_file.write(line + "\n")
+    log_file.flush()
+
+
+def _summarize_tool_input(name: str, inp: dict) -> str:
+    """Produce a short summary of a tool invocation for logging."""
+    if name == "Read":
+        return inp.get("file_path", "?")
+    elif name == "Write":
+        path = inp.get("file_path", "?")
+        content = inp.get("content", "")
+        return f"{path} ({len(content)} chars)"
+    elif name == "Glob":
+        return inp.get("pattern", "?")
+    elif name == "Grep":
+        return f"{inp.get('pattern', '?')} in {inp.get('path', '.')}"
+    elif name == "Bash":
+        return inp.get("command", "?")[:150]
+    return json.dumps(inp)[:100]
 
 
 def _build_result_summary(loop_iter: int, pipeline_iter: int, items: list[dict]) -> dict:
@@ -166,7 +365,7 @@ def _build_result_summary(loop_iter: int, pipeline_iter: int, items: list[dict])
     }
 
 
-async def run_loop(n_iterations: int = 5, cfg: PipelineConfig | None = None) -> None:
+def run_loop(n_iterations: int = 5, cfg: PipelineConfig | None = None) -> None:
     """Main autonomous loop: generate+judge → improve → repeat.
 
     Supports resuming after a crash: reads loop_status.json to determine
@@ -175,11 +374,11 @@ async def run_loop(n_iterations: int = 5, cfg: PipelineConfig | None = None) -> 
 
     Writes progress to loop_status.json for dashboard polling.
     """
-    if cfg is None:
-        cfg = load_config()
-
     from pipeline.run import run_iteration
     from pipeline.storage import load_items_for_iteration, load_runs
+
+    if cfg is None:
+        cfg = load_config()
 
     existing = read_status()
 
@@ -274,7 +473,7 @@ async def run_loop(n_iterations: int = 5, cfg: PipelineConfig | None = None) -> 
                 items = load_items_for_iteration(pipeline_iter)
                 result_summary = _build_result_summary(i, pipeline_iter, items)
             else:
-                result = await run_iteration(cfg, phase_callback=phase_cb)
+                result = run_iteration(cfg, phase_callback=phase_cb)
                 pipeline_iter = result["iteration"]
                 result_summary = {
                     "loop_iteration": i,
@@ -308,6 +507,13 @@ async def run_loop(n_iterations: int = 5, cfg: PipelineConfig | None = None) -> 
         write_status(status)
         print(f"\nLoop complete: {n_iterations} iterations.")
 
+    except KeyboardInterrupt:
+        status["error"] = "Interrupted by user"
+        status["running"] = False
+        status["phase"] = "interrupted"
+        write_status(status)
+        print("\nLoop interrupted.")
+        raise
     except Exception as e:
         status["error"] = str(e)
         status["running"] = False
@@ -327,7 +533,7 @@ def main():
     print(f"Generator: {cfg.prompts.generator}")
     print(f"Judge: {cfg.prompts.judge}")
 
-    asyncio.run(run_loop(n_iterations=n, cfg=cfg))
+    run_loop(n_iterations=n, cfg=cfg)
 
 
 if __name__ == "__main__":
