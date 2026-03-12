@@ -21,7 +21,7 @@ phase2:
     prompt: generator_v1.md
   judge:
     model: glm45
-    prompt: judge_v2.md
+    prompt: judge_v1.md
   improver:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md
