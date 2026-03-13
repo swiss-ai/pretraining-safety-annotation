@@ -875,6 +875,28 @@ def pipeline_review_page():
                                     "margin-left: 160px; margin-top: -4px;"
                                 )
 
+                threshold = cfg.phase2.scoring.accept_threshold
+                review_status_label = ui.label("").classes("text-caption text-weight-bold")
+
+                def _update_review_status():
+                    all_vals = [
+                        int(slider.value)
+                        for dims in score_inputs.values()
+                        for slider in dims.values()
+                    ]
+                    agg = sum(all_vals) / len(all_vals) if all_vals else 0
+                    has_floor = any(v <= 2 for v in all_vals)
+                    decision = "reject" if has_floor or agg < threshold else "accept"
+                    color = "green" if decision == "accept" else "red"
+                    review_status_label.set_text(f"Avg: {agg:.2f} → {decision.upper()}")
+                    review_status_label.style(f"color: {color};")
+
+                # Wire up live updates from all sliders
+                for dims in score_inputs.values():
+                    for slider in dims.values():
+                        slider.on("update:model-value", lambda _: _update_review_status())
+                _update_review_status()
+
                 notes_input = ui.textarea(
                     placeholder="Notes (optional)...",
                 ).classes("w-full").props("outlined")
@@ -992,6 +1014,7 @@ def pipeline_review_page():
                 for slider in dims.values():
                     slider.set_value(3)
             notes_input.set_value("")
+        _update_review_status()
 
     def _show_gold_annotation(item_id: str):
         """Display the human annotation for a gold item."""
