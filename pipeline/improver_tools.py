@@ -755,6 +755,10 @@ def main():
 
     cmd = args[0]
 
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        sys.exit(0)
+
     def _get_flag(flag: str, default: str | None = None) -> str | None:
         if flag in args:
             return args[args.index(flag) + 1]
