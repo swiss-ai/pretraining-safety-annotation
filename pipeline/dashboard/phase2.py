@@ -705,12 +705,10 @@ def pipeline_monitoring_page():
             single_status.set_text("Running iteration...")
 
             def _run():
-                import asyncio as _asyncio
                 from pipeline.phase2.run import run_iteration
 
                 cfg = load_config()
-                result = _asyncio.run(run_iteration(cfg))
-                return result
+                return run_iteration(cfg)
 
             def _done():
                 single_btn.enable()

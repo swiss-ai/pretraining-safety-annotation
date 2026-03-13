@@ -6,6 +6,7 @@ import sqlite3
 import threading
 
 from pipeline.config import DATA_DIR
+from pipeline.log import logger
 
 DB_PATH = DATA_DIR / "storage.db"
 
@@ -109,15 +110,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 def _get_conn() -> sqlite3.Connection:
-    """Return a thread-local SQLite connection with WAL mode and Row factory."""
+    """Return a thread-local SQLite connection with WAL mode and Row factory.
+
+    Sets a 10-second busy timeout to handle concurrent access from dashboard,
+    backup, and iteration threads without "database is locked" errors.
+    """
     conn = getattr(_local, "conn", None)
     if conn is not None:
         return conn
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
     _init_schema(conn)
     _local.conn = conn
+    logger.debug("Opened SQLite connection (thread={})", threading.current_thread().name)
     return conn
 
 

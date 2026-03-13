@@ -9,6 +9,7 @@ dependencies = [
     "huggingface-hub>=1.5.0",
     "hydra-core>=1.3.2",
     "krippendorff>=0.8.2",
+    "loguru>=0.7.3",
     "nicegui>=3.8.0",
     "omegaconf>=2.3.0",
     "openai>=2.25.0",

@@ -40,6 +40,7 @@ from pipeline.phase2.storage import (
     save_item,
     save_run,
 )
+from pipeline.log import logger
 from pipeline.storage import compute_item_id
 
 MAX_RETRIES = 5
@@ -106,7 +107,7 @@ async def _api_call(
         ) as e:
             last_error = f"{type(e).__name__}: {e}"
         if attempt < MAX_RETRIES - 1:
-            print(f"  Retry {attempt + 2}/{MAX_RETRIES} due to: {last_error}")
+            logger.warning("Retry {}/{} due to: {}", attempt + 2, MAX_RETRIES, last_error)
             await asyncio.sleep(RETRY_BACKOFF_BASE ** attempt)
     raise RuntimeError(f"Failed after {MAX_RETRIES} retries: {last_error}")
 
@@ -124,7 +125,7 @@ def health_check(client: openai.AsyncOpenAI, model: str) -> None:
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_check())
-        print(f"Health check passed: model={model}")
+        logger.info("Health check passed: model={}", model)
     except Exception as e:
         raise RuntimeError(f"Health check failed for model={model}: {e}") from e
     finally:
@@ -275,7 +276,7 @@ def select_items(n_total: int, n_gold: int, seed: int, max_tokens: int) -> list[
         fresh = []
 
     items = selected_gold + fresh
-    print(f"Selected {len(selected_gold)} gold + {len(fresh)} fresh = {len(items)} items")
+    logger.info("Selected {} gold + {} fresh = {} items", len(selected_gold), len(fresh), len(items))
     return items
 
 
@@ -469,23 +470,23 @@ def run_iteration(cfg: AppConfig, phase_callback=None) -> dict:
     iteration = len(runs) + 1
     seed = 42 + iteration
 
-    print(f"\n{'='*60}")
-    print(f"ITERATION {iteration}")
-    print(f"{'='*60}")
+    logger.info("{'='*60}")
+    logger.info("ITERATION {}", iteration)
+    logger.info("{'='*60}")
 
     client, semaphore = make_api_client(cfg)
 
     gen_model = generator_api_name(cfg)
     jdg_model = judge_api_name(cfg)
 
-    print("Running health check...")
+    logger.info("Running health check...")
     health_check(client, gen_model)
     if jdg_model != gen_model:
         health_check(client, jdg_model)
 
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
 
-    print("Selecting items...")
+    logger.info("Selecting items...")
     items = select_items(cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold, seed, cfg.max_tokens)
 
     gen_prompt = resolve_prompt_path(cfg.phase2.generator.prompt, alias=cfg.phase2.generator.model)
@@ -493,14 +494,14 @@ def run_iteration(cfg: AppConfig, phase_callback=None) -> dict:
 
     if phase_callback:
         phase_callback("generating")
-    print(f"Generating with {gen_prompt.name}...")
+    logger.info("Generating with {}...", gen_prompt.name)
     generated = generate_batch(
         items, gen_prompt, charter_text, gen_model, iteration, client, semaphore,
     )
 
     if phase_callback:
         phase_callback("judging")
-    print(f"Judging with {judge_prompt.name}...")
+    logger.info("Judging with {}...", judge_prompt.name)
     judged = judge_batch(
         generated, judge_prompt, jdg_model, iteration,
         cfg.phase2.scoring.accept_threshold, client, semaphore,
@@ -527,7 +528,7 @@ def run_iteration(cfg: AppConfig, phase_callback=None) -> dict:
         f"Iteration {iteration}: {n_accepted} accepted, {n_rejected} rejected, "
         f"mean score {mean_score:.2f}. {reasoning_note}"
     )
-    print(f"\n{summary}")
+    logger.info(summary)
 
     save_run(
         iteration=iteration,
@@ -565,7 +566,7 @@ def rejudge_reviewed_items(cfg: AppConfig) -> list[dict]:
 
     reviews = load_latest_reviews()
     if not reviews:
-        print("No reviewed items to re-judge.")
+        logger.info("No reviewed items to re-judge.")
         return []
 
     # Collect unique (item_id, iteration) pairs that have reviews
@@ -578,14 +579,14 @@ def rejudge_reviewed_items(cfg: AppConfig) -> list[dict]:
     ]
 
     if not items_to_rejudge:
-        print("No matching items found for reviewed keys.")
+        logger.info("No matching items found for reviewed keys.")
         return []
 
     client, semaphore = make_api_client(cfg)
     judge_prompt = resolve_prompt_path(cfg.phase2.judge.prompt, alias=cfg.phase2.judge.model)
     model = judge_api_name(cfg)
 
-    print(f"Re-judging {len(items_to_rejudge)} reviewed items with {judge_prompt.name}...")
+    logger.info("Re-judging {} reviewed items with {}...", len(items_to_rejudge), judge_prompt.name)
 
     judged = judge_batch(
         items=items_to_rejudge,
@@ -598,7 +599,7 @@ def rejudge_reviewed_items(cfg: AppConfig) -> list[dict]:
         save=True,
     )
 
-    print(f"Re-judged {len(judged)} items with {judge_prompt.name}.")
+    logger.info("Re-judged {} items with {}.", len(judged), judge_prompt.name)
     return judged
 
 
@@ -607,17 +608,17 @@ def main():
     overrides = sys.argv[1:] if len(sys.argv) > 1 else None
     cfg = load_config(overrides)
 
-    print(f"Generator: {cfg.phase2.generator.model} ({generator_api_name(cfg)})")
-    print(f"Judge: {cfg.phase2.judge.model} ({judge_api_name(cfg)})")
-    print(f"Endpoint: {cfg.phase2.endpoint}")
-    print(f"Items: {cfg.phase2.iteration.n_items} (gold: {cfg.phase2.iteration.n_gold})")
-    print(f"Generator prompt: {resolve_prompt_path(cfg.phase2.generator.prompt, cfg.phase2.generator.model).name}")
-    print(f"Judge prompt: {resolve_prompt_path(cfg.phase2.judge.prompt, cfg.phase2.judge.model).name}")
-    print(f"Threshold: {cfg.phase2.scoring.accept_threshold}")
+    logger.info("Generator: {} ({})", cfg.phase2.generator.model, generator_api_name(cfg))
+    logger.info("Judge: {} ({})", cfg.phase2.judge.model, judge_api_name(cfg))
+    logger.info("Endpoint: {}", cfg.phase2.endpoint)
+    logger.info("Items: {} (gold: {})", cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold)
+    logger.info("Generator prompt: {}", resolve_prompt_path(cfg.phase2.generator.prompt, cfg.phase2.generator.model).name)
+    logger.info("Judge prompt: {}", resolve_prompt_path(cfg.phase2.judge.prompt, cfg.phase2.judge.model).name)
+    logger.info("Threshold: {}", cfg.phase2.scoring.accept_threshold)
 
     result = run_iteration(cfg)
 
-    print(f"\nDone. {result['n_accepted']}/{result['n_items']} accepted.")
+    logger.info("Done. {}/{} accepted.", result['n_accepted'], result['n_items'])
 
 
 if __name__ == "__main__":

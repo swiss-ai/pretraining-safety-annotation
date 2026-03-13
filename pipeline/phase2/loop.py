@@ -29,6 +29,7 @@ from pipeline.config import (
     load_config,
     resolve_prompt_path,
 )
+from pipeline.log import logger
 from pipeline.phase2.storage import save_loop_run
 
 STATUS_PATH = PIPELINE_DATA_DIR / "loop_status.json"
@@ -354,7 +355,7 @@ def _spawn_agent(prompt: str, log_path: Path, allowed_tools: list[str]) -> str:
     if proc.returncode != 0:
         if output:
             # Agent produced output but exited with non-zero/None code — warn, don't crash
-            print(f"WARNING: Claude agent exited with rc={proc.returncode} but produced output. Continuing.")
+            logger.warning("Claude agent exited with rc={} but produced output. Continuing.", proc.returncode)
         else:
             raise RuntimeError(
                 f"Claude agent failed (rc={proc.returncode}) with no output. See {log_path}"
@@ -542,9 +543,9 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
 
     try:
         # --- Phase A: Judge Improvement ---
-        print("=" * 60)
-        print("PHASE A: Judge Improvement")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("PHASE A: Judge Improvement")
+        logger.info("=" * 60)
 
         prompt_a = _build_phase_a_prompt(cfg)
         analysis_a = _spawn_agent(prompt_a, IMPROVER_LOG_A_PATH, ALLOWED_TOOLS)
@@ -554,7 +555,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
         current_judge = _resolve_config_prompt(cfg.phase2.judge.prompt, alias)
         if new_judge != current_judge:
             cfg = _update_config(cfg, new_gen, new_judge)
-            print(f"Phase A done: updated judge -> {new_judge}")
+            logger.info("Phase A done: updated judge -> {}", new_judge)
 
         now_a = datetime.now(timezone.utc).isoformat()
         status["phase_a"]["status"] = "done"
@@ -567,9 +568,9 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
         status["phase_b"]["started_at"] = now_a
         write_status(status)
 
-        print("\n" + "=" * 60)
-        print("PHASE B: Generator Improvement")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("PHASE B: Generator Improvement")
+        logger.info("=" * 60)
 
         prompt_b = _build_phase_b_prompt(cfg)
         analysis_b = _spawn_agent(prompt_b, IMPROVER_LOG_B_PATH, ALLOWED_TOOLS)
@@ -579,7 +580,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
         current_gen = _resolve_config_prompt(cfg.phase2.generator.prompt, alias)
         if new_gen != current_gen:
             cfg = _update_config(cfg, new_gen, new_judge)
-            print(f"Phase B done: updated generator -> {new_gen}")
+            logger.info("Phase B done: updated generator -> {}", new_gen)
 
         now_b = datetime.now(timezone.utc).isoformat()
         status["phase_b"]["status"] = "done"
@@ -589,7 +590,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
         status["phase"] = "done"
         status["running"] = False
         write_status(status)
-        print("\nImprover loop complete (A+B).")
+        logger.info("Improver loop complete (A+B).")
 
     except KeyboardInterrupt:
         status["error"] = "Interrupted by user"
@@ -599,7 +600,7 @@ def run_improver_loop(cfg: AppConfig | None = None) -> None:
             if status[p]["status"] == "running":
                 status[p]["status"] = "error"
         write_status(status)
-        print("\nLoop interrupted.")
+        logger.warning("Loop interrupted.")
         raise
     except Exception as e:
         status["error"] = str(e)
@@ -649,10 +650,10 @@ def main():
     overrides = sys.argv[1:] if len(sys.argv) > 1 else None
     cfg = load_config(overrides)
 
-    print("Starting two-phase improver loop")
-    print(f"Generator: {cfg.phase2.generator.model} (prompt: {cfg.phase2.generator.prompt})")
-    print(f"Judge: {cfg.phase2.judge.model} (prompt: {cfg.phase2.judge.prompt})")
-    print(f"Max batches per phase: {cfg.phase2.improver.max_batches_per_phase}")
+    logger.info("Starting two-phase improver loop")
+    logger.info("Generator: {} (prompt: {})", cfg.phase2.generator.model, cfg.phase2.generator.prompt)
+    logger.info("Judge: {} (prompt: {})", cfg.phase2.judge.model, cfg.phase2.judge.prompt)
+    logger.info("Max batches per phase: {}", cfg.phase2.improver.max_batches_per_phase)
 
     run_improver_loop(cfg=cfg)
 
