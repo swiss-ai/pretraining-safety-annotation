@@ -119,11 +119,17 @@ def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
     return (p_o - p_e) / (1 - p_e)
 
 
-def _compute_correlation_by_judge_version() -> dict[tuple[str, str], dict]:
+def _compute_correlation_by_judge_version(
+    gen_filter: str | None = None,
+    iter_to_gen: dict[int, str] | None = None,
+) -> dict[tuple[str, str], dict]:
     """Compute aggregate Pearson correlation and Cohen's kappa for each (judge_prompt, judge_model).
 
     Uses judge_correlations table (re-judgments) paired with human reviews.
     Returns {(judge_prompt, judge_model): {"pearson": float|None, "kappa": float|None}}.
+
+    If gen_filter is set, only include correlations from iterations whose generator model
+    matches gen_filter (looked up via iter_to_gen mapping).
     """
     correlations = load_judge_correlations()
     reviews = load_latest_reviews()
@@ -137,6 +143,9 @@ def _compute_correlation_by_judge_version() -> dict[tuple[str, str], dict]:
     score_pairs: dict[tuple[str, str], list[tuple[float, float]]] = {}
     decision_pairs: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for c in correlations:
+        if gen_filter and iter_to_gen:
+            if iter_to_gen.get(c["iteration"]) != gen_filter:
+                continue
         key = (c["item_id"], c["iteration"])
         review = review_by_item.get(key)
         if not review:
@@ -222,6 +231,34 @@ def _render_calibration_from_items(cal: dict) -> None:
                     short = dim.replace(f"{part}_", "")
                     val = f"{corr:.3f}" if corr is not None else "N/A"
                     ui.label(f"  {short}: {val}").classes("text-body2")
+
+
+def _render_judge_scores(judgment: dict) -> None:
+    """Render judge score details for a single judgment dict."""
+    with ui.row().classes("gap-4"):
+        ui.badge(
+            f"Aggregate: {judgment['aggregate']:.1f}",
+            color="green" if judgment["decision"] == "accept" else "red",
+        )
+        ui.badge(judgment["decision"].upper(), color="green" if judgment["decision"] == "accept" else "red")
+        jp = judgment.get("judge_prompt", "")
+        if jp:
+            ui.badge(jp, color="blue-grey").props("outline")
+
+    for part in ("preflection", "reflection"):
+        part_j = judgment.get(part, {})
+        if not part_j:
+            continue
+        ui.label(f"{part.title()} ({part_j.get('aggregate', 0):.1f})").classes(
+            "text-overline text-grey-7 q-mt-sm"
+        )
+        with ui.row().classes("gap-2"):
+            for dim, score in part_j.get("scores", {}).items():
+                color = "green" if score >= 4 else ("orange" if score >= 3 else "red")
+                ui.badge(f"{dim}: {score}", color=color)
+        ui.label(part_j.get("reasoning", "")).classes("text-body2").style(
+            "white-space: pre-wrap; font-size: 0.9em;"
+        )
 
 
 def _status_badge(status: str) -> tuple[str, str]:
@@ -670,6 +707,8 @@ def pipeline_monitoring_page():
 
             with ui.card().classes("flex-1 q-pa-md"):
                 ui.label("Judge-Human Correlation by Judge Version").classes("text-subtitle2 text-weight-bold")
+                # Build iteration → generator_model mapping for filtering
+                iter_to_gen = {r["iteration"]: r.get("generator_model", "unknown") for r in runs}
                 version_corrs = _compute_correlation_by_judge_version()
                 if not version_corrs:
                     ui.label("No judge correlations yet.").classes("text-grey-6")
@@ -684,25 +723,33 @@ def pipeline_monitoring_page():
                         key=lambda p: int(m.group(1)) if (m := _re.search(r"_v(\d+)", p)) else 0,
                     )
 
-                    def _aggregate_metric(prompt, selected_model, metric):
-                        if selected_model.startswith("All"):
-                            vals = [
-                                version_corrs.get((prompt, m), {}).get(metric)
-                                for m in all_models
-                            ]
-                            vals = [v for v in vals if v is not None]
-                            if not vals:
-                                return None
-                            if "mean" in selected_model.lower():
-                                return round(statistics.mean(vals), 3)
-                            return round(min(vals), 3)
-                        entry = version_corrs.get((prompt, selected_model), {})
-                        v = entry.get(metric)
-                        return round(v, 3) if v is not None else None
+                    # Correlation chart state: tracks both judge model and generator filter
+                    corr_state = {"judge_model": default_model, "gen_filter": None}
 
-                    def _build_corr_chart(selected_model: str) -> dict:
-                        corr_data = [_aggregate_metric(p, selected_model, "pearson") for p in all_prompts]
-                        kappa_data = [_aggregate_metric(p, selected_model, "kappa") for p in all_prompts]
+                    def _build_corr_chart_filtered() -> dict:
+                        """Build correlation chart using current corr_state filters."""
+                        gf = corr_state["gen_filter"]
+                        vc = _compute_correlation_by_judge_version(
+                            gen_filter=gf, iter_to_gen=iter_to_gen,
+                        ) if gf else version_corrs
+                        sm = corr_state["judge_model"]
+                        cur_models = sorted({m for _, m in vc}) if vc else []
+
+                        def _agg(prompt, metric):
+                            if sm.startswith("All"):
+                                vals = [vc.get((prompt, m), {}).get(metric) for m in cur_models]
+                                vals = [v for v in vals if v is not None]
+                                if not vals:
+                                    return None
+                                if "mean" in sm.lower():
+                                    return round(statistics.mean(vals), 3)
+                                return round(min(vals), 3)
+                            entry = vc.get((prompt, sm), {})
+                            v = entry.get(metric)
+                            return round(v, 3) if v is not None else None
+
+                        corr_data = [_agg(p, "pearson") for p in all_prompts]
+                        kappa_data = [_agg(p, "kappa") for p in all_prompts]
                         return {
                             "xAxis": {"type": "category", "data": all_prompts},
                             "yAxis": {"type": "value", "name": "Correlation", "min": -1, "max": 1},
@@ -717,16 +764,31 @@ def pipeline_monitoring_page():
                             "legend": {"bottom": 0},
                         }
 
-                    chart = ui.echart(_build_corr_chart(default_model)).classes("w-full").style("height: 250px;")
+                    corr_chart = ui.echart(_build_corr_chart_filtered()).classes("w-full").style("height: 250px;")
 
-                    if len(model_options) > 1:
-                        def _on_model_change(e):
-                            chart.options = _build_corr_chart(e.value)
-                            chart.update()
-                        ui.select(
-                            model_options, value=default_model, label="Judge Model",
-                            on_change=_on_model_change,
-                        ).classes("w-48")
+                    def _refresh_corr_chart():
+                        corr_chart.options = _build_corr_chart_filtered()
+                        corr_chart.update()
+
+                    with ui.row().classes("gap-2"):
+                        if len(model_options) > 1:
+                            def _on_model_change(e):
+                                corr_state["judge_model"] = e.value
+                                _refresh_corr_chart()
+                            ui.select(
+                                model_options, value=default_model, label="Judge Model",
+                                on_change=_on_model_change,
+                            ).classes("w-48")
+
+                        if len(all_gen_models) > 1:
+                            corr_gen_options = ["All"] + all_gen_models
+                            def _on_corr_gen_filter(e):
+                                corr_state["gen_filter"] = None if e.value == "All" else e.value
+                                _refresh_corr_chart()
+                            ui.select(
+                                corr_gen_options, value="All", label="Generator Model",
+                                on_change=_on_corr_gen_filter,
+                            ).classes("w-48")
 
     # --- Iteration Table ---
     with ui.expansion(
@@ -1072,8 +1134,24 @@ def pipeline_review_page():
     cfg = load_config()
     dimensions = cfg.phase2.scoring.dimensions
 
+    # Build run metadata lookups
+    run_by_iter = {r["iteration"]: r for r in runs}
+    all_gen_models_review = sorted({r.get("generator_model", "unknown") for r in runs})
+    all_judge_models_review = sorted({r.get("judge_model", "unknown") for r in runs})
+    # group_id → list of iterations in that group
+    group_iters: dict[str, list[int]] = {}
+    for r in runs:
+        gid = r.get("group_id")
+        if gid:
+            group_iters.setdefault(gid, []).append(r["iteration"])
+
     # State
-    state = {"iteration": runs[-1]["iteration"], "pos": 0}
+    state = {
+        "iteration": runs[-1]["iteration"],
+        "pos": 0,
+        "gen_filter": None,
+        "judge_filter": None,
+    }
 
     # --- Iteration selector ---
     with ui.row().classes("q-px-md q-mt-md items-center gap-4"):
@@ -1083,6 +1161,24 @@ def pipeline_review_page():
             value=state["iteration"],
             label="Iteration",
         ).classes("w-32")
+
+        if len(all_gen_models_review) > 1:
+            gen_filter_select = ui.select(
+                options=["All"] + all_gen_models_review,
+                value="All",
+                label="Generator",
+            ).classes("w-40")
+        else:
+            gen_filter_select = None
+
+        if len(all_judge_models_review) > 1:
+            judge_filter_select = ui.select(
+                options=["All"] + all_judge_models_review,
+                value="All",
+                label="Judge",
+            ).classes("w-40")
+        else:
+            judge_filter_select = None
 
         sort_select = ui.select(
             options=["Low score first", "High score first", "Default order"],
@@ -1224,6 +1320,17 @@ def pipeline_review_page():
                 with ui.row().classes("w-full justify-end"):
                     submit_btn = ui.button("Submit Review", on_click=lambda: submit_review(), color="primary")
 
+    def _filtered_iter_options() -> list[int]:
+        """Return iteration numbers filtered by current generator/judge model selections."""
+        options = []
+        for r in runs:
+            if state["gen_filter"] and r.get("generator_model") != state["gen_filter"]:
+                continue
+            if state["judge_filter"] and r.get("judge_model") != state["judge_filter"]:
+                continue
+            options.append(r["iteration"])
+        return options
+
     def get_sorted_items() -> list[dict]:
         items = load_items_for_iteration(state["iteration"])
         judged = [i for i in items if i.get("judgment")]
@@ -1280,33 +1387,44 @@ def pipeline_review_page():
 
         judge_section.clear()
         with judge_section:
+            # Collect all judgments for this item: current iteration + siblings from same group
+            judgments_to_show: list[tuple[str, dict]] = []
             judgment = item.get("judgment", {})
             if judgment:
-                ui.label("Judge Scores").classes("text-subtitle2 text-weight-bold")
-                with ui.row().classes("gap-4"):
-                    ui.badge(
-                        f"Aggregate: {judgment['aggregate']:.1f}",
-                        color="green" if judgment["decision"] == "accept" else "red",
-                    )
-                    ui.badge(judgment["decision"].upper(), color="green" if judgment["decision"] == "accept" else "red")
-                    jp = judgment.get("judge_prompt", "")
-                    if jp:
-                        ui.badge(jp, color="blue-grey").props("outline")
+                cur_run = run_by_iter.get(state["iteration"], {})
+                cur_judge = cur_run.get("judge_model", "")
+                judgments_to_show.append((cur_judge, judgment))
 
-                for part in ("preflection", "reflection"):
-                    part_j = judgment.get(part, {})
-                    if not part_j:
+            # Look for sibling iterations in the same group
+            cur_run = run_by_iter.get(state["iteration"], {})
+            cur_gid = cur_run.get("group_id")
+            if cur_gid and cur_gid in group_iters:
+                for sib_iter in group_iters[cur_gid]:
+                    if sib_iter == state["iteration"]:
                         continue
-                    ui.label(f"{part.title()} ({part_j.get('aggregate', 0):.1f})").classes(
-                        "text-overline text-grey-7 q-mt-sm"
-                    )
-                    with ui.row().classes("gap-2"):
-                        for dim, score in part_j.get("scores", {}).items():
-                            color = "green" if score >= 4 else ("orange" if score >= 3 else "red")
-                            ui.badge(f"{dim}: {score}", color=color)
-                    ui.label(part_j.get("reasoning", "")).classes("text-body2").style(
-                        "white-space: pre-wrap; font-size: 0.9em;"
-                    )
+                    sib_items = load_items_for_iteration(sib_iter)
+                    sib_run = run_by_iter.get(sib_iter, {})
+                    sib_judge = sib_run.get("judge_model", "?")
+                    for si in sib_items:
+                        if si["item_id"] == item["item_id"] and si.get("judgment"):
+                            judgments_to_show.append((sib_judge, si["judgment"]))
+                            break
+
+            if not judgments_to_show:
+                ui.label("No judge scores.").classes("text-grey-6")
+            else:
+                use_tabs = len(judgments_to_show) > 1
+                if use_tabs:
+                    with ui.tabs().classes("w-full") as jtabs:
+                        tab_objs = []
+                        for jm, _ in judgments_to_show:
+                            tab_objs.append(ui.tab(jm or "Judge"))
+                    with ui.tab_panels(jtabs).classes("w-full"):
+                        for (jm, jdg), tab in zip(judgments_to_show, tab_objs):
+                            with ui.tab_panel(tab):
+                                _render_judge_scores(jdg)
+                else:
+                    _render_judge_scores(judgments_to_show[0][1])
 
         gold_section.clear()
         gold_expansion.set_visibility(bool(item.get("is_gold")))
@@ -1404,8 +1522,32 @@ def pipeline_review_page():
         state["pos"] = 0
         update_display()
 
+    def _on_gen_filter_change(e):
+        state["gen_filter"] = None if e.value == "All" else e.value
+        new_opts = _filtered_iter_options()
+        iter_select.options = new_opts
+        if state["iteration"] not in new_opts and new_opts:
+            state["iteration"] = new_opts[-1]
+            iter_select.value = state["iteration"]
+        state["pos"] = 0
+        update_display()
+
+    def _on_judge_filter_change(e):
+        state["judge_filter"] = None if e.value == "All" else e.value
+        new_opts = _filtered_iter_options()
+        iter_select.options = new_opts
+        if state["iteration"] not in new_opts and new_opts:
+            state["iteration"] = new_opts[-1]
+            iter_select.value = state["iteration"]
+        state["pos"] = 0
+        update_display()
+
     iter_select.on_value_change(on_iteration_change)
     sort_select.on_value_change(on_sort_change)
+    if gen_filter_select:
+        gen_filter_select.on_value_change(_on_gen_filter_change)
+    if judge_filter_select:
+        judge_filter_select.on_value_change(_on_judge_filter_change)
     # Start at first unreviewed item
     items = current_items_list()
     state["pos"] = _first_unreviewed_pos(items) if items else 0
@@ -1429,6 +1571,8 @@ def pipeline_reviews_page():
 
     all_reviews = load_reviews()
     review_comments = load_review_comments()
+    reviews_runs = load_runs()
+    reviews_run_by_iter = {r["iteration"]: r for r in reviews_runs}
 
     # Build items index for all reviewed iterations
     items_by_key: dict[tuple[str, int], dict] = {}
@@ -1472,6 +1616,10 @@ def pipeline_reviews_page():
                             decision_color = "green" if r["decision"] == "accept" else "red"
                             ui.badge(r["decision"].upper(), color=decision_color)
                             ui.badge(f"Score: {r['aggregate']:.2f}", color=decision_color).props("outline")
+                            rev_run = reviews_run_by_iter.get(r["iteration"], {})
+                            rev_gen = rev_run.get("generator_model", "")
+                            if rev_gen:
+                                ui.badge(f"gen:{rev_gen}", color="teal").props("outline")
                             ui.label(r["timestamp"][:19]).classes("text-caption text-grey-6")
                             ui.label(f"{r['item_id'][:12]}").classes("text-caption text-grey-5")
                             ui.space()
