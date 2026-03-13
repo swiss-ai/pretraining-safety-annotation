@@ -8,7 +8,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import os
 import random
@@ -27,9 +26,9 @@ from pipeline.config import (
     PIPELINE_DATA_DIR,
     AppConfig,
     extract_charter_elements,
-    generator_api_name,
-    judge_api_name,
     load_config,
+    resolve_generator_model,
+    resolve_judge_model,
     resolve_prompt_path,
 )
 from pipeline.fineweb import load_or_build_fineweb_cache
@@ -38,6 +37,7 @@ from pipeline.phase2.storage import (
     load_items_for_iteration,
     load_latest_items,
     load_runs,
+    next_iteration,
     save_item,
     save_run,
 )
@@ -460,17 +460,43 @@ def judge_batch(
     return list(_gather(*coros, desc="Judging"))
 
 
-def run_iteration(cfg: AppConfig, phase_callback=None, source: str = "manual") -> dict:
-    """Run a single generate->judge iteration. Returns the run summary.
+def _make_run_summary(iteration: int, judged: list[dict]) -> str:
+    """Build a human-readable summary string from judged items."""
+    n_accepted = sum(1 for item in judged if item["judgment"]["decision"] == "accept")
+    n_rejected = len(judged) - n_accepted
+    scores = [item["judgment"]["aggregate"] for item in judged]
+    mean_score = sum(scores) / len(scores) if scores else 0.0
 
-    Orchestrates: select items -> generate -> judge -> save run record.
-    phase_callback: optional callable(str) for granular progress reporting.
-    source: one of "manual", "phase_a", "phase_b" — recorded in the runs table.
+    gen_has_reasoning = any(item.get("reasoning") is not None for item in judged)
+    judge_has_reasoning = any(
+        item["judgment"]["preflection"].get("model_reasoning") is not None
+        or item["judgment"]["reflection"].get("model_reasoning") is not None
+        for item in judged
+    )
+    reasoning_note = (
+        f"Generator reasoning: {'available' if gen_has_reasoning else 'NOT available'}. "
+        f"Judge reasoning: {'available' if judge_has_reasoning else 'NOT available'}."
+    )
+    return (
+        f"Iteration {iteration}: {n_accepted} accepted, {n_rejected} rejected, "
+        f"mean score {mean_score:.2f}. {reasoning_note}"
+    )
 
-    Installs signal handlers for SIGTERM/SIGINT so that in-flight DB writes
-    are committed before exit, preventing WAL corruption.
+
+def _run_one_pair(
+    cfg: AppConfig,
+    items: list[dict],
+    gen_alias: str,
+    judge_alias: str,
+    source: str,
+    group_id: str | None = None,
+) -> dict:
+    """Run generate->judge for one (generator, judge) pair. Returns run summary dict.
+
+    Installs signal handlers for graceful shutdown during DB writes.
     """
     from pipeline.storage import _get_conn, checkpoint
+    from uuid import uuid4
 
     prev_sigterm = signal.getsignal(signal.SIGTERM)
     prev_sigint = signal.getsignal(signal.SIGINT)
@@ -488,84 +514,55 @@ def run_iteration(cfg: AppConfig, phase_callback=None, source: str = "manual") -
     signal.signal(signal.SIGINT, _graceful_shutdown)
 
     try:
-        return _run_iteration_inner(cfg, phase_callback, source)
+        return _run_one_pair_inner(cfg, items, gen_alias, judge_alias, source, group_id)
     finally:
         signal.signal(signal.SIGTERM, prev_sigterm)
         signal.signal(signal.SIGINT, prev_sigint)
 
 
-def _run_iteration_inner(cfg: AppConfig, phase_callback, source: str) -> dict:
-    """Inner implementation of run_iteration (split out for signal safety)."""
-    runs = load_runs()
-    iteration = len(runs) + 1
-    seed = 42 + iteration
-
-    logger.info("{'='*60}")
-    logger.info("ITERATION {}", iteration)
-    logger.info("{'='*60}")
-
+def _run_one_pair_inner(
+    cfg: AppConfig,
+    items: list[dict],
+    gen_alias: str,
+    judge_alias: str,
+    source: str,
+    group_id: str | None,
+) -> dict:
+    """Inner implementation of _run_one_pair (split out for signal safety)."""
+    iteration = next_iteration()
     client, semaphore = make_api_client(cfg)
-
-    gen_model = generator_api_name(cfg)
-    jdg_model = judge_api_name(cfg)
-
-    logger.info("Running health check...")
-    health_check(client, gen_model)
-    if jdg_model != gen_model:
-        health_check(client, jdg_model)
-
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
 
-    logger.info("Selecting items...")
-    items = select_items(cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold, seed, cfg.max_tokens)
+    gen_model_cfg = resolve_generator_model(cfg, gen_alias)
+    judge_model_cfg = resolve_judge_model(cfg, judge_alias)
+    gen_prompt = resolve_prompt_path("generator_latest.md", alias=gen_alias)
+    judge_prompt = resolve_prompt_path("judge_latest.md", alias=judge_alias)
 
-    gen_prompt = resolve_prompt_path(cfg.phase2.generator.prompt, alias=cfg.phase2.generator.model)
-    judge_prompt = resolve_prompt_path(cfg.phase2.judge.prompt, alias=cfg.phase2.judge.model)
+    logger.info("Iteration {} — gen={} judge={}", iteration, gen_alias, judge_alias)
 
-    if phase_callback:
-        phase_callback("generating")
-    logger.info("Generating with {}...", gen_prompt.name)
     generated = generate_batch(
-        items, gen_prompt, charter_text, gen_model, iteration, client, semaphore,
+        items, gen_prompt, charter_text, gen_model_cfg.api_name,
+        iteration, client, semaphore,
     )
 
-    if phase_callback:
-        phase_callback("judging")
-    logger.info("Judging with {}...", judge_prompt.name)
     judged = judge_batch(
-        generated, judge_prompt, jdg_model, iteration,
+        generated, judge_prompt, judge_model_cfg.api_name, iteration,
         cfg.phase2.scoring.accept_threshold, client, semaphore,
     )
 
+    summary = _make_run_summary(iteration, judged)
+    logger.info(summary)
+
     n_accepted = sum(1 for item in judged if item["judgment"]["decision"] == "accept")
-    n_rejected = len(judged) - n_accepted
     scores = [item["judgment"]["aggregate"] for item in judged]
     mean_score = sum(scores) / len(scores) if scores else 0.0
-
-    # Check reasoning availability
-    gen_has_reasoning = any(item.get("reasoning") is not None for item in judged)
-    judge_has_reasoning = any(
-        item["judgment"]["preflection"].get("model_reasoning") is not None
-        or item["judgment"]["reflection"].get("model_reasoning") is not None
-        for item in judged
-    )
-    reasoning_note = (
-        f"Generator reasoning: {'available' if gen_has_reasoning else 'NOT available (not a reasoning model)'}. "
-        f"Judge reasoning: {'available' if judge_has_reasoning else 'NOT available (not a reasoning model)'}."
-    )
-
-    summary = (
-        f"Iteration {iteration}: {n_accepted} accepted, {n_rejected} rejected, "
-        f"mean score {mean_score:.2f}. {reasoning_note}"
-    )
-    logger.info(summary)
 
     save_run(
         iteration=iteration,
         gen_prompt=gen_prompt.name,
         judge_prompt=judge_prompt.name,
-        generator_model=cfg.phase2.generator.model,
-        judge_model=cfg.phase2.judge.model,
+        generator_model=gen_alias,
+        judge_model=judge_alias,
         n_items=len(judged),
         n_gold=sum(1 for item in judged if item.get("is_gold")),
         config={
@@ -574,100 +571,106 @@ def _run_iteration_inner(cfg: AppConfig, phase_callback, source: str) -> dict:
         },
         analysis=summary,
         source=source,
+        group_id=group_id,
     )
-
-    # Re-judge reviewed items for correlation tracking
-    rejudge_for_correlations(cfg)
 
     return {
         "iteration": iteration,
         "n_items": len(judged),
         "n_accepted": n_accepted,
-        "n_rejected": n_rejected,
+        "n_rejected": len(judged) - n_accepted,
         "mean_score": mean_score,
         "items": judged,
+        "generator_model": gen_alias,
+        "judge_model": judge_alias,
+        "group_id": group_id,
     }
 
 
-def rejudge_for_correlations(cfg: AppConfig) -> int:
-    """Re-judge all human-reviewed items with the current judge prompt for correlation tracking.
+def run_judge_cross_iteration(
+    cfg: AppConfig, target_judge_alias: str, source: str = "improve_judge",
+) -> list[dict]:
+    """Generate with ALL generators, judge all with target judge.
 
-    Saves results to the judge_correlations table (not items), so original
-    judgments are preserved. Skips (item_id, iteration, judge_prompt, judge_model) combos
-    that already exist — idempotent.
-
-    Returns the count of newly judged items.
+    One iteration per generator model. Same source texts across generators (same seed).
+    All iterations share a group_id. Returns list of run summaries.
     """
-    from pipeline.phase2.storage import (
-        load_judge_correlations,
-        load_latest_reviews,
-        save_judge_correlation,
-    )
-
-    reviews = load_latest_reviews()
-    if not reviews:
-        logger.info("No reviewed items to re-judge for correlations.")
-        return 0
-
-    judge_prompt = resolve_prompt_path(cfg.phase2.judge.prompt, alias=cfg.phase2.judge.model)
-    judge_prompt_name = judge_prompt.name
-    judge_model_alias = cfg.phase2.judge.model
-
-    existing = load_judge_correlations()
-    existing_keys = {
-        (c["item_id"], c["iteration"], c["judge_prompt"], c["judge_model"])
-        for c in existing
-    }
-
-    reviewed_keys = set()
-    for (item_id, rev_iter, _reviewer) in reviews:
-        key = (item_id, rev_iter, judge_prompt_name, judge_model_alias)
-        if key not in existing_keys:
-            reviewed_keys.add((item_id, rev_iter))
-
-    if not reviewed_keys:
-        logger.info("All reviewed items already have correlations for {} / {}.", judge_prompt_name, judge_model_alias)
-        return 0
-
-    latest_items = load_latest_items()
-    items_to_rejudge = [
-        latest_items[key] for key in reviewed_keys if key in latest_items
-    ]
-
-    if not items_to_rejudge:
-        logger.info("No matching items found for reviewed keys.")
-        return 0
+    from uuid import uuid4
 
     client, semaphore = make_api_client(cfg)
-    model = judge_api_name(cfg)
+    judge_model_cfg = resolve_judge_model(cfg, target_judge_alias)
 
-    logger.info(
-        "Re-judging {} reviewed items with {} ({}) for correlation tracking...",
-        len(items_to_rejudge), judge_prompt_name, judge_model_alias,
+    # Health-check ALL generator models + target judge upfront
+    checked: set[str] = set()
+    for gen_cfg in cfg.phase2.generator_models:
+        if gen_cfg.api_name not in checked:
+            health_check(client, gen_cfg.api_name)
+            checked.add(gen_cfg.api_name)
+    if judge_model_cfg.api_name not in checked:
+        health_check(client, judge_model_cfg.api_name)
+
+    # Select items once (fixed seed based on current max iteration)
+    base_iter = next_iteration()
+    seed = 42 + base_iter
+    items = select_items(
+        cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold,
+        seed, cfg.max_tokens,
     )
 
-    judged = judge_batch(
-        items=items_to_rejudge,
-        prompt_path=judge_prompt,
-        model=model,
-        iteration=items_to_rejudge[0]["iteration"],
-        accept_threshold=cfg.phase2.scoring.accept_threshold,
-        client=client,
-        semaphore=semaphore,
-        save=False,
-    )
-
-    for item in judged:
-        save_judge_correlation(
-            item_id=item["item_id"],
-            iteration=item["iteration"],
-            judge_prompt=judge_prompt_name,
-            judge_model=judge_model_alias,
-            judgment=item["judgment"],
+    group_id = str(uuid4())
+    summaries = []
+    for gen_cfg in cfg.phase2.generator_models:
+        logger.info("Cross-iteration: gen={} judge={}", gen_cfg.alias, target_judge_alias)
+        result = _run_one_pair(
+            cfg, items, gen_cfg.alias, target_judge_alias,
+            source=source, group_id=group_id,
         )
+        summaries.append(result)
 
-    logger.info("Saved {} judge correlations for {} / {}.", len(judged), judge_prompt_name, judge_model_alias)
-    return len(judged)
+    return summaries
+
+
+def run_generator_cross_iteration(
+    cfg: AppConfig, target_gen_alias: str, source: str = "improve_generator",
+) -> list[dict]:
+    """Generate with target generator, judge with ALL judges.
+
+    Generates once per judge (same items, same seed). Each judge gets its own iteration.
+    All iterations share a group_id. Returns list of run summaries.
+    """
+    from uuid import uuid4
+
+    client, semaphore = make_api_client(cfg)
+    gen_model_cfg = resolve_generator_model(cfg, target_gen_alias)
+
+    # Health-check target generator + ALL judge models upfront
+    checked: set[str] = set()
+    health_check(client, gen_model_cfg.api_name)
+    checked.add(gen_model_cfg.api_name)
+    for jdg_cfg in cfg.phase2.judge_models:
+        if jdg_cfg.api_name not in checked:
+            health_check(client, jdg_cfg.api_name)
+            checked.add(jdg_cfg.api_name)
+
+    # Select items once (fixed seed)
+    base_iter = next_iteration()
+    seed = 42 + base_iter
+    items = select_items(
+        cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold,
+        seed, cfg.max_tokens,
+    )
+
+    group_id = str(uuid4())
+    summaries = []
+    for jdg_cfg in cfg.phase2.judge_models:
+        logger.info("Cross-iteration: gen={} judge={}", target_gen_alias, jdg_cfg.alias)
+        result = _run_one_pair(
+            cfg, items, target_gen_alias, jdg_cfg.alias,
+            source=source, group_id=group_id,
+        )
+        summaries.append(result)
+
+    return summaries
 
 
 def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
@@ -764,21 +767,23 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
 
 
 def main():
-    """CLI entry point. Runs a single iteration with optional config overrides."""
+    """CLI entry point. Runs a cross-iteration with optional config overrides."""
     overrides = sys.argv[1:] if len(sys.argv) > 1 else None
     cfg = load_config(overrides)
 
-    logger.info("Generator: {} ({})", cfg.phase2.generator.model, generator_api_name(cfg))
-    logger.info("Judge: {} ({})", cfg.phase2.judge.model, judge_api_name(cfg))
     logger.info("Endpoint: {}", cfg.phase2.endpoint)
+    logger.info("Generator models: {}", [m.alias for m in cfg.phase2.generator_models])
+    logger.info("Judge models: {}", [m.alias for m in cfg.phase2.judge_models])
     logger.info("Items: {} (gold: {})", cfg.phase2.iteration.n_items, cfg.phase2.iteration.n_gold)
-    logger.info("Generator prompt: {}", resolve_prompt_path(cfg.phase2.generator.prompt, cfg.phase2.generator.model).name)
-    logger.info("Judge prompt: {}", resolve_prompt_path(cfg.phase2.judge.prompt, cfg.phase2.judge.model).name)
     logger.info("Threshold: {}", cfg.phase2.scoring.accept_threshold)
 
-    result = run_iteration(cfg)
-
-    logger.info("Done. {}/{} accepted.", result['n_accepted'], result['n_items'])
+    # Default: run judge cross-iteration with first judge model
+    target = cfg.phase2.judge_models[0].alias
+    results = run_judge_cross_iteration(cfg, target)
+    for r in results:
+        logger.info("  gen={} judge={}: {}/{} accepted, mean={:.2f}",
+                     r["generator_model"], r["judge_model"],
+                     r["n_accepted"], r["n_items"], r["mean_score"])
 
 
 if __name__ == "__main__":

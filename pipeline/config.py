@@ -53,12 +53,6 @@ class ModelConfig:
 
 
 @dataclass
-class RoleConfig:
-    model: str = ""
-    prompt: str = ""
-
-
-@dataclass
 class ImproverConfig:
     judge_prompt: str = "improver_judge.md"
     generator_prompt: str = "improver_generator.md"
@@ -100,8 +94,6 @@ class Phase2Config:
     endpoint: str = ""
     judge_models: list[ModelConfig] = field(default_factory=list)
     generator_models: list[ModelConfig] = field(default_factory=list)
-    generator: RoleConfig = field(default_factory=RoleConfig)
-    judge: RoleConfig = field(default_factory=RoleConfig)
     improver: ImproverConfig = field(default_factory=ImproverConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     iteration: IterationConfig = field(default_factory=IterationConfig)
@@ -150,16 +142,6 @@ def resolve_generator_model(cfg: AppConfig, alias: str) -> ModelConfig:
     raise ValueError(
         f"No generator model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.generator_models]}"
     )
-
-
-def generator_api_name(cfg: AppConfig) -> str:
-    """Shortcut: resolve the generator model's API name."""
-    return resolve_generator_model(cfg, cfg.phase2.generator.model).api_name
-
-
-def judge_api_name(cfg: AppConfig) -> str:
-    """Shortcut: resolve the judge model's API name."""
-    return resolve_judge_model(cfg, cfg.phase2.judge.model).api_name
 
 
 def load_config(overrides: list[str] | None = None) -> AppConfig:

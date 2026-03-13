@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS runs (
     config TEXT NOT NULL,
     analysis TEXT NOT NULL,
     timestamp TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'manual'
+    source TEXT NOT NULL DEFAULT 'manual',
+    group_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS test_results (
@@ -139,6 +140,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
     if "source" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+
+    # Add group_id column to runs (added 2026-03-13)
+    if "group_id" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN group_id TEXT")
 
     # Add judge_model column to judge_correlations and update PK (added 2026-03-13)
     jc_cols = {row[1] for row in conn.execute("PRAGMA table_info(judge_correlations)").fetchall()}

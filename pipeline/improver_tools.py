@@ -13,10 +13,12 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools reviews [<iteration>] [--limit N]
     python -m pipeline.improver_tools filter <iteration> --dim X --below N [--part preflection|reflection]
     python -m pipeline.improver_tools trend
-    python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2,...] [--n N] [--phase A|B]
-    python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--phase A|B]
-    python -m pipeline.improver_tools run_batch [--phase A|B]
-    python -m pipeline.improver_tools test_results [--phase A|B] [--type generate|judge|batch]
+    python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2,...] [--n N] [--role judge|generator]
+    python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator]
+    python -m pipeline.improver_tools run_batch [--role judge|generator]
+    python -m pipeline.improver_tools run_cross_batch --role judge|generator --target <alias>
+    python -m pipeline.improver_tools cross_summary <group_id>
+    python -m pipeline.improver_tools test_results [--role judge|generator] [--type generate|judge|batch]
     python -m pipeline.improver_tools correlations
     python -m pipeline.improver_tools rejudge_all
 """
@@ -539,19 +541,21 @@ def _make_test_id(prefix: str) -> str:
 
 
 def cmd_test_generate(prompt_path: str, item_ids: list[str] | None = None,
-                      n: int = 3, phase: str = "A") -> None:
+                      n: int = 3, role: str = "judge",
+                      model_alias: str | None = None) -> None:
     """Generate with a prompt file without saving to main items table.
 
     Loads items from the latest iteration, runs generate_batch(save=False),
     saves a test_results entry.
     """
-    from pipeline.config import CHARTER_PATH, generator_api_name, load_config, resolve_prompt_path
+    from pipeline.config import CHARTER_PATH, load_config, resolve_generator_model
     from pipeline.phase2.run import generate_batch, make_api_client
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
     client, semaphore = make_api_client(cfg)
-    gen_model = generator_api_name(cfg)
+    alias = model_alias or cfg.phase2.generator_models[0].alias
+    gen_model_cfg = resolve_generator_model(cfg, alias)
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
 
     runs = load_runs()
@@ -570,9 +574,9 @@ def cmd_test_generate(prompt_path: str, item_ids: list[str] | None = None,
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
-    print(f"Test generating {len(items)} items with {prompt.name}...")
+    print(f"Test generating {len(items)} items with {prompt.name} (model={alias})...")
     generated = generate_batch(
-        items, prompt, charter_text, gen_model,
+        items, prompt, charter_text, gen_model_cfg.api_name,
         iteration=latest_iter, client=client, semaphore=semaphore, save=False,
     )
 
@@ -589,9 +593,9 @@ def cmd_test_generate(prompt_path: str, item_ids: list[str] | None = None,
     record = {
         "test_id": test_id,
         "type": "generate",
-        "phase": phase,
+        "role": role,
         "prompt": prompt.name,
-        "model_alias": cfg.phase2.generator.model,
+        "model_alias": alias,
         "items": result_items,
         "summary": {"n_items": len(generated)},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -605,19 +609,21 @@ def cmd_test_generate(prompt_path: str, item_ids: list[str] | None = None,
 
 
 def cmd_test_judge(prompt_path: str, item_ids: list[str] | None = None,
-                   iteration: int | None = None, n: int = 3, phase: str = "A") -> None:
+                   iteration: int | None = None, n: int = 3, role: str = "judge",
+                   model_alias: str | None = None) -> None:
     """Judge items with a prompt file without saving to main items table.
 
     Loads generated items from specified iteration, runs judge_batch(save=False),
     saves a test_results entry.
     """
-    from pipeline.config import judge_api_name, load_config
+    from pipeline.config import load_config, resolve_judge_model
     from pipeline.phase2.run import judge_batch, make_api_client
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
     client, semaphore = make_api_client(cfg)
-    jdg_model = judge_api_name(cfg)
+    alias = model_alias or cfg.phase2.judge_models[0].alias
+    jdg_model_cfg = resolve_judge_model(cfg, alias)
 
     runs = load_runs()
     assert runs, "No iterations yet — run at least one iteration first"
@@ -636,9 +642,9 @@ def cmd_test_judge(prompt_path: str, item_ids: list[str] | None = None,
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
-    print(f"Test judging {len(items)} items with {prompt.name}...")
+    print(f"Test judging {len(items)} items with {prompt.name} (model={alias})...")
     judged = judge_batch(
-        items, prompt, jdg_model, iteration=iter_num,
+        items, prompt, jdg_model_cfg.api_name, iteration=iter_num,
         accept_threshold=cfg.phase2.scoring.accept_threshold,
         client=client, semaphore=semaphore, save=False,
     )
@@ -662,9 +668,9 @@ def cmd_test_judge(prompt_path: str, item_ids: list[str] | None = None,
     record = {
         "test_id": test_id,
         "type": "judge",
-        "phase": phase,
+        "role": role,
         "prompt": prompt.name,
-        "model_alias": cfg.phase2.judge.model,
+        "model_alias": alias,
         "items": result_items,
         "summary": {"n_items": len(judged), "mean_score": round(mean_score, 3), "n_accepted": n_acc},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -678,55 +684,124 @@ def cmd_test_judge(prompt_path: str, item_ids: list[str] | None = None,
     print("Saved to test_results")
 
 
-def cmd_run_batch(phase: str = "A") -> None:
-    """Run a full generate->judge iteration, auto-detecting latest prompts.
+def cmd_run_batch(role: str = "judge") -> None:
+    """Run a full cross-iteration batch with the first model of the given role.
 
     Saves to main items + runs tables AND to test_results for tracking.
     """
     from pipeline.config import load_config
-    from pipeline.phase2.loop import _detect_new_prompts, _update_config
-    from pipeline.phase2.run import run_iteration
+    from pipeline.phase2.run import run_judge_cross_iteration, run_generator_cross_iteration
 
     cfg = load_config()
 
-    # Auto-detect latest prompts (resolve _latest sentinels for comparison)
-    new_gen, new_judge = _detect_new_prompts(cfg)
-    alias = cfg.phase2.generator.model
-    from pipeline.phase2.loop import _resolve_config_prompt
-    current_gen = _resolve_config_prompt(cfg.phase2.generator.prompt, alias)
-    current_judge = _resolve_config_prompt(cfg.phase2.judge.prompt, alias)
-    if new_gen != current_gen or new_judge != current_judge:
-        cfg = _update_config(cfg, new_gen, new_judge)
-        print(f"Updated config: gen={new_gen}, judge={new_judge}")
-
-    result = run_iteration(cfg, source=f"phase_{phase.lower()}")
-
-    scores = [it["judgment"]["aggregate"] for it in result["items"] if it.get("judgment")]
-    mean_score = statistics.mean(scores) if scores else 0.0
+    if role == "judge":
+        target = cfg.phase2.judge_models[0].alias
+        source = "improve_judge"
+        results = run_judge_cross_iteration(cfg, target, source=source)
+    else:
+        target = cfg.phase2.generator_models[0].alias
+        source = "improve_generator"
+        results = run_generator_cross_iteration(cfg, target, source=source)
 
     test_id = _make_test_id("tb")
-    record = {
-        "test_id": test_id,
-        "type": "batch",
-        "phase": phase,
-        "prompt": f"{cfg.phase2.generator.prompt}+{cfg.phase2.judge.prompt}",
-        "model_alias": cfg.phase2.generator.model,
-        "items": [{"item_id": it["item_id"]} for it in result["items"]],
-        "summary": {
-            "n_items": result["n_items"],
-            "mean_score": round(mean_score, 3),
-            "n_accepted": result["n_accepted"],
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    save_test_result(record)
+    for result in results:
+        mean_score = result["mean_score"]
+        record = {
+            "test_id": test_id,
+            "type": "batch",
+            "role": role,
+            "target_alias": target,
+            "generator_model": result["generator_model"],
+            "judge_model": result["judge_model"],
+            "group_id": result["group_id"],
+            "items": [{"item_id": it["item_id"]} for it in result["items"]],
+            "summary": {
+                "n_items": result["n_items"],
+                "mean_score": round(mean_score, 3),
+                "n_accepted": result["n_accepted"],
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        save_test_result(record)
+        print(f"  {result['generator_model']}/{result['judge_model']}: "
+              f"{result['n_accepted']}/{result['n_items']} accepted, mean={mean_score:.2f}")
 
-    print(f"\nBatch {test_id}: {result['n_accepted']}/{result['n_items']} accepted, mean={mean_score:.2f}")
+    print(f"\nBatch {test_id} complete. group_id={results[0]['group_id']}")
 
 
-def cmd_test_results(phase: str | None = None, type_filter: str | None = None) -> None:
-    """List test results, optionally filtered by phase and/or type."""
-    results = load_test_results(phase=phase)
+def cmd_run_cross_batch(role: str, target: str) -> None:
+    """Run a cross-iteration batch for a specific (role, target) pair.
+
+    Judge cross-iteration: generate with ALL generators, judge with target.
+    Generator cross-iteration: generate with target, judge with ALL judges.
+    """
+    from pipeline.config import load_config
+    from pipeline.phase2.run import run_judge_cross_iteration, run_generator_cross_iteration
+
+    cfg = load_config()
+
+    if role == "judge":
+        results = run_judge_cross_iteration(cfg, target, source="improve_judge")
+    else:
+        results = run_generator_cross_iteration(cfg, target, source="improve_generator")
+
+    group_id = results[0]["group_id"] if results else "none"
+    print(f"\nCross-iteration complete (group_id={group_id}):")
+    for r in results:
+        print(f"  gen={r['generator_model']} judge={r['judge_model']}: "
+              f"{r['n_accepted']}/{r['n_items']} accepted, mean={r['mean_score']:.2f}")
+    print(f"\nUse `cross_summary {group_id}` for aggregated stats.")
+
+
+def cmd_cross_summary(group_id: str) -> None:
+    """Show aggregated stats across all iterations in a cross-iteration group."""
+    from pipeline.phase2.storage import load_runs
+
+    runs = load_runs()
+    group_runs = [r for r in runs if r.get("group_id") and r["group_id"].startswith(group_id)]
+
+    if not group_runs:
+        print(f"No runs found with group_id starting with '{group_id}'")
+        return
+
+    full_gid = group_runs[0]["group_id"]
+    group_runs = [r for r in runs if r.get("group_id") == full_gid]
+
+    print(f"Cross-iteration summary (group_id={full_gid[:8]}...):")
+    print(f"  {len(group_runs)} iterations\n")
+
+    total_items = 0
+    total_accepted = 0
+    all_scores = []
+
+    print(f"{'Generator':>20} {'Judge':>20} {'Items':>6} {'Accept%':>8} {'Mean':>6}")
+    print("-" * 70)
+    for r in group_runs:
+        items = load_items_for_iteration(r["iteration"])
+        judged = [i for i in items if i.get("judgment")]
+        n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
+        scores = [i["judgment"]["aggregate"] for i in judged]
+        mean_s = statistics.mean(scores) if scores else 0.0
+        acc_pct = n_acc / len(judged) * 100 if judged else 0
+
+        total_items += len(judged)
+        total_accepted += n_acc
+        all_scores.extend(scores)
+
+        print(f"{r['generator_model']:>20} {r['judge_model']:>20} "
+              f"{len(judged):>6} {acc_pct:>7.1f}% {mean_s:>6.2f}")
+
+    if all_scores:
+        print("-" * 70)
+        overall_acc = total_accepted / total_items * 100 if total_items else 0
+        overall_mean = statistics.mean(all_scores)
+        print(f"{'TOTAL':>20} {'':>20} {total_items:>6} {overall_acc:>7.1f}% {overall_mean:>6.2f}")
+
+
+def cmd_test_results(phase: str | None = None, type_filter: str | None = None,
+                     role: str | None = None) -> None:
+    """List test results, optionally filtered by phase/role and/or type."""
+    results = load_test_results(phase=phase, role=role)
     if type_filter:
         results = [r for r in results if r.get("type") == type_filter]
 
@@ -816,17 +891,18 @@ def main():
     elif cmd == "trend":
         cmd_trend()
     elif cmd == "test_generate":
-        _require_positional(1, "test_generate <prompt_path> [--items id1,id2,...] [--n N] [--phase A|B]")
+        _require_positional(1, "test_generate <prompt_path> [--items id1,id2,...] [--n N] [--role judge|generator] [--model ALIAS]")
         item_ids_str = _get_flag("--items")
         item_ids = item_ids_str.split(",") if item_ids_str else None
         cmd_test_generate(
             positional[0],
             item_ids=item_ids,
             n=_get_flag_int("--n", 3),
-            phase=_get_flag("--phase", "A"),
+            role=_get_flag("--role", _get_flag("--phase", "judge")),
+            model_alias=_get_flag("--model"),
         )
     elif cmd == "test_judge":
-        _require_positional(1, "test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--phase A|B]")
+        _require_positional(1, "test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator] [--model ALIAS]")
         item_ids_str = _get_flag("--items")
         item_ids = item_ids_str.split(",") if item_ids_str else None
         cmd_test_judge(
@@ -834,14 +910,25 @@ def main():
             item_ids=item_ids,
             iteration=_get_flag_int("--iteration"),
             n=_get_flag_int("--n", 3),
-            phase=_get_flag("--phase", "A"),
+            role=_get_flag("--role", _get_flag("--phase", "judge")),
+            model_alias=_get_flag("--model"),
         )
     elif cmd == "run_batch":
-        cmd_run_batch(phase=_get_flag("--phase", "A"))
+        cmd_run_batch(role=_get_flag("--role", _get_flag("--phase", "judge")))
+    elif cmd == "run_cross_batch":
+        role = _get_flag("--role")
+        target = _get_flag("--target")
+        assert role, "Usage: run_cross_batch --role judge|generator --target <alias>"
+        assert target, "Usage: run_cross_batch --role judge|generator --target <alias>"
+        cmd_run_cross_batch(role=role, target=target)
+    elif cmd == "cross_summary":
+        _require_positional(1, "cross_summary <group_id>")
+        cmd_cross_summary(positional[0])
     elif cmd == "test_results":
         cmd_test_results(
             phase=_get_flag("--phase"),
             type_filter=_get_flag("--type"),
+            role=_get_flag("--role"),
         )
     elif cmd == "correlations":
         cmd_correlations()

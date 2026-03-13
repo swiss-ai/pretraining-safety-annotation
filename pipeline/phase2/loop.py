@@ -1,11 +1,11 @@
-"""Two-phase improver loop: Phase A improves judge, Phase B improves generator.
+"""Independent improver runners: judge improver and generator improver.
 
-Each phase spawns an Opus agent that autonomously calls generate/judge via CLI
-tools and decides when to stop (max N run_batch calls). All test results are
-persisted. The outer workflow is A->B->stop, manually triggered.
+Each improver spawns an Opus agent that autonomously calls cross-iteration
+tools via CLI. Improvers run independently — one role at a time.
 
 Usage:
-    uv run python -m pipeline.phase2.loop
+    uv run python -m pipeline.phase2.loop --role judge [--aliases glm45,olmo3-32B-think]
+    uv run python -m pipeline.phase2.loop --role generator [--aliases glm45]
 """
 
 from __future__ import annotations
@@ -34,12 +34,16 @@ from pipeline.log import logger
 from pipeline.phase2.storage import save_loop_run
 
 STATUS_PATH = PIPELINE_DATA_DIR / "loop_status.json"
-IMPROVER_LOG_A_PATH = PIPELINE_DATA_DIR / "improver_log_A.txt"
-IMPROVER_LOG_B_PATH = PIPELINE_DATA_DIR / "improver_log_B.txt"
 AGENT_TMP_DIR = PIPELINE_DATA_DIR / "tmp"
 
+
+def improver_log_path(role: str, alias: str) -> Path:
+    """Log path for a specific improver, e.g. data/pipeline/improver_log_judge_glm45.txt"""
+    return PIPELINE_DATA_DIR / f"improver_log_{role}_{alias}.txt"
+
+
 # Keep backward-compat alias for dashboard polling
-IMPROVER_LOG_PATH = IMPROVER_LOG_A_PATH
+IMPROVER_LOG_PATH = PIPELINE_DATA_DIR / "improver_log_judge.txt"
 
 
 def write_status(status: dict) -> None:
@@ -57,31 +61,11 @@ def read_status() -> dict | None:
     return json.loads(STATUS_PATH.read_text())
 
 
-def _detect_new_prompts(cfg: AppConfig) -> tuple[str, str]:
-    """Find the highest-versioned generator and judge prompts in the model directory.
-
-    Asserts that the detected versions are newer than the current config.
-    Returns (generator_filename, judge_filename).
-    """
-    model_dir = PROMPTS_DIR / cfg.phase2.generator.model
-
-    alias = cfg.phase2.generator.model
-
-    def _highest_version(pattern: str, current: str) -> str:
-        matches = sorted(glob.glob(str(model_dir / pattern)))
-        assert matches, f"No files matching {pattern} in {model_dir}"
-        latest = Path(matches[-1]).name
-        resolved_current = _resolve_config_prompt(current, alias)
-        current_v = _extract_version(resolved_current)
-        latest_v = _extract_version(latest)
-        assert latest_v >= current_v, (
-            f"Expected version >= {current_v}, got {latest_v} ({latest})"
-        )
-        return latest
-
-    new_gen = _highest_version("generator_v*.md", cfg.phase2.generator.prompt)
-    new_judge = _highest_version("judge_v*.md", cfg.phase2.judge.prompt)
-    return new_gen, new_judge
+def _extract_version(filename: str) -> int:
+    """Extract version number from a filename like 'generator_v3.md'."""
+    match = re.search(r"_v(\d+)\.md$", filename)
+    assert match, f"Cannot extract version from {filename}"
+    return int(match.group(1))
 
 
 def _resolve_config_prompt(filename: str, alias: str) -> str:
@@ -95,40 +79,50 @@ def _resolve_config_prompt(filename: str, alias: str) -> str:
     return filename
 
 
-def _extract_version(filename: str) -> int:
-    """Extract version number from a filename like 'generator_v3.md'."""
-    match = re.search(r"_v(\d+)\.md$", filename)
-    assert match, f"Cannot extract version from {filename}"
-    return int(match.group(1))
+def _detect_new_prompts(alias: str, role: str) -> str:
+    """Find the highest-versioned prompt for the given role in the model directory.
 
-
-def _update_config(cfg: AppConfig, new_gen: str, new_judge: str) -> AppConfig:
-    """Update config.yaml with new prompt filenames and return reloaded config.
-
-    Preserves '_latest.md' sentinels — only overwrites concrete filenames.
+    Returns the latest filename (e.g. 'judge_v3.md').
     """
-    from omegaconf import OmegaConf
-
-    raw = OmegaConf.load(CONFIG_YAML_PATH)
-    if "_latest.md" not in cfg.phase2.generator.prompt:
-        raw.phase2.generator.prompt = new_gen
-    if "_latest.md" not in cfg.phase2.judge.prompt:
-        raw.phase2.judge.prompt = new_judge
-    OmegaConf.save(raw, CONFIG_YAML_PATH)
-    return load_config()
-
-
-def _build_phase_a_prompt(cfg: AppConfig) -> str:
-    """Build the prompt for Phase A (judge improver)."""
-    alias = cfg.phase2.generator.model
     model_dir = PROMPTS_DIR / alias
-    gen_path = resolve_prompt_path(cfg.phase2.generator.prompt, alias)
-    judge_path = resolve_prompt_path(cfg.phase2.judge.prompt, alias)
-    improver_path = _INIT_PROMPTS_DIR / "improver.md"
-    phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.judge_prompt
+    prefix = "judge" if role == "judge" else "generator"
+    matches = sorted(glob.glob(str(model_dir / f"{prefix}_v*.md")))
+    assert matches, f"No {prefix}_v*.md files in {model_dir}"
+    return Path(matches[-1]).name
 
-    current_judge_v = _extract_version(_resolve_config_prompt(cfg.phase2.judge.prompt, alias))
-    next_v = current_judge_v + 1
+
+def _build_improver_prompt(cfg: AppConfig, role: str, target_alias: str) -> str:
+    """Unified prompt builder for judge and generator improvers.
+
+    Key additions over old phase prompts:
+    - Lists ALL counterpart models the agent's cross-iterations will use
+    - Tells agent to use `run_cross_batch --role {role} --target {alias}`
+    - Explains group_id for interpreting cross-model results
+    - Points to `cross_summary <group_id>` command for aggregated stats
+    """
+    model_dir = PROMPTS_DIR / target_alias
+    improver_path = _INIT_PROMPTS_DIR / "improver.md"
+
+    if role == "judge":
+        prompt_path = resolve_prompt_path("judge_latest.md", target_alias)
+        other_prompt_path = resolve_prompt_path("generator_latest.md", target_alias)
+        current_v = _extract_version(prompt_path.name)
+        next_v = current_v + 1
+        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.judge_prompt
+        counterpart_models = [m.alias for m in cfg.phase2.generator_models]
+        role_label = "JUDGE"
+        prompt_type = "judge"
+        other_type = "generator"
+    else:
+        prompt_path = resolve_prompt_path("generator_latest.md", target_alias)
+        other_prompt_path = resolve_prompt_path("judge_latest.md", target_alias)
+        current_v = _extract_version(prompt_path.name)
+        next_v = current_v + 1
+        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.generator_prompt
+        counterpart_models = [m.alias for m in cfg.phase2.judge_models]
+        role_label = "GENERATOR"
+        prompt_type = "generator"
+        other_type = "judge"
 
     state_path = model_dir / "state.md"
     if not state_path.exists():
@@ -136,21 +130,27 @@ def _build_phase_a_prompt(cfg: AppConfig) -> str:
 
     max_batches = cfg.phase2.improver.max_batches_per_phase
 
-    # Load phase prompt if it exists, otherwise use inline
     if phase_prompt_path.exists():
         phase_instructions = phase_prompt_path.read_text(encoding="utf-8")
     else:
-        phase_instructions = "Focus on improving judge prompts. You are far more capable than the small judges — your judgment is valuable. Human reviews are ground truth anchors."
+        phase_instructions = f"Focus on improving {prompt_type} prompts."
 
     from pipeline.phase2.storage import load_runs
     runs = load_runs()
     latest_iter = runs[-1]["iteration"] if runs else 0
 
-    return f"""You are improving JUDGE prompts for a pretraining data annotation pipeline.
+    counterpart_list = ", ".join(counterpart_models)
 
-## Phase A: Judge Improvement
+    return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
+
+## {role_label} Improvement for model: {target_alias}
 
 {phase_instructions}
+
+## Cross-model evaluation
+Your improvements will be tested against ALL {other_type} models: [{counterpart_list}].
+When you run a batch, it creates one iteration per {other_type} model, all sharing a group_id.
+Use `cross_summary <group_id>` to see aggregated per-model stats after each batch.
 
 ## Query tools
 Run these via Bash (prefix with `uv run`):
@@ -173,10 +173,11 @@ Run these via Bash (prefix with `uv run`):
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
 
 ## Test tools (run experiments WITHOUT modifying main data)
-  uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--phase A]
-  uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--phase A]
-  uv run python -m pipeline.improver_tools run_batch --phase A      — full iteration with latest prompts
-  uv run python -m pipeline.improver_tools test_results --phase A   — view test results
+  uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--role {role}]
+  uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--role {role}]
+  uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias}  — cross-iteration with ALL {other_type} models
+  uv run python -m pipeline.improver_tools cross_summary <group_id>   — per-model stats for a cross-iteration
+  uv run python -m pipeline.improver_tools test_results --role {role}  — view test results
 
 ## Scratch directory (IMPORTANT: use this for temporary scripts)
 Write ad-hoc analysis scripts to: {AGENT_TMP_DIR}
@@ -202,11 +203,11 @@ Then synthesize their findings to write improved prompts.
 1. Read your state file: {state_path}
 2. Run query tools to gather data (**use Opus subagents to parallelize** — do NOT run queries sequentially)
 3. Read the improver instructions: {improver_path}
-4. Read the current judge prompt: {judge_path}
-5. Also read the generator prompt for context: {gen_path}
-6. Analyze how the judge is performing — is it calibrated with human reviews?
-7. Write improved judge to {model_dir}/judge_v{next_v}.md
-8. You may run up to {max_batches} `run_batch` calls to test your changes
+4. Read the current {prompt_type} prompt: {prompt_path}
+5. Also read the {other_type} prompt for context: {other_prompt_path}
+6. Analyze how the {prompt_type} is performing
+7. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
+8. You may run up to {max_batches} `run_cross_batch` calls to test your changes
 9. Update {state_path} with: what you changed, why, key metrics, and what to try next
 10. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
     It MUST start with exactly `## Final Summary` on its own line, followed by:
@@ -219,112 +220,8 @@ IMPORTANT:
 - Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
 - Do NOT pipe commands together. Run them as separate Bash calls.
 - You can ONLY write files inside {model_dir}/ and {AGENT_TMP_DIR}/. Do NOT modify any other files.
-- Focus on judge calibration: are scores aligned with human reviews? Is the rubric clear?
 - Do NOT overfit to individual examples. Focus on systematic patterns.
-- The judge prompt must NOT hardcode specific charter/constitution content.
-"""
-
-
-def _build_phase_b_prompt(cfg: AppConfig) -> str:
-    """Build the prompt for Phase B (generator improver)."""
-    alias = cfg.phase2.generator.model
-    model_dir = PROMPTS_DIR / alias
-    gen_path = resolve_prompt_path(cfg.phase2.generator.prompt, alias)
-    judge_path = resolve_prompt_path(cfg.phase2.judge.prompt, alias)
-    improver_path = _INIT_PROMPTS_DIR / "improver.md"
-    phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.generator_prompt
-
-    current_gen_v = _extract_version(_resolve_config_prompt(cfg.phase2.generator.prompt, alias))
-    next_v = current_gen_v + 1
-
-    state_path = model_dir / "state.md"
-    max_batches = cfg.phase2.improver.max_batches_per_phase
-
-    if phase_prompt_path.exists():
-        phase_instructions = phase_prompt_path.read_text(encoding="utf-8")
-    else:
-        phase_instructions = "Focus on improving generator prompts. The judge prompts were just improved in Phase A — generate against the improved judge."
-
-    from pipeline.phase2.storage import load_runs
-    runs = load_runs()
-    latest_iter = runs[-1]["iteration"] if runs else 0
-
-    return f"""You are improving GENERATOR prompts for a pretraining data annotation pipeline.
-
-## Phase B: Generator Improvement
-
-{phase_instructions}
-
-## Query tools
-Run these via Bash (prefix with `uv run`):
-  uv run python -m pipeline.improver_tools summary {latest_iter}     — aggregate stats
-  uv run python -m pipeline.improver_tools failures {latest_iter}    — rejected items with reasoning
-  uv run python -m pipeline.improver_tools failures {latest_iter} --reasoning-limit 500  — full reasoning
-  uv run python -m pipeline.improver_tools diversity {latest_iter}   — frequency-based diversity analysis
-  uv run python -m pipeline.improver_tools scores {latest_iter}      — compact scores table
-  uv run python -m pipeline.improver_tools show <id> {latest_iter}   — full text + outputs for one item
-  uv run python -m pipeline.improver_tools show <id1,id2,...> {latest_iter}  — batch show multiple items
-  uv run python -m pipeline.improver_tools show <id> {latest_iter} --brief   — truncated source text
-  uv run python -m pipeline.improver_tools show --gold {latest_iter} [--brief] — all gold items for iteration
-  uv run python -m pipeline.improver_tools item <id> {latest_iter}   — full details as JSON
-  uv run python -m pipeline.improver_tools gold                      — gold annotations (concise, no source text)
-  uv run python -m pipeline.improver_tools gold --verbose            — gold with full source text (large output!)
-  uv run python -m pipeline.improver_tools compare <id> {latest_iter} — generated vs gold
-  uv run python -m pipeline.improver_tools reviews [{latest_iter}]   — human reviews with judge comparison
-  uv run python -m pipeline.improver_tools filter {latest_iter} --dim <dimension> --below <threshold> [--part preflection|reflection]
-  uv run python -m pipeline.improver_tools trend                     — cross-iteration comparison table
-  uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
-
-## Test tools (run experiments WITHOUT modifying main data)
-  uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--phase B]
-  uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--phase B]
-  uv run python -m pipeline.improver_tools run_batch --phase B      — full iteration with latest prompts
-  uv run python -m pipeline.improver_tools test_results --phase B   — view test results
-
-## Scratch directory (IMPORTANT: use this for temporary scripts)
-Write ad-hoc analysis scripts to: {AGENT_TMP_DIR}
-Run them with: uv run python {AGENT_TMP_DIR}/your_script.py
-Delete with: rm {AGENT_TMP_DIR}/your_script.py
-This folder is cleared at the start of each loop. Use it for any analysis the CLI tools don't cover.
-**You MUST write all temporary files here** — do NOT write scripts to the project root or elsewhere.
-The `rm` command only works inside {AGENT_TMP_DIR}/.
-
-## State
-Read your state file at {state_path} FIRST. It contains notes from previous iterations.
-
-## Strategy: use Opus subagents for parallel exploration (IMPORTANT)
-You have access to the Agent tool. **Always use model="opus" for subagents** — they need
-strong reasoning. Parallelize aggressively; the bottleneck is wall-clock time, not tokens:
-- Spawn one subagent to analyze failures and low-scoring items in detail
-- Spawn another to compare generated outputs with gold annotations
-- Spawn another to review human reviews (the `reviews` command) and check judge calibration
-- Spawn another to check diversity patterns
-Then synthesize their findings to write improved prompts.
-
-## Your task
-1. Read your state file: {state_path}
-2. Run query tools to gather data (**use Opus subagents to parallelize** — do NOT run queries sequentially)
-3. Read the improver instructions: {improver_path}
-4. Read the current generator prompt: {gen_path}
-5. Also read the (just-improved) judge prompt: {judge_path}
-6. Analyze failure patterns in generated outputs
-7. Write improved generator to {model_dir}/generator_v{next_v}.md
-8. You CAN also fix the judge if you spot issues, but primarily focus on the generator
-9. You may run up to {max_batches} `run_batch` calls to test your changes
-10. Update {state_path} with: what you changed, why, key metrics, and what to try next
-11. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
-    It MUST start with exactly `## Final Summary` on its own line, followed by:
-    - **What changed**: which prompt file, key modifications
-    - **Why**: what problems you identified, with evidence (scores, examples)
-    - **Results**: before/after metrics if you ran test batches
-    - **Next steps**: what to try in the next iteration
-
-IMPORTANT:
-- Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
-- Do NOT pipe commands together. Run them as separate Bash calls.
-- You can ONLY write files inside {model_dir}/ and {AGENT_TMP_DIR}/. Do NOT modify any other files.
-- Do NOT overfit to individual examples. Focus on systematic patterns.
-- The generator prompt must NOT hardcode specific charter/constitution content.
+- The {prompt_type} prompt must NOT hardcode specific charter/constitution content.
 """
 
 
@@ -503,8 +400,8 @@ def _summarize_tool_input(name: str, inp: dict) -> str:
     return json.dumps(inp)[:100]
 
 
-def _make_phase_status(status_str: str = "pending") -> dict:
-    """Create a phase status dict."""
+def _make_improver_status(status_str: str = "pending") -> dict:
+    """Create an improver status dict."""
     return {
         "status": status_str,
         "reasoning": "",
@@ -514,14 +411,19 @@ def _make_phase_status(status_str: str = "pending") -> dict:
 
 
 def _snapshot_prompts(cfg: AppConfig) -> dict[str, str]:
-    """Capture current prompt file contents keyed by filename."""
-    alias = cfg.phase2.generator.model
-    model_dir = PROMPTS_DIR / alias
+    """Capture current prompt file contents keyed by 'alias/filename'."""
     prompts = {}
-    for path in sorted(model_dir.glob("*.md")):
-        if path.name == "state.md":
+    all_aliases = set()
+    for m in cfg.phase2.judge_models + cfg.phase2.generator_models:
+        all_aliases.add(m.alias)
+    for alias in sorted(all_aliases):
+        model_dir = PROMPTS_DIR / alias
+        if not model_dir.exists():
             continue
-        prompts[path.name] = path.read_text(encoding="utf-8")
+        for path in sorted(model_dir.glob("*.md")):
+            if path.name == "state.md":
+                continue
+            prompts[f"{alias}/{path.name}"] = path.read_text(encoding="utf-8")
     return prompts
 
 
@@ -535,7 +437,6 @@ def _extract_reasoning_from_log(log_path: Path) -> str:
         return ""
     raw = log_path.read_text()
 
-    # --- Primary: find "## Final Summary" in [text] blocks ---
     text_lines = _collect_text_lines(raw)
     full_text = "\n".join(text_lines)
     marker = "## Final Summary"
@@ -543,7 +444,6 @@ def _extract_reasoning_from_log(log_path: Path) -> str:
     if idx != -1:
         return full_text[idx:].strip()
 
-    # --- Fallback: last consecutive [text] block ---
     lines = raw.splitlines()
     result: list[str] = []
     collecting = False
@@ -583,27 +483,37 @@ def _extract_latest_status_from_log(log_path: Path) -> str:
     for line in reversed(log_path.read_text().splitlines()):
         if line.startswith("[text] "):
             text = line[7:].strip()
-            # Skip markdown artifacts and very short lines
             if len(text) > 5 and not text.startswith(("#", "---", "```", "|")):
                 return text[:300]
     return ""
 
 
-def _preflight_health_check(cfg: AppConfig) -> None:
+def _preflight_health_check(cfg: AppConfig, role: str, target_alias: str) -> None:
     """Ping the inference API before spawning agents. Fail fast if unreachable."""
     from pipeline.phase2.run import health_check, make_api_client
-    from pipeline.config import generator_api_name, judge_api_name
+    from pipeline.config import resolve_generator_model, resolve_judge_model
 
     client, _ = make_api_client(cfg)
-    gen_model = generator_api_name(cfg)
-    jdg_model = judge_api_name(cfg)
+    checked: set[str] = set()
 
-    logger.info("Pre-flight health check: {}", gen_model)
-    health_check(client, gen_model)
-    if jdg_model != gen_model:
-        logger.info("Pre-flight health check: {}", jdg_model)
-        health_check(client, jdg_model)
-    logger.info("Pre-flight health check passed.")
+    if role == "judge":
+        judge_cfg = resolve_judge_model(cfg, target_alias)
+        health_check(client, judge_cfg.api_name)
+        checked.add(judge_cfg.api_name)
+        for gen_cfg in cfg.phase2.generator_models:
+            if gen_cfg.api_name not in checked:
+                health_check(client, gen_cfg.api_name)
+                checked.add(gen_cfg.api_name)
+    else:
+        gen_cfg = resolve_generator_model(cfg, target_alias)
+        health_check(client, gen_cfg.api_name)
+        checked.add(gen_cfg.api_name)
+        for jdg_cfg in cfg.phase2.judge_models:
+            if jdg_cfg.api_name not in checked:
+                health_check(client, jdg_cfg.api_name)
+                checked.add(jdg_cfg.api_name)
+
+    logger.info("Pre-flight health check passed for {} / {}.", role, target_alias)
 
 
 ALLOWED_TOOLS = [
@@ -617,154 +527,193 @@ ALLOWED_TOOLS = [
 ]
 
 
-def run_improver_loop(cfg: AppConfig | None = None) -> None:
-    """Two-phase improver loop: Phase A (judge) -> Phase B (generator).
+def run_improver(cfg: AppConfig, role: str, target_alias: str) -> None:
+    """Run a single improver for one (role, model) pair.
 
-    Writes progress to loop_status.json for dashboard polling.
-    Persists completed loop to loop_history table for post-mortem review.
+    Independently launchable. Writes progress to loop_status.json
+    under improvers["{role}_{alias}"].
     """
-    if cfg is None:
-        cfg = load_config()
+    key = f"{role}_{target_alias}"
+    log_path = improver_log_path(role, target_alias)
 
-    existing = read_status()
-    if existing and existing.get("running"):
-        raise RuntimeError(
-            "Loop is already running. Wait for it to finish or clear loop_status.json."
-        )
-
+    status = read_status() or {}
     now = datetime.now(timezone.utc).isoformat()
-    status = {
-        "running": True,
-        "phase": "A",
-        "started_at": now,
-        "phase_a": {**_make_phase_status("running"), "started_at": now},
-        "phase_b": _make_phase_status("pending"),
-        "error": None,
-    }
+
+    # Update this improver's status to running
+    improvers = status.get("improvers", {})
+    improvers[key] = {**_make_improver_status("running"), "started_at": now}
+    status["improvers"] = improvers
+    status["current"] = key
     write_status(status)
 
-    alias = cfg.phase2.generator.model
-
-    # Snapshot prompts before the loop starts
-    prompts_before = _snapshot_prompts(cfg)
-
     try:
-        # Pre-flight: verify inference API is reachable before burning agent tokens
-        _preflight_health_check(cfg)
+        # Pre-flight health check
+        _preflight_health_check(cfg, role, target_alias)
 
-        # --- Phase A: Judge Improvement ---
-        logger.info("=" * 60)
-        logger.info("PHASE A: Judge Improvement")
-        logger.info("=" * 60)
-
-        # Clear scratch directory for agent scripts
+        # Clear scratch directory
         if AGENT_TMP_DIR.exists():
             shutil.rmtree(AGENT_TMP_DIR)
         AGENT_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-        prompt_a = _build_phase_a_prompt(cfg)
-        analysis_a = _spawn_agent(prompt_a, IMPROVER_LOG_A_PATH, ALLOWED_TOOLS)
+        prompt = _build_improver_prompt(cfg, role, target_alias)
+        _spawn_agent(prompt, log_path, ALLOWED_TOOLS)
 
-        # Sync config to latest judge prompts
-        new_gen, new_judge = _detect_new_prompts(cfg)
-        current_judge = _resolve_config_prompt(cfg.phase2.judge.prompt, alias)
-        if new_judge != current_judge:
-            cfg = _update_config(cfg, new_gen, new_judge)
-            logger.info("Phase A done: updated judge -> {}", new_judge)
+        # Detect if new prompts were written
+        new_prompt = _detect_new_prompts(target_alias, role)
+        logger.info("Improver {} done: latest prompt -> {}", key, new_prompt)
 
-        # Re-judge all reviewed items with all judge prompts × models for correlation tracking
-        from pipeline.phase2.run import rejudge_all_prompts_and_models
-        logger.info("Running rejudge_all_prompts_and_models after Phase A...")
-        rejudge_all_prompts_and_models(cfg)
+        # Re-judge for correlations after judge improvement
+        if role == "judge":
+            from pipeline.phase2.run import rejudge_all_prompts_and_models
+            logger.info("Running rejudge_all_prompts_and_models after judge improvement...")
+            rejudge_all_prompts_and_models(cfg)
 
-        now_a = datetime.now(timezone.utc).isoformat()
-        status["phase_a"]["status"] = "done"
-        status["phase_a"]["reasoning"] = _extract_reasoning_from_log(IMPROVER_LOG_A_PATH)
-        status["phase_a"]["finished_at"] = now_a
-
-        # --- Phase B: Generator Improvement ---
-        status["phase"] = "B"
-        status["phase_b"]["status"] = "running"
-        status["phase_b"]["started_at"] = now_a
-        write_status(status)
-
-        logger.info("=" * 60)
-        logger.info("PHASE B: Generator Improvement")
-        logger.info("=" * 60)
-
-        prompt_b = _build_phase_b_prompt(cfg)
-        analysis_b = _spawn_agent(prompt_b, IMPROVER_LOG_B_PATH, ALLOWED_TOOLS)
-
-        # Sync config to latest generator prompts
-        new_gen, new_judge = _detect_new_prompts(cfg)
-        current_gen = _resolve_config_prompt(cfg.phase2.generator.prompt, alias)
-        if new_gen != current_gen:
-            cfg = _update_config(cfg, new_gen, new_judge)
-            logger.info("Phase B done: updated generator -> {}", new_gen)
-
-        now_b = datetime.now(timezone.utc).isoformat()
-        status["phase_b"]["status"] = "done"
-        status["phase_b"]["reasoning"] = _extract_reasoning_from_log(IMPROVER_LOG_B_PATH)
-        status["phase_b"]["finished_at"] = now_b
-
-        status["phase"] = "done"
-        status["running"] = False
-        write_status(status)
-        logger.info("Improver loop complete (A+B).")
+        now_done = datetime.now(timezone.utc).isoformat()
+        improvers[key]["status"] = "done"
+        improvers[key]["reasoning"] = _extract_reasoning_from_log(log_path)
+        improvers[key]["finished_at"] = now_done
 
     except KeyboardInterrupt:
+        improvers[key]["status"] = "error"
+        improvers[key]["reasoning"] = "Interrupted by user"
         status["error"] = "Interrupted by user"
-        status["running"] = False
-        status["phase"] = "interrupted"
-        for p in ("phase_a", "phase_b"):
-            if status[p]["status"] == "running":
-                status[p]["status"] = "error"
         write_status(status)
-        logger.warning("Loop interrupted.")
         raise
     except Exception as e:
+        improvers[key]["status"] = "error"
+        improvers[key]["reasoning"] = str(e)[:500]
         status["error"] = str(e)
-        status["running"] = False
-        for p in ("phase_a", "phase_b"):
-            if status[p]["status"] == "running":
-                status[p]["status"] = "error"
         write_status(status)
         raise
     finally:
-        # Persist loop history (even on error/interrupt)
+        status["current"] = None
+        write_status(status)
+
+
+def run_judge_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
+    """Run judge improvers sequentially. If aliases is None, run ALL judge models."""
+    if aliases is None:
+        aliases = [m.alias for m in cfg.phase2.judge_models]
+
+    now = datetime.now(timezone.utc).isoformat()
+    prompts_before = _snapshot_prompts(cfg)
+
+    # Initialize status with all selected aliases as pending
+    improvers = {f"judge_{a}": _make_improver_status("pending") for a in aliases}
+    status = {
+        "running": True,
+        "started_at": now,
+        "role": "judge",
+        "improvers": improvers,
+        "current": None,
+        "error": None,
+    }
+    write_status(status)
+
+    try:
+        for alias in aliases:
+            run_improver(cfg, "judge", alias)
+            # Re-read status (run_improver updates it)
+            status = read_status() or status
+
+        status["running"] = False
+        write_status(status)
+        logger.info("All judge improvers complete.")
+
+    except (KeyboardInterrupt, Exception):
+        status = read_status() or status
+        status["running"] = False
+        # Mark remaining pending improvers as skipped
+        for key, data in status.get("improvers", {}).items():
+            if data["status"] == "pending":
+                data["status"] = "skipped"
+        write_status(status)
+        raise
+
+    finally:
         try:
             _save_history(status, prompts_before, cfg)
         except Exception as e:
             logger.error("Failed to save loop history to DB: {}", e)
-            # Dump to JSON as fallback so the data isn't lost
             fallback = PIPELINE_DATA_DIR / "loop_history_fallback.json"
             fallback.write_text(json.dumps(status, indent=2, default=str))
-            logger.error("Loop status dumped to {}", fallback)
+
+
+def run_generator_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
+    """Run generator improvers sequentially. If aliases is None, run ALL generator models."""
+    if aliases is None:
+        aliases = [m.alias for m in cfg.phase2.generator_models]
+
+    now = datetime.now(timezone.utc).isoformat()
+    prompts_before = _snapshot_prompts(cfg)
+
+    improvers = {f"generator_{a}": _make_improver_status("pending") for a in aliases}
+    status = {
+        "running": True,
+        "started_at": now,
+        "role": "generator",
+        "improvers": improvers,
+        "current": None,
+        "error": None,
+    }
+    write_status(status)
+
+    try:
+        for alias in aliases:
+            run_improver(cfg, "generator", alias)
+            status = read_status() or status
+
+        status["running"] = False
+        write_status(status)
+        logger.info("All generator improvers complete.")
+
+    except (KeyboardInterrupt, Exception):
+        status = read_status() or status
+        status["running"] = False
+        for key, data in status.get("improvers", {}).items():
+            if data["status"] == "pending":
+                data["status"] = "skipped"
+        write_status(status)
+        raise
+
+    finally:
+        try:
+            _save_history(status, prompts_before, cfg)
+        except Exception as e:
+            logger.error("Failed to save loop history to DB: {}", e)
+            fallback = PIPELINE_DATA_DIR / "loop_history_fallback.json"
+            fallback.write_text(json.dumps(status, indent=2, default=str))
 
 
 def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) -> None:
-    """Persist a loop run to loop_history table with prompt snapshots and logs."""
+    """Persist a completed improver run to loop_history table with prompt snapshots and logs."""
     prompts_after = _snapshot_prompts(cfg)
 
-    # Use log-extracted reasoning as fallback for empty reasoning
-    for phase_key, log_path in [("phase_a", IMPROVER_LOG_A_PATH), ("phase_b", IMPROVER_LOG_B_PATH)]:
-        phase_data = status.get(phase_key, {})
-        if not phase_data.get("reasoning") and phase_data.get("status") != "pending":
-            phase_data["reasoning"] = _extract_reasoning_from_log(log_path)
+    # Extract reasoning from logs for any improvers missing it
+    for key, data in status.get("improvers", {}).items():
+        if not data.get("reasoning") and data.get("status") != "pending":
+            parts = key.split("_", 1)
+            if len(parts) == 2:
+                role, alias = parts
+                log_p = improver_log_path(role, alias)
+                data["reasoning"] = _extract_reasoning_from_log(log_p)
 
-    # Capture full logs (files get overwritten on next run)
+    # Capture full logs
     logs = {}
-    for key, path in [("phase_a", IMPROVER_LOG_A_PATH), ("phase_b", IMPROVER_LOG_B_PATH)]:
-        if path.exists():
-            logs[key] = path.read_text()
+    for key in status.get("improvers", {}):
+        parts = key.split("_", 1)
+        if len(parts) == 2:
+            role, alias = parts
+            log_p = improver_log_path(role, alias)
+            if log_p.exists():
+                logs[key] = log_p.read_text()
 
     record = {
         "started_at": status.get("started_at"),
         "finished_at": datetime.now(timezone.utc).isoformat(),
-        "phase_a": status.get("phase_a", {}),
-        "phase_b": status.get("phase_b", {}),
+        "role": status.get("role"),
+        "improvers": status.get("improvers", {}),
         "error": status.get("error"),
-        "model_alias": cfg.phase2.generator.model,
         "prompts_before": prompts_before,
         "prompts_after": prompts_after,
         "logs": logs,
@@ -773,16 +722,26 @@ def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) 
 
 
 def main():
-    """CLI entry point for the two-phase improver loop."""
-    overrides = sys.argv[1:] if len(sys.argv) > 1 else None
-    cfg = load_config(overrides)
+    """CLI entry point for the independent improver runners."""
+    import argparse
 
-    logger.info("Starting two-phase improver loop")
-    logger.info("Generator: {} (prompt: {})", cfg.phase2.generator.model, cfg.phase2.generator.prompt)
-    logger.info("Judge: {} (prompt: {})", cfg.phase2.judge.model, cfg.phase2.judge.prompt)
-    logger.info("Max batches per phase: {}", cfg.phase2.improver.max_batches_per_phase)
+    parser = argparse.ArgumentParser(description="Run improver agents")
+    parser.add_argument("--role", required=True, choices=["judge", "generator"])
+    parser.add_argument("--aliases", type=str, default=None,
+                        help="Comma-separated model aliases (default: all)")
+    args = parser.parse_args()
 
-    run_improver_loop(cfg=cfg)
+    cfg = load_config()
+    aliases = args.aliases.split(",") if args.aliases else None
+
+    logger.info("Starting {} improver(s)", args.role)
+    if aliases:
+        logger.info("Aliases: {}", aliases)
+
+    if args.role == "judge":
+        run_judge_improvers(cfg, aliases=aliases)
+    else:
+        run_generator_improvers(cfg, aliases=aliases)
 
 
 if __name__ == "__main__":

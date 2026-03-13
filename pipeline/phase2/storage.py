@@ -15,6 +15,13 @@ def load_runs() -> list[dict]:
     return [_row_to_run(r) for r in rows]
 
 
+def next_iteration() -> int:
+    """Return the next iteration number (max existing + 1, or 1 if none)."""
+    conn = _get_conn()
+    row = conn.execute("SELECT MAX(iteration) FROM runs").fetchone()
+    return (row[0] or 0) + 1
+
+
 def save_run(
     iteration: int,
     gen_prompt: str,
@@ -26,21 +33,23 @@ def save_run(
     config: dict,
     analysis: str,
     source: str = "manual",
+    group_id: str | None = None,
 ) -> None:
     """Append a completed iteration run record.
 
-    source: one of "manual", "phase_a", "phase_b".
+    source: one of "manual", "improve_judge", "improve_generator".
+    group_id: shared UUID linking cross-iteration runs in the same batch.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT INTO runs
            (iteration, gen_prompt, judge_prompt, generator_model, judge_model,
-            n_items, n_gold, config, analysis, timestamp, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            n_items, n_gold, config, analysis, timestamp, source, group_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             iteration, gen_prompt, judge_prompt, generator_model, judge_model,
             n_items, n_gold, json.dumps(config), analysis,
-            datetime.now(timezone.utc).isoformat(), source,
+            datetime.now(timezone.utc).isoformat(), source, group_id,
         ),
     )
     conn.commit()
@@ -216,13 +225,18 @@ def save_test_result(record: dict) -> None:
     conn.commit()
 
 
-def load_test_results(phase: str | None = None) -> list[dict]:
-    """Load test results, optionally filtered by phase ('A' or 'B')."""
+def load_test_results(phase: str | None = None, role: str | None = None) -> list[dict]:
+    """Load test results, optionally filtered by phase/role.
+
+    Supports both old phase format ('A'/'B') and new role format ('judge'/'generator').
+    """
     conn = _get_conn()
     rows = conn.execute("SELECT * FROM test_results ORDER BY id").fetchall()
     results = [json.loads(r["data"]) for r in rows]
     if phase is not None:
         results = [r for r in results if r.get("phase") == phase]
+    if role is not None:
+        results = [r for r in results if r.get("role") == role]
     return results
 
 

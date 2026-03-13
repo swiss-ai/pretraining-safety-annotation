@@ -15,18 +15,18 @@ phase2:
   endpoint: https://api.swissai.cscs.ch/v1
   judge_models:
   - alias: glm45
-    api_name: jminder/data-annotator-glm45
+    api_name: jminder/jZ7aJGjetjNN
     hf_slug: zai-org/GLM-4.5-Air-FP8
+  - alias: olmo3-32B-think
+    api_name: jminder/UqFTpAeJcvV4
+    hf_slug: olmo-ai/olmo-3-32b-thinking
   generator_models:
   - alias: glm45
-    api_name: jminder/data-annotator-glm45
+    api_name: jminder/jZ7aJGjetjNN
     hf_slug: zai-org/GLM-4.5-Air-FP8
-  generator:
-    model: glm45
-    prompt: generator_v1.md
-  judge:
-    model: glm45
-    prompt: judge_latest.md
+  - alias: olmo3-32B-think
+    api_name: jminder/UqFTpAeJcvV4
+    hf_slug: olmo-ai/olmo-3-32b-thinking
   improver:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md
