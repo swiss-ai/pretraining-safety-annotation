@@ -288,10 +288,9 @@ def _render_loop_history():
     if not history:
         return
 
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Improver Loop History").classes("text-h6 text-weight-bold")
-        ui.label(f"{len(history)} past loop run(s)").classes("text-caption text-grey-7")
-
+    with ui.expansion(
+        f"Improver Loop History ({len(history)} runs)", icon="history",
+    ).classes("w-full q-mx-md q-mt-md"):
         for i, run in enumerate(reversed(history)):
             run_idx = len(history) - i
             started = run.get("started_at", "?")[:19]
@@ -529,8 +528,9 @@ def pipeline_monitoring_page():
     _render_loop_history()
 
     # --- Two-Phase Improver Loop ---
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Autonomous Improver Loop").classes("text-h6 text-weight-bold")
+    with ui.expansion(
+        "Autonomous Improver Loop", icon="auto_fix_high",
+    ).classes("w-full q-mx-md q-mt-md"):
         ui.label(
             "Two-phase loop: Phase A improves judge prompts, Phase B improves generator prompts. "
             "Each phase spawns an Opus agent with autonomous tool access."
@@ -702,8 +702,9 @@ def pipeline_monitoring_page():
                 loop_timer.active = True
 
     # --- Single Iteration ---
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Run Single Iteration").classes("text-h6 text-weight-bold")
+    with ui.expansion(
+        "Run Single Iteration", icon="play_circle",
+    ).classes("w-full q-mx-md q-mt-md"):
         ui.label("Runs a single generate->judge iteration with current config.").classes(
             "text-caption text-grey-7"
         )
