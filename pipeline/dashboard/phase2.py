@@ -224,13 +224,14 @@ def _render_calibration_from_items(cal: dict) -> None:
                     ui.label(f"  {short}: {val}").classes("text-body2")
 
 
-def _phase_badge(status: str) -> tuple[str, str]:
-    """Return (label, color) for a phase status badge."""
+def _status_badge(status: str) -> tuple[str, str]:
+    """Return (label, color) for an improver status badge."""
     colors = {
         "pending": "grey",
         "running": "blue",
         "done": "green",
         "error": "red",
+        "skipped": "orange",
     }
     return status.upper(), colors.get(status, "grey")
 
@@ -416,13 +417,13 @@ def _compute_prompt_diffs(
 
 
 def _render_loop_history():
-    """Render past loop runs from loop_history.jsonl."""
+    """Render past improver runs from loop_history table."""
     history = load_loop_history()
     if not history:
         return
 
     with ui.expansion(
-        f"Improver Loop History ({len(history)} runs)", icon="history",
+        f"Improver History ({len(history)} runs)", icon="history",
     ).classes("w-full q-mx-md q-mt-md"):
         for i, run in enumerate(reversed(history)):
             run_idx = len(history) - i
@@ -430,34 +431,39 @@ def _render_loop_history():
             finished = run.get("finished_at", "?")[:19]
             error = run.get("error")
             failed = bool(error)
+            role = run.get("role", "unknown")
             status_tag = " — FAILED" if failed else ""
             border_style = "border-left: 3px solid #f44336;" if failed else ""
 
             with ui.expansion(
-                f"Loop #{run_idx} — {started}{status_tag}",
+                f"Run #{run_idx} ({role}) — {started}{status_tag}",
                 icon="error" if failed else "history",
             ).classes("w-full").style(border_style):
                 with ui.row().classes("items-center gap-2"):
                     ui.badge("FAILED" if failed else "DONE", color="red" if failed else "green")
+                    ui.badge(role.upper(), color="blue-grey").props("outline")
                     ui.label(f"{started} → {finished}").classes("text-caption text-grey-6")
-                    if run.get("model_alias"):
-                        ui.badge(run["model_alias"], color="blue-grey").props("outline")
 
                 if error:
                     ui.label(f"Error: {error}").classes("text-caption text-red q-mt-xs")
 
-                # Phase cards with reasoning + logs
+                # Improver cards with reasoning + logs
+                improvers = run.get("improvers", {})
                 run_logs = run.get("logs", {})
-                with ui.row().classes("w-full gap-4 q-mt-sm"):
-                    for phase_key, phase_label in [("phase_a", "Phase A: Judge"), ("phase_b", "Phase B: Generator")]:
-                        phase = run.get(phase_key, {})
-                        p_status = phase.get("status", "pending")
-                        label, color = _phase_badge(p_status)
-                        with ui.card().classes("flex-1 q-pa-sm"):
+                with ui.row().classes("w-full gap-4 q-mt-sm flex-wrap"):
+                    for key, data in improvers.items():
+                        parts = key.split("_", 1)
+                        imp_role = parts[0] if len(parts) == 2 else "?"
+                        imp_alias = parts[1] if len(parts) == 2 else key
+                        imp_status = data.get("status", "pending")
+                        label, color = _status_badge(imp_status)
+                        with ui.card().classes("flex-1 q-pa-sm").style("min-width: 300px;"):
                             with ui.row().classes("items-center gap-2"):
-                                ui.label(phase_label).classes("text-subtitle2 text-weight-bold")
+                                ui.label(f"{imp_role.title()}: {imp_alias}").classes(
+                                    "text-subtitle2 text-weight-bold"
+                                )
                                 ui.badge(label, color=color)
-                            reasoning = phase.get("reasoning", "")
+                            reasoning = data.get("reasoning", "")
                             if reasoning:
                                 with ui.expansion("Summary", icon="summarize", value=True).classes("w-full"):
                                     ui.markdown(reasoning).classes("text-body2").style(
@@ -466,14 +472,14 @@ def _render_loop_history():
                             else:
                                 ui.label("No reasoning recorded.").classes("text-grey-6 text-caption")
 
-                            phase_log = run_logs.get(phase_key, "")
-                            if phase_log:
+                            imp_log = run_logs.get(key, "")
+                            if imp_log:
                                 with ui.expansion("Full Log", icon="terminal").classes("w-full"):
-                                    ui.code(phase_log, language="text").classes("w-full").style(
+                                    ui.code(imp_log, language="text").classes("w-full").style(
                                         "max-height: 400px; overflow-y: auto; font-size: 0.75em;"
                                     )
 
-                # Prompt diffs — pair new versions against their predecessor
+                # Prompt diffs
                 diffs = _compute_prompt_diffs(
                     run.get("prompts_before", {}), run.get("prompts_after", {}),
                 )
@@ -593,46 +599,74 @@ def pipeline_monitoring_page():
                             ui.label(f"  {short}: {val}").classes("text-body2")
 
     # --- Trend Charts ---
-    _SOURCE_SUFFIX = {"phase_a": " (A)", "phase_b": " (B)"}
-    _SOURCE_COLORS = {"phase_a": "#e91e63", "phase_b": "#3f51b5", "manual": "#9e9e9e"}
+    _SOURCE_LABEL = {"improve_judge": "J", "improve_generator": "G", "manual": "\u2014",
+                     "phase_a": "J", "phase_b": "G"}
+    _SOURCE_MARKER = {
+        "improve_judge": "diamond", "improve_generator": "triangle", "manual": "circle",
+        "phase_a": "diamond", "phase_b": "triangle",
+    }
+
+    # Collect distinct generator models for dropdown
+    all_gen_models = sorted({s.get("generator_model", "unknown") for s in iter_stats})
 
     if len(iter_stats) >= 2:
-        iter_labels = [
-            f"Iter {s['iteration']}{_SOURCE_SUFFIX.get(s.get('source', 'manual'), '')}"
-            for s in iter_stats
-        ]
-        accept_rates = [s["accept_rate"] for s in iter_stats]
-        mean_scores = [round(s["mean_score"], 2) for s in iter_stats]
+        def _build_trend_chart(gen_filter: str | None) -> dict:
+            filtered = iter_stats if gen_filter is None else [
+                s for s in iter_stats if s.get("generator_model") == gen_filter
+            ]
+            labels = [f"Iter {s['iteration']}" for s in filtered]
+            accept_data = [
+                {"value": s["accept_rate"],
+                 "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
+                 "symbolSize": 8}
+                for s in filtered
+            ]
+            score_data = [
+                {"value": round(s["mean_score"], 2),
+                 "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
+                 "symbolSize": 8}
+                for s in filtered
+            ]
+            return {
+                "xAxis": {"type": "category", "data": labels},
+                "yAxis": [
+                    {"type": "value", "name": "Accept %", "min": 0, "max": 100, "position": "left"},
+                    {"type": "value", "name": "Mean Score", "min": 1, "max": 5, "position": "right"},
+                ],
+                "series": [
+                    {"name": "Accept %", "type": "line", "data": accept_data, "yAxisIndex": 0,
+                     "lineStyle": {"color": "#4caf50"}, "itemStyle": {"color": "#4caf50"}},
+                    {"name": "Mean Score", "type": "line", "data": score_data, "yAxisIndex": 1,
+                     "lineStyle": {"color": "#2196f3"}, "itemStyle": {"color": "#2196f3"}},
+                ],
+                "tooltip": {"trigger": "axis"},
+                "legend": {"bottom": 0},
+            }
+
         with ui.row().classes("w-full q-mx-md q-mt-md gap-4"):
             with ui.card().classes("flex-1 q-pa-md"):
-                ui.label("Acceptance Rate & Mean Score").classes("text-subtitle2 text-weight-bold")
-                _point_colors = [
-                    _SOURCE_COLORS.get(s.get("source", "manual"), "#9e9e9e")
-                    for s in iter_stats
-                ]
-                accept_data = [
-                    {"value": ar, "itemStyle": {"color": c}}
-                    for ar, c in zip(accept_rates, _point_colors)
-                ]
-                score_data = [
-                    {"value": ms, "itemStyle": {"color": c}}
-                    for ms, c in zip(mean_scores, _point_colors)
-                ]
-                ui.echart({
-                    "xAxis": {"type": "category", "data": iter_labels},
-                    "yAxis": [
-                        {"type": "value", "name": "Accept %", "min": 0, "max": 100, "position": "left"},
-                        {"type": "value", "name": "Mean Score", "min": 1, "max": 5, "position": "right"},
-                    ],
-                    "series": [
-                        {"name": "Accept %", "type": "line", "data": accept_data, "yAxisIndex": 0,
-                         "lineStyle": {"color": "#4caf50"}, "itemStyle": {"color": "#4caf50"}},
-                        {"name": "Mean Score", "type": "line", "data": score_data, "yAxisIndex": 1,
-                         "lineStyle": {"color": "#2196f3"}, "itemStyle": {"color": "#2196f3"}},
-                    ],
-                    "tooltip": {"trigger": "axis"},
-                    "legend": {"bottom": 0},
-                }).classes("w-full").style("height: 250px;")
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Acceptance Rate & Mean Score").classes("text-subtitle2 text-weight-bold")
+                    if len(all_gen_models) > 1:
+                        gen_options = ["All"] + all_gen_models
+                        default_gen = all_gen_models[0]
+                    else:
+                        gen_options = all_gen_models
+                        default_gen = all_gen_models[0] if all_gen_models else None
+
+                trend_chart = ui.echart(
+                    _build_trend_chart(default_gen if len(all_gen_models) > 1 else None)
+                ).classes("w-full").style("height: 250px;")
+
+                if len(all_gen_models) > 1:
+                    def _on_gen_filter(e):
+                        val = None if e.value == "All" else e.value
+                        trend_chart.options = _build_trend_chart(val)
+                        trend_chart.update()
+                    ui.select(
+                        gen_options, value=default_gen, label="Generator Model",
+                        on_change=_on_gen_filter,
+                    ).classes("w-48")
 
             with ui.card().classes("flex-1 q-pa-md"):
                 ui.label("Judge-Human Correlation by Judge Version").classes("text-subtitle2 text-weight-bold")
@@ -701,22 +735,23 @@ def pipeline_monitoring_page():
         if not runs:
             ui.label("No iterations yet.").classes("text-grey-6")
         else:
-            _SOURCE_LABEL = {"phase_a": "A", "phase_b": "B", "manual": "\u2014"}
             columns = [
                 {"name": "iteration", "label": "#", "field": "iteration", "sortable": True},
                 {"name": "source", "label": "Source", "field": "source_label"},
-                {"name": "model", "label": "Model", "field": "model"},
+                {"name": "generator_model", "label": "Generator", "field": "generator_model"},
+                {"name": "judge_model", "label": "Judge", "field": "judge_display"},
                 {"name": "gen_prompt", "label": "Gen Prompt", "field": "gen_prompt"},
                 {"name": "judge_prompt", "label": "Judge Prompt", "field": "judge_prompt"},
                 {"name": "n_items", "label": "Items", "field": "n_items"},
-                {"name": "n_gold", "label": "Gold", "field": "n_gold"},
+                {"name": "group", "label": "Group", "field": "group_label"},
                 {"name": "timestamp", "label": "Time", "field": "timestamp"},
             ]
             rows = [
                 {
                     **s,
                     "source_label": _SOURCE_LABEL.get(s.get("source", "manual"), "\u2014"),
-                    "model": s.get("generator_model", s.get("model", "unknown")),
+                    "judge_display": s.get("judge_model", "?"),
+                    "group_label": s.get("group_id", "")[:8] if s.get("group_id") else "",
                     "timestamp": s["timestamp"][:19],
                     "accept_reject": f"{s['n_acc']}/{s['n_rej']}",
                     "mean_score": f"{s['mean_score']:.2f}",
@@ -739,38 +774,34 @@ def pipeline_monitoring_page():
     # --- Loop History ---
     _render_loop_history()
 
-    # --- Two-Phase Improver Loop ---
+    # --- Improver Controls ---
+    cfg = load_config()
     with ui.expansion(
-        "Autonomous Improver Loop", icon="auto_fix_high",
+        "Improver Controls", icon="auto_fix_high",
     ).classes("w-full q-mx-md q-mt-md"):
         ui.label(
-            "Two-phase loop: Phase A improves judge prompts, Phase B improves generator prompts. "
-            "Each phase spawns an Opus agent with autonomous tool access."
+            "Independent improvers: judge and generator. Each spawns an Opus agent that tests "
+            "against ALL counterpart models via cross-iteration."
         ).classes("text-caption text-grey-7")
 
-        # Phase cards
-        with ui.row().classes("w-full gap-4 q-mt-sm"):
-            phase_a_card = ui.card().classes("flex-1 q-pa-sm")
-            with phase_a_card:
-                with ui.row().classes("items-center gap-2"):
-                    ui.label("Phase A: Judge").classes("text-subtitle2 text-weight-bold")
-                    phase_a_badge = ui.badge("PENDING", color="grey")
-                phase_a_reasoning = ui.expansion("Reasoning", icon="psychology").classes("w-full")
-                with phase_a_reasoning:
-                    phase_a_text = ui.label("").classes("text-body2").style(
-                        "white-space: pre-wrap; font-size: 0.85em;"
-                    )
+        # Two role buttons with model selectors
+        judge_aliases = [m.alias for m in cfg.phase2.judge_models]
+        gen_aliases = [m.alias for m in cfg.phase2.generator_models]
 
-            phase_b_card = ui.card().classes("flex-1 q-pa-sm")
-            with phase_b_card:
-                with ui.row().classes("items-center gap-2"):
-                    ui.label("Phase B: Generator").classes("text-subtitle2 text-weight-bold")
-                    phase_b_badge = ui.badge("PENDING", color="grey")
-                phase_b_reasoning = ui.expansion("Reasoning", icon="psychology").classes("w-full")
-                with phase_b_reasoning:
-                    phase_b_text = ui.label("").classes("text-body2").style(
-                        "white-space: pre-wrap; font-size: 0.85em;"
-                    )
+        with ui.row().classes("w-full gap-4 q-mt-sm items-center"):
+            judge_btn = ui.button("Run Judge Improver", icon="gavel", color="primary")
+            ui.label("Models:").classes("text-caption")
+            for a in judge_aliases:
+                ui.badge(a, color="blue-grey").props("outline")
+
+        with ui.row().classes("w-full gap-4 q-mt-xs items-center"):
+            gen_btn = ui.button("Run Generator Improver", icon="edit_note", color="secondary")
+            ui.label("Models:").classes("text-caption")
+            for a in gen_aliases:
+                ui.badge(a, color="blue-grey").props("outline")
+
+        # Dynamic improver cards
+        improver_cards_container = ui.column().classes("w-full gap-2 q-mt-sm")
 
         loop_error_label = ui.label("").classes("text-caption text-red")
 
@@ -778,20 +809,9 @@ def pipeline_monitoring_page():
         with ui.expansion("Test Results", icon="science").classes("w-full q-mt-sm"):
             test_results_container = ui.column().classes("w-full gap-1")
 
-        # Log viewer with tabs
+        # Log viewer with dynamic tabs
         with ui.expansion("Improver Logs", icon="terminal").classes("w-full q-mt-sm"):
-            with ui.tabs().classes("w-full") as log_tabs:
-                tab_a = ui.tab("Phase A")
-                tab_b = ui.tab("Phase B")
-            with ui.tab_panels(log_tabs, value=tab_a).classes("w-full"):
-                with ui.tab_panel(tab_a):
-                    log_a_display = ui.code("", language="text").classes("w-full").style(
-                        "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
-                    )
-                with ui.tab_panel(tab_b):
-                    log_b_display = ui.code("", language="text").classes("w-full").style(
-                        "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
-                    )
+            log_tabs_container = ui.column().classes("w-full")
 
         def _tail_log(log_path: Path, n_lines: int = 50) -> str:
             if not log_path.exists():
@@ -799,48 +819,91 @@ def pipeline_monitoring_page():
             lines = log_path.read_text().splitlines()
             return "\n".join(lines[-n_lines:])
 
-        def _update_from_status(st: dict) -> None:
-            """Update UI elements from a loop status dict.
-
-            While running: shows the agent's most recent status line.
-            When done: shows the final analysis summary extracted from the log.
-            """
+        def _render_improver_cards(st: dict) -> None:
+            """Render dynamic improver status cards from status dict."""
             from pipeline.phase2.loop import (
-                IMPROVER_LOG_A_PATH,
-                IMPROVER_LOG_B_PATH,
+                improver_log_path as _log_path,
                 _extract_latest_status_from_log,
                 _extract_reasoning_from_log,
             )
 
-            for phase_key, badge, text_label, log_path in [
-                ("phase_a", phase_a_badge, phase_a_text, IMPROVER_LOG_A_PATH),
-                ("phase_b", phase_b_badge, phase_b_text, IMPROVER_LOG_B_PATH),
-            ]:
-                phase_data = st.get(phase_key, {})
-                phase_status = phase_data.get("status", "pending")
-                label, color = _phase_badge(phase_status)
-                badge.set_text(label)
-                badge._props["color"] = color
-                badge.update()
+            improver_cards_container.clear()
+            improvers = st.get("improvers", {})
+            if not improvers:
+                with improver_cards_container:
+                    ui.label("No improver runs yet.").classes("text-grey-6 text-caption")
+                return
 
-                if phase_status == "running":
-                    # Live: show most recent agent message
-                    text_label.set_text(_extract_latest_status_from_log(log_path))
-                elif phase_status in ("done", "error"):
-                    # Completed: show final summary
-                    reasoning = phase_data.get("reasoning", "")
-                    if not reasoning:
-                        reasoning = _extract_reasoning_from_log(log_path)
-                    text_label.set_text(reasoning)
+            with improver_cards_container:
+                with ui.row().classes("w-full gap-4 flex-wrap"):
+                    for key, data in improvers.items():
+                        parts = key.split("_", 1)
+                        imp_role = parts[0] if len(parts) == 2 else "?"
+                        imp_alias = parts[1] if len(parts) == 2 else key
+                        imp_status = data.get("status", "pending")
+                        label, color = _status_badge(imp_status)
+
+                        with ui.card().classes("flex-1 q-pa-sm").style("min-width: 280px;"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label(f"{imp_role.title()}: {imp_alias}").classes(
+                                    "text-subtitle2 text-weight-bold"
+                                )
+                                ui.badge(label, color=color)
+
+                            log_p = _log_path(imp_role, imp_alias)
+                            if imp_status == "running":
+                                text = _extract_latest_status_from_log(log_p)
+                                ui.label(text).classes("text-body2").style(
+                                    "white-space: pre-wrap; font-size: 0.85em;"
+                                )
+                            elif imp_status in ("done", "error"):
+                                reasoning = data.get("reasoning", "")
+                                if not reasoning:
+                                    reasoning = _extract_reasoning_from_log(log_p)
+                                if reasoning:
+                                    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full"):
+                                        ui.markdown(reasoning).classes("text-body2").style(
+                                            "font-size: 0.85em; max-height: 300px; overflow-y: auto;"
+                                        )
+
+        def _render_log_tabs(st: dict) -> None:
+            """Render dynamic log tabs for each improver."""
+            from pipeline.phase2.loop import improver_log_path as _log_path
+
+            log_tabs_container.clear()
+            improvers = st.get("improvers", {})
+            if not improvers:
+                return
+
+            with log_tabs_container:
+                with ui.tabs().classes("w-full") as tabs:
+                    tab_map = {}
+                    for key in improvers:
+                        tab_map[key] = ui.tab(key)
+                first_tab = next(iter(tab_map.values())) if tab_map else None
+                with ui.tab_panels(tabs, value=first_tab).classes("w-full"):
+                    for key in improvers:
+                        parts = key.split("_", 1)
+                        imp_role = parts[0] if len(parts) == 2 else "?"
+                        imp_alias = parts[1] if len(parts) == 2 else key
+                        with ui.tab_panel(tab_map[key]):
+                            log_p = _log_path(imp_role, imp_alias)
+                            ui.code(
+                                _tail_log(log_p), language="text"
+                            ).classes("w-full").style(
+                                "max-height: 400px; overflow-y: auto; font-size: 0.8em;"
+                            )
+
+        def _update_from_status(st: dict) -> None:
+            """Update UI from status dict."""
+            _render_improver_cards(st)
 
             if st.get("error"):
                 loop_error_label.set_text(f"Error: {st['error']}")
             else:
                 loop_error_label.set_text("")
 
-            # Always show logs if they exist
-            log_a_display.set_content(_tail_log(IMPROVER_LOG_A_PATH))
-            log_b_display.set_content(_tail_log(IMPROVER_LOG_B_PATH))
+            _render_log_tabs(st)
 
         def _poll_loop_status():
             from pipeline.phase2.loop import read_status
@@ -858,96 +921,130 @@ def pipeline_monitoring_page():
                     cols = [
                         {"name": "test_id", "label": "Test ID", "field": "test_id"},
                         {"name": "type", "label": "Type", "field": "type"},
-                        {"name": "phase", "label": "Phase", "field": "phase"},
+                        {"name": "role", "label": "Role", "field": "role"},
                         {"name": "prompt", "label": "Prompt", "field": "prompt"},
                         {"name": "n_items", "label": "Items", "field": "n_items"},
                         {"name": "mean_score", "label": "Mean Score", "field": "mean_score"},
                         {"name": "timestamp", "label": "Time", "field": "timestamp"},
                     ]
-                    rows = []
-                    for r in results[-20:]:  # show last 20
+                    t_rows = []
+                    for r in results[-20:]:
                         s = r.get("summary", {})
-                        rows.append({
+                        t_rows.append({
                             "test_id": r.get("test_id", ""),
                             "type": r.get("type", ""),
-                            "phase": r.get("phase", ""),
+                            "role": r.get("role", r.get("phase", "?")),
                             "prompt": r.get("prompt", ""),
                             "n_items": s.get("n_items", ""),
                             "mean_score": f"{s['mean_score']:.2f}" if isinstance(s.get("mean_score"), (int, float)) else "",
                             "timestamp": r.get("timestamp", "")[:19],
                         })
-                    ui.table(columns=cols, rows=rows, row_key="test_id").classes("w-full")
+                    ui.table(columns=cols, rows=t_rows, row_key="test_id").classes("w-full")
 
             if not st.get("running"):
                 loop_timer.active = False
-                loop_btn.enable()
-                single_btn.enable()
+                judge_btn.enable()
+                gen_btn.enable()
+                cross_btn.enable()
 
         loop_timer = ui.timer(3.0, _poll_loop_status, active=False)
 
-        def start_loop():
-            loop_btn.disable()
-            single_btn.disable()
+        def _start_improver(role: str):
+            judge_btn.disable()
+            gen_btn.disable()
+            cross_btn.disable()
             loop_error_label.set_text("")
             loop_timer.active = True
 
             def _thread():
-                from pipeline.phase2.loop import run_improver_loop
-                cfg = load_config()
-                run_improver_loop(cfg=cfg)
+                from pipeline.phase2.loop import run_judge_improvers, run_generator_improvers
+                run_cfg = load_config()
+                if role == "judge":
+                    run_judge_improvers(run_cfg)
+                else:
+                    run_generator_improvers(run_cfg)
 
             threading.Thread(target=_thread, daemon=True).start()
 
-        loop_btn = ui.button(
-            "Start Improver Loop",
-            on_click=start_loop,
-            color="primary",
-        )
+        judge_btn.on_click(lambda: _start_improver("judge"))
+        gen_btn.on_click(lambda: _start_improver("generator"))
 
-        # Load existing status on page render (show logs/reasoning even when not running)
+        # Load existing status on page render
         from pipeline.phase2.loop import read_status as _read_initial
         _initial = _read_initial()
         if _initial:
             _update_from_status(_initial)
             if _initial.get("running"):
-                loop_btn.disable()
+                judge_btn.disable()
+                gen_btn.disable()
                 loop_timer.active = True
 
-    # --- Single Iteration ---
+    # --- Run Cross-Iteration ---
     with ui.expansion(
-        "Run Single Iteration", icon="play_circle",
+        "Run Cross-Iteration", icon="play_circle",
     ).classes("w-full q-mx-md q-mt-md"):
-        ui.label("Runs a single generate->judge iteration with current config.").classes(
+        ui.label("Run a single cross-iteration batch (generate × judge across all counterpart models).").classes(
             "text-caption text-grey-7"
         )
 
-        def start_iteration():
-            single_btn.disable()
-            single_status.set_text("Running iteration...")
+        with ui.row().classes("items-center gap-4"):
+            cross_role_select = ui.select(
+                options=["judge", "generator"], value="judge", label="Role",
+            ).classes("w-32")
 
-            def _run():
-                from pipeline.phase2.run import run_iteration
+            def _get_target_options():
+                if cross_role_select.value == "judge":
+                    return [m.alias for m in cfg.phase2.judge_models]
+                return [m.alias for m in cfg.phase2.generator_models]
 
-                cfg = load_config()
-                return run_iteration(cfg)
+            cross_target_select = ui.select(
+                options=_get_target_options(),
+                value=_get_target_options()[0] if _get_target_options() else "",
+                label="Target Model",
+            ).classes("w-48")
 
-            def _done():
-                single_btn.enable()
-                single_status.set_text("Done! Refresh page to see results.")
-                ui.notify("Iteration complete", type="positive")
+            def _on_role_change(e):
+                opts = _get_target_options()
+                cross_target_select.options = opts
+                cross_target_select.set_value(opts[0] if opts else "")
+            cross_role_select.on_value_change(_on_role_change)
+
+        cross_status = ui.label("").classes("text-caption text-grey-6")
+
+        def start_cross_iteration():
+            cross_btn.disable()
+            judge_btn.disable()
+            gen_btn.disable()
+            cross_status.set_text("Running cross-iteration...")
 
             def _thread():
                 try:
-                    _run()
-                    _done()
+                    from pipeline.phase2.run import run_judge_cross_iteration, run_generator_cross_iteration
+                    run_cfg = load_config()
+                    role = cross_role_select.value
+                    target = cross_target_select.value
+                    if role == "judge":
+                        results = run_judge_cross_iteration(run_cfg, target)
+                    else:
+                        results = run_generator_cross_iteration(run_cfg, target)
+                    cross_status.set_text(
+                        f"Done! {len(results)} iterations. Refresh page to see results."
+                    )
+                    ui.notify("Cross-iteration complete", type="positive")
                 except Exception as e:
-                    single_status.set_text(f"Error: {e}")
-                    single_btn.enable()
+                    cross_status.set_text(f"Error: {e}")
+                finally:
+                    cross_btn.enable()
+                    judge_btn.enable()
+                    gen_btn.enable()
 
             threading.Thread(target=_thread, daemon=True).start()
 
-        single_btn = ui.button("Start Iteration", on_click=start_iteration, color="secondary")
-        single_status = ui.label("").classes("text-caption text-grey-6")
+        cross_btn = ui.button("Run", on_click=start_cross_iteration, color="secondary")
+
+        # Disable cross_btn if any improver is running
+        if _initial and _initial.get("running"):
+            cross_btn.disable()
 
 
 @ui.page("/pipeline/review")
@@ -997,13 +1094,13 @@ def pipeline_review_page():
 
         def _rejudge():
             rejudge_btn.disable()
-            rejudge_status.set_text("Re-judging...")
+            rejudge_status.set_text("Re-judging with all judge prompts × models...")
 
             def _thread():
                 try:
-                    from pipeline.phase2.run import rejudge_reviewed_items
-                    result = rejudge_reviewed_items(cfg)
-                    rejudge_status.set_text(f"Re-judged {len(result)} items. Refresh to see results.")
+                    from pipeline.phase2.run import rejudge_all_prompts_and_models
+                    total = rejudge_all_prompts_and_models(cfg)
+                    rejudge_status.set_text(f"Re-judged {total} items. Refresh to see results.")
                     rejudge_btn.enable()
                 except Exception as exc:
                     rejudge_status.set_text(f"Error: {exc}")
@@ -1017,7 +1114,7 @@ def pipeline_review_page():
             on_click=_rejudge,
             color="secondary",
         ).props("dense outline").tooltip(
-            f"Re-judge all reviewed items with current judge prompt ({resolve_prompt_path(cfg.phase2.judge.prompt, cfg.phase2.judge.model).name})"
+            "Re-judge all reviewed items with all judge prompts × all judge models"
         )
 
     # --- Main split panel ---
