@@ -1,7 +1,8 @@
 """Independent improver runners: judge improver and generator improver.
 
 Each improver spawns an Opus agent that autonomously calls cross-iteration
-tools via CLI. Improvers run independently — one role at a time.
+tools via CLI. Multiple models run in parallel, each with its own scratch
+directory and thread-safe status updates.
 
 Usage:
     uv run python -m pipeline.phase2.loop --role judge [--aliases glm45,olmo3-32B-think]
@@ -17,6 +18,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +38,7 @@ from pipeline.phase2.storage import save_loop_run
 
 STATUS_PATH = PIPELINE_DATA_DIR / "loop_status.json"
 AGENT_TMP_DIR = PIPELINE_DATA_DIR / "tmp"
+_status_lock = threading.Lock()
 
 
 def improver_log_path(role: str, alias: str) -> Path:
@@ -47,18 +51,36 @@ IMPROVER_LOG_PATH = PIPELINE_DATA_DIR / "improver_log_judge.txt"
 
 
 def write_status(status: dict) -> None:
-    """Atomically write loop status to JSON file."""
-    PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATUS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(status, indent=2))
-    os.replace(tmp, STATUS_PATH)
+    """Atomically write loop status to JSON file (thread-safe)."""
+    with _status_lock:
+        PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATUS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        os.replace(tmp, STATUS_PATH)
 
 
 def read_status() -> dict | None:
-    """Read current loop status, or None if no status file exists."""
-    if not STATUS_PATH.exists():
-        return None
-    return json.loads(STATUS_PATH.read_text())
+    """Read current loop status, or None if no status file exists (thread-safe)."""
+    with _status_lock:
+        if not STATUS_PATH.exists():
+            return None
+        return json.loads(STATUS_PATH.read_text())
+
+
+def _update_status(updater: callable) -> dict:
+    """Read-modify-write loop status atomically.
+
+    updater receives the status dict and mutates it in place.
+    Returns the updated status.
+    """
+    with _status_lock:
+        status = json.loads(STATUS_PATH.read_text()) if STATUS_PATH.exists() else {}
+        updater(status)
+        PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATUS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(status, indent=2))
+        os.replace(tmp, STATUS_PATH)
+        return status
 
 
 def _extract_version(filename: str) -> int:
@@ -91,7 +113,9 @@ def _detect_new_prompts(alias: str, role: str) -> str:
     return Path(matches[-1]).name
 
 
-def _build_improver_prompt(cfg: AppConfig, role: str, target_alias: str) -> str:
+def _build_improver_prompt(
+    cfg: AppConfig, role: str, target_alias: str, agent_tmp_dir: Path | None = None
+) -> str:
     """Unified prompt builder for judge and generator improvers.
 
     Key additions over old phase prompts:
@@ -100,6 +124,8 @@ def _build_improver_prompt(cfg: AppConfig, role: str, target_alias: str) -> str:
     - Explains group_id for interpreting cross-model results
     - Points to `cross_summary <group_id>` command for aggregated stats
     """
+    if agent_tmp_dir is None:
+        agent_tmp_dir = AGENT_TMP_DIR
     model_dir = PROMPTS_DIR / target_alias
     improver_path = _INIT_PROMPTS_DIR / "improver.md"
 
@@ -136,39 +162,53 @@ def _build_improver_prompt(cfg: AppConfig, role: str, target_alias: str) -> str:
         phase_instructions = f"Focus on improving {prompt_type} prompts."
 
     from pipeline.phase2.storage import load_runs
+
     runs = load_runs()
     latest_iter = runs[-1]["iteration"] if runs else 0
+    has_data = latest_iter > 0
 
     counterpart_list = ", ".join(counterpart_models)
+
+    if has_data:
+        first_run_note = ""
+    else:
+        first_run_note = f"""
+## FIRST RUN — No data exists yet!
+There are no iterations in the database. You MUST run a baseline batch first before analyzing anything.
+Do this immediately:
+  uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias}
+Then use the group_id from the output to analyze results with `cross_summary <group_id>`.
+Do NOT waste time querying empty data — run the batch first.
+"""
 
     return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
 
 ## {role_label} Improvement for model: {target_alias}
 
 {phase_instructions}
-
+{first_run_note}
 ## Cross-model evaluation
 Your improvements will be tested against ALL {other_type} models: [{counterpart_list}].
 When you run a batch, it creates one iteration per {other_type} model, all sharing a group_id.
 Use `cross_summary <group_id>` to see aggregated per-model stats after each batch.
 
 ## Query tools
-Run these via Bash (prefix with `uv run`):
-  uv run python -m pipeline.improver_tools summary {latest_iter}     — aggregate stats
-  uv run python -m pipeline.improver_tools failures {latest_iter}    — rejected items with reasoning
-  uv run python -m pipeline.improver_tools failures {latest_iter} --reasoning-limit 500  — full reasoning
-  uv run python -m pipeline.improver_tools diversity {latest_iter}   — frequency-based diversity analysis
-  uv run python -m pipeline.improver_tools scores {latest_iter}      — compact scores table
-  uv run python -m pipeline.improver_tools show <id> {latest_iter}   — full text + outputs for one item
-  uv run python -m pipeline.improver_tools show <id1,id2,...> {latest_iter}  — batch show multiple items
-  uv run python -m pipeline.improver_tools show <id> {latest_iter} --brief   — truncated source text
-  uv run python -m pipeline.improver_tools show --gold {latest_iter} [--brief] — all gold items for iteration
-  uv run python -m pipeline.improver_tools item <id> {latest_iter}   — full details as JSON
+Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration number from your batch output.
+  uv run python -m pipeline.improver_tools summary <ITER>     — aggregate stats
+  uv run python -m pipeline.improver_tools failures <ITER>    — rejected items with reasoning
+  uv run python -m pipeline.improver_tools failures <ITER> --reasoning-limit 500  — full reasoning
+  uv run python -m pipeline.improver_tools diversity <ITER>   — frequency-based diversity analysis
+  uv run python -m pipeline.improver_tools scores <ITER>      — compact scores table
+  uv run python -m pipeline.improver_tools show <id> <ITER>   — full text + outputs for one item
+  uv run python -m pipeline.improver_tools show <id1,id2,...> <ITER>  — batch show multiple items
+  uv run python -m pipeline.improver_tools show <id> <ITER> --brief   — truncated source text
+  uv run python -m pipeline.improver_tools show --gold <ITER> [--brief] — all gold items for iteration
+  uv run python -m pipeline.improver_tools item <id> <ITER>   — full details as JSON
   uv run python -m pipeline.improver_tools gold                      — gold annotations (concise, no source text)
   uv run python -m pipeline.improver_tools gold --verbose            — gold with full source text (large output!)
-  uv run python -m pipeline.improver_tools compare <id> {latest_iter} — generated vs gold
-  uv run python -m pipeline.improver_tools reviews [{latest_iter}]   — human reviews with judge comparison
-  uv run python -m pipeline.improver_tools filter {latest_iter} --dim <dimension> --below <threshold> [--part preflection|reflection]
+  uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold
+  uv run python -m pipeline.improver_tools reviews [<ITER>]   — human reviews with judge comparison
+  uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection|reflection]
   uv run python -m pipeline.improver_tools trend                     — cross-iteration comparison table
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
 
@@ -180,12 +220,12 @@ Run these via Bash (prefix with `uv run`):
   uv run python -m pipeline.improver_tools test_results --role {role}  — view test results
 
 ## Scratch directory (IMPORTANT: use this for temporary scripts)
-Write ad-hoc analysis scripts to: {AGENT_TMP_DIR}
-Run them with: uv run python {AGENT_TMP_DIR}/your_script.py
-Delete with: rm {AGENT_TMP_DIR}/your_script.py
+Write ad-hoc analysis scripts to: {agent_tmp_dir}
+Run them with: uv run python {agent_tmp_dir}/your_script.py
+Delete with: rm {agent_tmp_dir}/your_script.py
 This folder is cleared at the start of each loop. Use it for any analysis the CLI tools don't cover.
 **You MUST write all temporary files here** — do NOT write scripts to the project root or elsewhere.
-The `rm` command only works inside {AGENT_TMP_DIR}/.
+The `rm` command only works inside {agent_tmp_dir}/.
 
 ## State
 Read your state file at {state_path} FIRST. It contains notes from previous iterations.
@@ -201,15 +241,15 @@ Then synthesize their findings to write improved prompts.
 
 ## Your task
 1. Read your state file: {state_path}
-2. Run query tools to gather data (**use Opus subagents to parallelize** — do NOT run queries sequentially)
-3. Read the improver instructions: {improver_path}
-4. Read the current {prompt_type} prompt: {prompt_path}
-5. Also read the {other_type} prompt for context: {other_prompt_path}
-6. Analyze how the {prompt_type} is performing
-7. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
-8. You may run up to {max_batches} `run_cross_batch` calls to test your changes
-9. Update {state_path} with: what you changed, why, key metrics, and what to try next
-10. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
+2. Read the improver instructions: {improver_path}
+3. Read the current {prompt_type} prompt: {prompt_path} and the {other_type} prompt for context: {other_prompt_path}
+4. If no data exists yet, run a baseline batch first:
+   `uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias}`
+5. Analyze results using query tools (**use Opus subagents to parallelize** — do NOT run queries sequentially)
+6. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
+7. You may run up to {max_batches} `run_cross_batch` calls to test your changes
+8. Update {state_path} with: what you changed, why, key metrics, and what to try next
+9. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
     It MUST start with exactly `## Final Summary` on its own line, followed by:
     - **What changed**: which prompt file, key modifications
     - **Why**: what problems you identified, with evidence (scores, examples)
@@ -219,7 +259,7 @@ Then synthesize their findings to write improved prompts.
 IMPORTANT:
 - Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
 - Do NOT pipe commands together. Run them as separate Bash calls.
-- You can ONLY write files inside {model_dir}/ and {AGENT_TMP_DIR}/. Do NOT modify any other files.
+- You can ONLY write files inside {model_dir}/ and {agent_tmp_dir}/. Do NOT modify any other files.
 - Do NOT overfit to individual examples. Focus on systematic patterns.
 - The {prompt_type} prompt must NOT hardcode specific charter/constitution content.
 """
@@ -230,21 +270,28 @@ def _spawn_agent(prompt: str, log_path: Path, allowed_tools: list[str]) -> str:
 
     Streams output to log_path and stderr for real-time monitoring.
     """
-    settings = json.dumps({
-        "permissions": {
-            "allow": allowed_tools,
-            "deny": ["NotebookEdit"],
+    settings = json.dumps(
+        {
+            "permissions": {
+                "allow": allowed_tools,
+                "deny": ["NotebookEdit"],
+            }
         }
-    })
+    )
     cmd = [
         "claude",
         "--print",
-        "--model", "opus",
-        "--effort", "max",
+        "--model",
+        "opus",
+        "--effort",
+        "max",
         "--verbose",
-        "--output-format", "stream-json",
-        "--settings", settings,
-        "--", prompt,
+        "--output-format",
+        "stream-json",
+        "--settings",
+        settings,
+        "--",
+        prompt,
     ]
 
     PIPELINE_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -285,9 +332,7 @@ def _spawn_agent(prompt: str, log_path: Path, allowed_tools: list[str]) -> str:
 
     if proc.returncode != 0:
         summary = output[:500] if output else f"No output. See {log_path}"
-        raise RuntimeError(
-            f"Claude agent failed (rc={proc.returncode}): {summary}"
-        )
+        raise RuntimeError(f"Claude agent failed (rc={proc.returncode}): {summary}")
 
     _validate_agent_output(output, log_path)
     return output
@@ -363,7 +408,7 @@ def _stream_improver_output(proc: subprocess.Popen, log_path: Path) -> str:
                             _log_line(log, f"[FAIL] {content[:300]}")
                         else:
                             content = str(block.get("content", ""))
-                            preview = content[:100].replace("\n", " ")
+                            preview = content[:500].replace("\n", " ")
                             _log_line(log, f"[ok]   {preview}")
 
             elif msg_type == "result":
@@ -497,84 +542,103 @@ def _preflight_health_check(cfg: AppConfig, role: str, target_alias: str) -> Non
     logger.info("Pre-flight health check passed for {} / {}.", role, target_alias)
 
 
-ALLOWED_TOOLS = [
-    "Read", "Glob", "Grep",
-    "Bash(uv run python:*)",
-    f"Bash(rm -f {AGENT_TMP_DIR}/:*)",
-    f"Bash(rm {AGENT_TMP_DIR}/:*)",
-    f"Bash(ls {AGENT_TMP_DIR}:*)",
-    "Agent", "TaskCreate", "TaskUpdate", "TaskList",
-    "Write",
-]
+def _allowed_tools(tmp_dir: Path) -> list[str]:
+    """Build allowed tools list for a given scratch directory."""
+    return [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash(uv run python:*)",
+        f"Bash(rm -f {tmp_dir}/:*)",
+        f"Bash(rm {tmp_dir}/:*)",
+        f"Bash(ls {tmp_dir}:*)",
+        "Agent",
+        "TaskCreate",
+        "TaskUpdate",
+        "TaskList",
+        "Write",
+    ]
+
+
+# Backward-compat alias for external callers
+ALLOWED_TOOLS = _allowed_tools(AGENT_TMP_DIR)
 
 
 def run_improver(cfg: AppConfig, role: str, target_alias: str) -> None:
     """Run a single improver for one (role, model) pair.
 
-    Independently launchable. Writes progress to loop_status.json
-    under improvers["{role}_{alias}"].
+    Independently launchable and thread-safe. Each improver gets its own
+    scratch directory and updates loop_status.json atomically.
     """
     key = f"{role}_{target_alias}"
     log_path = improver_log_path(role, target_alias)
-
-    status = read_status() or {}
+    tmp_dir = PIPELINE_DATA_DIR / f"tmp_{role}_{target_alias}"
     now = datetime.now(timezone.utc).isoformat()
 
-    # Update this improver's status to running
-    improvers = status.get("improvers", {})
-    improvers[key] = {**_make_improver_status("running"), "started_at": now}
-    status["improvers"] = improvers
-    status["current"] = key
-    write_status(status)
+    _update_status(
+        lambda s: s.setdefault("improvers", {}).update(
+            {key: {**_make_improver_status("running"), "started_at": now}}
+        )
+    )
 
     try:
-        # Pre-flight health check
         _preflight_health_check(cfg, role, target_alias)
 
-        # Clear scratch directory
-        if AGENT_TMP_DIR.exists():
-            shutil.rmtree(AGENT_TMP_DIR)
-        AGENT_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = _build_improver_prompt(cfg, role, target_alias)
-        _spawn_agent(prompt, log_path, ALLOWED_TOOLS)
+        prompt = _build_improver_prompt(cfg, role, target_alias, agent_tmp_dir=tmp_dir)
+        _spawn_agent(prompt, log_path, _allowed_tools(tmp_dir))
 
-        # Detect if new prompts were written
         new_prompt = _detect_new_prompts(target_alias, role)
         logger.info("Improver {} done: latest prompt -> {}", key, new_prompt)
 
-        # Re-judge for correlations after judge improvement
         if role == "judge":
             from pipeline.phase2.run import rejudge_all_prompts_and_models
-            logger.info("Running rejudge_all_prompts_and_models after judge improvement...")
+
+            logger.info(
+                "Running rejudge_all_prompts_and_models after judge improvement..."
+            )
             rejudge_all_prompts_and_models(cfg)
 
         now_done = datetime.now(timezone.utc).isoformat()
-        improvers[key]["status"] = "done"
-        improvers[key]["reasoning"] = _extract_reasoning_from_log(log_path)
-        improvers[key]["finished_at"] = now_done
+        reasoning = _extract_reasoning_from_log(log_path)
+        _update_status(
+            lambda s: s["improvers"][key].update(
+                {"status": "done", "reasoning": reasoning, "finished_at": now_done}
+            )
+        )
 
     except KeyboardInterrupt:
-        improvers[key]["status"] = "error"
-        improvers[key]["reasoning"] = "Interrupted by user"
-        status["error"] = "Interrupted by user"
-        write_status(status)
+        _update_status(
+            lambda s: (
+                s["improvers"][key].update(
+                    {"status": "error", "reasoning": "Interrupted by user"}
+                ),
+                s.update({"error": "Interrupted by user"}),
+            )
+        )
         raise
     except Exception as e:
-        improvers[key]["status"] = "error"
-        improvers[key]["reasoning"] = str(e)[:500]
-        status["error"] = str(e)
-        write_status(status)
+        err = str(e)[:500]
+        _update_status(
+            lambda s: (
+                s["improvers"][key].update({"status": "error", "reasoning": err}),
+                s.update({"error": str(e)}),
+            )
+        )
         raise
     finally:
-        status["current"] = None
-        write_status(status)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) -> None:
-    """Run improvers for a role sequentially. If aliases is None, run ALL models for that role."""
+    """Run improvers for a role in parallel. If aliases is None, run ALL models for that role."""
     if aliases is None:
-        model_list = cfg.phase2.judge_models if role == "judge" else cfg.phase2.generator_models
+        model_list = (
+            cfg.phase2.judge_models if role == "judge" else cfg.phase2.generator_models
+        )
         aliases = [m.alias for m in model_list]
 
     now = datetime.now(timezone.utc).isoformat()
@@ -586,31 +650,50 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
         "started_at": now,
         "role": role,
         "improvers": improvers,
-        "current": None,
         "error": None,
     }
     write_status(status)
 
+    errors: dict[str, Exception] = {}
+
     try:
-        for alias in aliases:
-            run_improver(cfg, role, alias)
-            status = read_status() or status
+        with ThreadPoolExecutor(max_workers=len(aliases)) as pool:
+            futures = {
+                pool.submit(run_improver, cfg, role, alias): alias for alias in aliases
+            }
+            for future in as_completed(futures):
+                alias = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    errors[alias] = e
+                    logger.error("Improver {}/{} failed: {}", role, alias, e)
 
-        status["running"] = False
-        write_status(status)
-        logger.info("All {} improvers complete.", role)
+        def _finalize(s: dict) -> None:
+            s["running"] = False
+            if errors:
+                s["error"] = "; ".join(f"{a}: {e}" for a, e in errors.items())
+            for key, data in s.get("improvers", {}).items():
+                if data["status"] == "pending":
+                    data["status"] = "skipped"
 
-    except (KeyboardInterrupt, Exception):
-        status = read_status() or status
-        status["running"] = False
-        for key, data in status.get("improvers", {}).items():
-            if data["status"] == "pending":
-                data["status"] = "skipped"
-        write_status(status)
+        _update_status(_finalize)
+        logger.info("All {} improvers complete ({} errors).", role, len(errors))
+
+    except KeyboardInterrupt:
+
+        def _interrupted(s: dict) -> None:
+            s["running"] = False
+            for key, data in s.get("improvers", {}).items():
+                if data["status"] == "pending":
+                    data["status"] = "skipped"
+
+        _update_status(_interrupted)
         raise
 
     finally:
         try:
+            status = read_status() or status
             _save_history(status, prompts_before, cfg)
         except Exception as e:
             logger.error("Failed to save loop history to DB: {}", e)
@@ -619,12 +702,12 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
 
 
 def run_judge_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
-    """Run judge improvers sequentially. If aliases is None, run ALL judge models."""
+    """Run judge improvers in parallel. If aliases is None, run ALL judge models."""
     _run_improvers(cfg, "judge", aliases)
 
 
 def run_generator_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
-    """Run generator improvers sequentially. If aliases is None, run ALL generator models."""
+    """Run generator improvers in parallel. If aliases is None, run ALL generator models."""
     _run_improvers(cfg, "generator", aliases)
 
 
@@ -670,8 +753,12 @@ def main():
 
     parser = argparse.ArgumentParser(description="Run improver agents")
     parser.add_argument("--role", required=True, choices=["judge", "generator"])
-    parser.add_argument("--aliases", type=str, default=None,
-                        help="Comma-separated model aliases (default: all)")
+    parser.add_argument(
+        "--aliases",
+        type=str,
+        default=None,
+        help="Comma-separated model aliases (default: all)",
+    )
     args = parser.parse_args()
 
     cfg = load_config()

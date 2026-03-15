@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 from pipeline.storage import _get_conn
 
-
 # --- Runs ---
+
 
 def load_runs() -> list[dict]:
     """Load all iteration run records."""
@@ -16,10 +16,24 @@ def load_runs() -> list[dict]:
 
 
 def next_iteration() -> int:
-    """Return the next iteration number (max existing + 1, or 1 if none)."""
+    """Atomically claim the next iteration number (process-safe).
+
+    Uses a dedicated counter table with BEGIN EXCLUSIVE to prevent concurrent
+    processes from getting the same iteration number. The table is created
+    and seeded from existing runs during schema migration.
+    """
     conn = _get_conn()
-    row = conn.execute("SELECT MAX(iteration) FROM runs").fetchone()
-    return (row[0] or 0) + 1
+    conn.execute("BEGIN EXCLUSIVE")
+    try:
+        conn.execute("UPDATE iteration_counter SET value = value + 1 WHERE id = 1")
+        row = conn.execute(
+            "SELECT value FROM iteration_counter WHERE id = 1"
+        ).fetchone()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return row[0]
 
 
 def save_run(
@@ -47,15 +61,25 @@ def save_run(
             n_items, n_gold, config, analysis, timestamp, source, group_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            iteration, gen_prompt, judge_prompt, generator_model, judge_model,
-            n_items, n_gold, json.dumps(config), analysis,
-            datetime.now(timezone.utc).isoformat(), source, group_id,
+            iteration,
+            gen_prompt,
+            judge_prompt,
+            generator_model,
+            judge_model,
+            n_items,
+            n_gold,
+            json.dumps(config),
+            analysis,
+            datetime.now(timezone.utc).isoformat(),
+            source,
+            group_id,
         ),
     )
     conn.commit()
 
 
 # --- Items ---
+
 
 def load_items() -> list[dict]:
     """Load all item records."""
@@ -68,10 +92,7 @@ def load_latest_items() -> dict[tuple[str, int], dict]:
     """Load items keyed by (item_id, iteration). Dedup is implicit via PRIMARY KEY."""
     conn = _get_conn()
     rows = conn.execute("SELECT * FROM items").fetchall()
-    return {
-        (r["item_id"], r["iteration"]): _row_to_item(r)
-        for r in rows
-    }
+    return {(r["item_id"], r["iteration"]): _row_to_item(r) for r in rows}
 
 
 def load_items_for_iteration(iteration: int) -> list[dict]:
@@ -107,21 +128,34 @@ def save_item(record: dict) -> None:
             timestamp, judgment)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            record["item_id"], record["iteration"],
-            int(record.get("is_gold", False)), record["subset"],
-            record["text"], record["reflection_point"],
-            record["gen_prompt"], record["model"],
-            record["analysis"], record["preflection"], record["reflection"],
+            record["item_id"],
+            record["iteration"],
+            int(record.get("is_gold", False)),
+            record["subset"],
+            record["text"],
+            record["reflection_point"],
+            record["gen_prompt"],
+            record["model"],
+            record["analysis"],
+            record["preflection"],
+            record["reflection"],
             json.dumps(record["charter_elements"]),
-            record["raw_response"], record.get("reasoning"),
-            record["latency_ms"], record["timestamp"],
-            json.dumps(record["judgment"]) if record.get("judgment") is not None else None,
+            record["raw_response"],
+            record.get("reasoning"),
+            record["latency_ms"],
+            record["timestamp"],
+            (
+                json.dumps(record["judgment"])
+                if record.get("judgment") is not None
+                else None
+            ),
         ),
     )
     conn.commit()
 
 
 # --- Reviews ---
+
 
 def load_reviews() -> list[dict]:
     """Load all human review records."""
@@ -159,8 +193,13 @@ def save_review(
            (item_id, iteration, reviewer_id, scores, aggregate, decision, notes, timestamp)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            item_id, iteration, reviewer_id,
-            json.dumps(scores), aggregate, decision, notes,
+            item_id,
+            iteration,
+            reviewer_id,
+            json.dumps(scores),
+            aggregate,
+            decision,
+            notes,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -169,12 +208,11 @@ def save_review(
 
 # --- Review Comments ---
 
+
 def load_review_comments() -> dict[tuple[str, int, str], list[dict]]:
     """Load review comments grouped by (item_id, iteration, reviewer_id), sorted by timestamp."""
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM review_comments ORDER BY timestamp"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM review_comments ORDER BY timestamp").fetchall()
     by_review: dict[tuple[str, int, str], list[dict]] = {}
     for r in rows:
         key = (r["item_id"], r["iteration"], r["reviewer_id"])
@@ -196,8 +234,11 @@ def save_review_comment(
            (item_id, iteration, reviewer_id, commenter_id, comment, timestamp)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (
-            item_id, iteration, reviewer_id,
-            commenter_id, comment,
+            item_id,
+            iteration,
+            reviewer_id,
+            commenter_id,
+            comment,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -227,6 +268,7 @@ def delete_review(item_id: str, iteration: int, reviewer_id: str) -> None:
 
 # --- Test Results ---
 
+
 def save_test_result(record: dict) -> None:
     """Append a test result record (from test_generate, test_judge, or run_batch)."""
     conn = _get_conn()
@@ -255,6 +297,7 @@ def load_test_results(phase: str | None = None, role: str | None = None) -> list
 
 # --- Loop History ---
 
+
 def save_loop_run(record: dict) -> None:
     """Append a completed loop run record."""
     conn = _get_conn()
@@ -275,6 +318,7 @@ def load_loop_history() -> list[dict]:
 
 # --- Judge Correlations ---
 
+
 def save_judge_correlation(
     item_id: str,
     iteration: int,
@@ -289,7 +333,10 @@ def save_judge_correlation(
            (item_id, iteration, judge_prompt, judge_model, judgment, timestamp)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (
-            item_id, iteration, judge_prompt, judge_model,
+            item_id,
+            iteration,
+            judge_prompt,
+            judge_model,
             json.dumps(judgment),
             datetime.now(timezone.utc).isoformat(),
         ),
@@ -312,6 +359,7 @@ def load_judge_correlations() -> list[dict]:
 
 
 # --- Row converters ---
+
 
 def _row_to_run(row) -> dict:
     d = dict(row)

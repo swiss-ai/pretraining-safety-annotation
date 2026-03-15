@@ -139,14 +139,36 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Add source column to runs (added 2026-03-13)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
     if "source" not in cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
+        )
 
     # Add group_id column to runs (added 2026-03-13)
     if "group_id" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN group_id TEXT")
 
+    # Create iteration_counter table, seeded from existing runs (added 2026-03-16)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "iteration_counter" not in tables:
+        conn.execute(
+            "CREATE TABLE iteration_counter "
+            "(id INTEGER PRIMARY KEY CHECK(id = 1), value INTEGER NOT NULL DEFAULT 0)"
+        )
+        row = conn.execute("SELECT MAX(iteration) FROM runs").fetchone()
+        max_iter = row[0] or 0
+        conn.execute("INSERT INTO iteration_counter VALUES (1, ?)", (max_iter,))
+        conn.commit()
+
     # Add judge_model column to judge_correlations and update PK (added 2026-03-13)
-    jc_cols = {row[1] for row in conn.execute("PRAGMA table_info(judge_correlations)").fetchall()}
+    jc_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(judge_correlations)").fetchall()
+    }
     if "judge_model" not in jc_cols:
         conn.execute("ALTER TABLE judge_correlations RENAME TO judge_correlations_old")
         conn.execute("""
@@ -183,7 +205,9 @@ def _get_conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     _init_schema(conn)
     _local.conn = conn
-    logger.debug("Opened SQLite connection (thread={})", threading.current_thread().name)
+    logger.debug(
+        "Opened SQLite connection (thread={})", threading.current_thread().name
+    )
     return conn
 
 
