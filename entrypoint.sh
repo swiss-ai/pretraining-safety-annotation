@@ -20,7 +20,7 @@ fi
 if ! claude auth status > /dev/null 2>&1; then
     echo "ERROR: Claude is not authenticated."
     echo "Run this container with 'login' first:"
-    echo "  docker run -it -v claude-auth:/root/.claude <image> login"
+    echo "  docker compose run --rm dashboard login"
     exit 1
 fi
 
