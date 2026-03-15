@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from omegaconf import OmegaConf
+from omegaconf import MISSING, OmegaConf
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_YAML_PATH = PROJECT_ROOT / "configs" / "config.yaml"
@@ -15,13 +15,26 @@ ANNOTATION_DATA_DIR = DATA_DIR / "annotation"
 PROMPTS_DIR = PIPELINE_DATA_DIR / "prompts"
 _INIT_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-CHARTER_PATH = PROJECT_ROOT / "resources" / "SwissAICharter.md"
+
+def _resolve_charter_path() -> Path:
+    """Read charter_path from config YAML (falls back to dataclass default)."""
+    raw = OmegaConf.load(CONFIG_YAML_PATH)
+    return PROJECT_ROOT / raw["charter_path"]
+
+
+CHARTER_PATH = _resolve_charter_path()
 
 
 def load_charter_element_ids() -> list[str]:
-    """Extract all [X.Y] element IDs from the charter, in order."""
+    """Extract all element IDs (X.Y) from the charter, in order.
+
+    Supports both [X.Y] inline references (SwissAI Charter style)
+    and ### X.Y headings (ModelRaising Constitution style).
+    """
     charter = CHARTER_PATH.read_text(encoding="utf-8")
-    return list(dict.fromkeys(re.findall(r"\[(\d+\.\d+)\]", charter)))
+    inline = re.findall(r"\[(\d+\.\d+)\]", charter)
+    headings = re.findall(r"^###\s+(\d+\.\d+)\b", charter, re.MULTILINE)
+    return list(dict.fromkeys(inline or headings))
 
 
 CHARTER_ELEMENT_IDS: list[str] = load_charter_element_ids()
@@ -45,6 +58,7 @@ def extract_charter_elements(text: str) -> list[str]:
 
 # --- Dataclasses ---
 
+
 @dataclass
 class ModelConfig:
     alias: str = ""
@@ -66,7 +80,12 @@ class ScoringConfig:
     scale_max: int = 5
     accept_threshold: int = 4
     dimensions: list[str] = field(
-        default_factory=lambda: ["relevance", "specificity", "charter_grounding", "voice_tone"]
+        default_factory=lambda: [
+            "relevance",
+            "specificity",
+            "charter_grounding",
+            "voice_tone",
+        ]
     )
 
 
@@ -107,7 +126,7 @@ class DashboardConfig:
 
 @dataclass
 class AppConfig:
-    charter_path: str = "resources/SwissAICharter.md"
+    charter_path: str = MISSING
     data_dir: str = "data"
     max_tokens: int = 3840
     phase1: Phase1Config = field(default_factory=Phase1Config)
@@ -117,13 +136,18 @@ class AppConfig:
 
 # --- Helper functions ---
 
+
 def resolve_model(cfg: AppConfig, alias: str) -> ModelConfig:
     """Find a model config by alias, searching both judge and generator model lists."""
     for m in cfg.phase2.judge_models + cfg.phase2.generator_models:
         if m.alias == alias:
             return m
-    all_aliases = [m.alias for m in cfg.phase2.judge_models + cfg.phase2.generator_models]
-    raise ValueError(f"No model with alias '{alias}' in config. Available: {all_aliases}")
+    all_aliases = [
+        m.alias for m in cfg.phase2.judge_models + cfg.phase2.generator_models
+    ]
+    raise ValueError(
+        f"No model with alias '{alias}' in config. Available: {all_aliases}"
+    )
 
 
 def resolve_judge_model(cfg: AppConfig, alias: str) -> ModelConfig:
@@ -131,7 +155,9 @@ def resolve_judge_model(cfg: AppConfig, alias: str) -> ModelConfig:
     for m in cfg.phase2.judge_models:
         if m.alias == alias:
             return m
-    raise ValueError(f"No judge model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.judge_models]}")
+    raise ValueError(
+        f"No judge model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.judge_models]}"
+    )
 
 
 def resolve_generator_model(cfg: AppConfig, alias: str) -> ModelConfig:
@@ -172,7 +198,10 @@ def _init_model_prompts(alias: str) -> None:
     if model_dir.exists():
         return
     model_dir.mkdir(parents=True)
-    for init_name, v1_name in [("init_generator.md", "generator_v1.md"), ("init_judge.md", "judge_v1.md")]:
+    for init_name, v1_name in [
+        ("init_generator.md", "generator_v1.md"),
+        ("init_judge.md", "judge_v1.md"),
+    ]:
         src = _INIT_PROMPTS_DIR / init_name
         assert src.exists(), f"Init template not found: {src}"
         shutil.copy2(src, model_dir / v1_name)
