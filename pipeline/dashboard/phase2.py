@@ -2422,7 +2422,11 @@ def pipeline_review_page():
         return result
 
     def get_sorted_items() -> list[dict]:
-        """Load items from all matching iterations, deduplicate, sort."""
+        """Load items from all matching iterations, deduplicate, sort.
+
+        After sorting, interleaves items round-robin across generator models
+        so that reviews cover all generators equally.
+        """
         iters = _filtered_iterations()
         all_items: list[dict] = []
         for it in iters:
@@ -2439,7 +2443,22 @@ def pipeline_review_page():
             judged.sort(key=lambda i: i["judgment"]["aggregate"])
         elif sort == "High score first":
             judged.sort(key=lambda i: -i["judgment"]["aggregate"])
-        return judged
+
+        # Interleave across generator models for balanced reviewing
+        by_gen: dict[str, list[dict]] = {}
+        for item in judged:
+            run = run_by_iter.get(item["iteration"], {})
+            gen = run.get("generator_model", "unknown")
+            by_gen.setdefault(gen, []).append(item)
+        if len(by_gen) <= 1:
+            return judged
+        gen_queues = [items for items in by_gen.values()]
+        interleaved: list[dict] = []
+        while gen_queues:
+            gen_queues = [q for q in gen_queues if q]
+            for q in gen_queues:
+                interleaved.append(q.pop(0))
+        return interleaved
 
     def current_items_list() -> list[dict]:
         return get_sorted_items()
@@ -2512,9 +2531,12 @@ def pipeline_review_page():
                 cur_judge = cur_run.get("judge_model", "")
                 judgments_to_show.append((cur_judge, judgment))
 
-            # Look for sibling iterations in the same group (single query)
+            # Look for sibling iterations in the same group that used a
+            # *different* judge model (skip same-judge/different-generator siblings)
             cur_run = run_by_iter.get(item_iter, {})
             cur_gid = cur_run.get("group_id")
+            cur_judge = cur_run.get("judge_model", "")
+            seen_judges = {cur_judge} if cur_judge else set()
             if cur_gid and cur_gid in group_iters:
                 sib_iters = [i for i in group_iters[cur_gid] if i != item_iter]
                 if sib_iters:
@@ -2523,6 +2545,9 @@ def pipeline_review_page():
                         if si.get("judgment"):
                             sib_run = run_by_iter.get(si["iteration"], {})
                             sib_judge = sib_run.get("judge_model", "?")
+                            if sib_judge in seen_judges:
+                                continue
+                            seen_judges.add(sib_judge)
                             judgments_to_show.append((sib_judge, si["judgment"]))
 
             if not judgments_to_show:
