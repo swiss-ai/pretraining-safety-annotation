@@ -1822,10 +1822,10 @@ def pipeline_review_page():
         with gen_section:
             with ui.row().classes("items-center gap-2"):
                 ui.label("LLM Generation").classes("text-subtitle2 text-weight-bold")
-                gen_model_name = item.get("model", "")
+                item_run = run_by_iter.get(item["iteration"], {})
+                gen_model_name = item_run.get("generator_model", "")
                 if gen_model_name:
                     ui.badge(gen_model_name, color="teal").props("outline")
-                item_run = run_by_iter.get(item["iteration"], {})
                 gen_prompt_name = item_run.get("gen_prompt", "")
                 if gen_prompt_name:
                     ui.badge(gen_prompt_name, color="blue-grey").props("outline")
