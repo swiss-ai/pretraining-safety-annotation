@@ -629,6 +629,550 @@ def _render_loop_history():
                     )
 
 
+def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> None:
+    """Render per-generator-model acceptance rate bar chart with binomial 95% CI.
+
+    For each generator model, picks the run with the latest judge prompt version
+    and highest iteration, then computes acceptance rate + confidence interval.
+    """
+    import math
+    import re as _re_ar
+
+    if not iter_stats:
+        return
+
+    # Group iter_stats by generator_model
+    by_gen: dict[str, list[dict]] = {}
+    for s in iter_stats:
+        gen = s.get("generator_model", "unknown")
+        by_gen.setdefault(gen, []).append(s)
+
+    models = []
+    rates = []
+    ci_low = []
+    ci_high = []
+
+    for gen_model in sorted(by_gen):
+        entries = by_gen[gen_model]
+        # Pick entry with latest judge prompt version, then highest iteration
+        best = max(
+            entries,
+            key=lambda e: (
+                (
+                    int(m.group(1))
+                    if (m := _re_ar.search(r"_v(\d+)", e.get("judge_prompt", "")))
+                    else 0
+                ),
+                e["iteration"],
+            ),
+        )
+        n_judged = best["n_acc"] + best["n_rej"]
+        if n_judged == 0:
+            continue
+        p = best["n_acc"] / n_judged
+        # Binomial 95% CI: p ± 1.96 * sqrt(p*(1-p)/n)
+        margin = 1.96 * math.sqrt(p * (1 - p) / n_judged) if n_judged > 1 else 0
+        models.append(gen_model)
+        rates.append(round(p * 100, 1))
+        ci_low.append(round(max(0, p - margin) * 100, 1))
+        ci_high.append(round(min(1, p + margin) * 100, 1))
+
+    if not models:
+        return
+
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        ui.label("Acceptance Rate by Generator").classes("text-h6 text-weight-bold")
+        # Bar chart with error bars via markLine-style scatter overlay
+        bar_series = {
+            "name": "Accept %",
+            "type": "bar",
+            "data": rates,
+            "itemStyle": {"color": "#4caf50"},
+            "barMaxWidth": 60,
+        }
+        # Error bars via custom series (scatter with error extent)
+        error_data = []
+        for i, (lo, hi) in enumerate(zip(ci_low, ci_high)):
+            error_data.append(
+                {
+                    "value": [i, rates[i]],
+                    "low": lo,
+                    "high": hi,
+                }
+            )
+        error_series = {
+            "name": "95% CI",
+            "type": "scatter",
+            "data": [[i, rates[i]] for i in range(len(rates))],
+            "symbol": "none",
+            "markLine": {
+                "silent": True,
+                "symbol": ["none", "none"],
+                "lineStyle": {"color": "#666", "width": 1.5},
+                "data": [
+                    [
+                        {"xAxis": i, "yAxis": lo, "symbol": "dash"},
+                        {"xAxis": i, "yAxis": hi},
+                    ]
+                    for i, (lo, hi) in enumerate(zip(ci_low, ci_high))
+                ],
+            },
+        }
+        chart_opts = {
+            "xAxis": {"type": "category", "data": models},
+            "yAxis": {"type": "value", "name": "Accept %", "min": 0, "max": 100},
+            "series": [bar_series, error_series],
+            "tooltip": {
+                "trigger": "axis",
+                "formatter": None,  # default
+            },
+            "grid": {"bottom": 60},
+        }
+        ui.echart(chart_opts).classes("w-full").style("height: 300px;")
+
+
+def _render_calibration_bar_chart() -> None:
+    """Render per-judge-model calibration bar chart (Pearson r and Cohen's kappa).
+
+    Groups by judge_model, uses the latest judge prompt version per model.
+    """
+    import re as _re_cb
+
+    pairs = _load_correlation_pairs()
+    if not pairs:
+        return
+
+    # Find latest judge prompt per judge model
+    prompt_versions: dict[str, dict[str, int]] = {}  # model -> {prompt: version_num}
+    for p in pairs:
+        model = p["judge_model"]
+        prompt = p["judge_prompt"]
+        m = _re_cb.search(r"_v(\d+)", prompt)
+        v = int(m.group(1)) if m else 0
+        if model not in prompt_versions or v > max(prompt_versions[model].values()):
+            prompt_versions.setdefault(model, {})[prompt] = v
+
+    # Filter to latest prompt per model
+    latest_prompt_per_model: dict[str, str] = {}
+    for model, prompts in prompt_versions.items():
+        latest_prompt_per_model[model] = max(prompts, key=prompts.get)
+
+    filtered_pairs = [
+        p
+        for p in pairs
+        if latest_prompt_per_model.get(p["judge_model"]) == p["judge_prompt"]
+    ]
+    if not filtered_pairs:
+        return
+
+    agg = _aggregate_correlation_pairs(filtered_pairs)
+    if not agg:
+        return
+
+    models = sorted({m for _, m in agg})
+    pearson_vals = []
+    kappa_vals = []
+    for model in models:
+        # Find the entry for this model (latest prompt)
+        prompt = latest_prompt_per_model.get(model, "")
+        entry = agg.get((prompt, model), {})
+        pr = entry.get("pearson")
+        kp = entry.get("kappa")
+        pearson_vals.append(round(pr, 3) if pr is not None else None)
+        kappa_vals.append(round(kp, 3) if kp is not None else None)
+
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
+        ui.label(
+            "Latest judge prompt per model. Pearson r (scores) and Cohen's κ (decisions)."
+        ).classes("text-caption text-grey-7")
+        chart_opts = {
+            "xAxis": {"type": "category", "data": models},
+            "yAxis": {"type": "value", "name": "Correlation", "min": -1, "max": 1},
+            "series": [
+                {
+                    "name": "Pearson r",
+                    "type": "bar",
+                    "data": pearson_vals,
+                    "itemStyle": {"color": "#ff9800"},
+                    "barMaxWidth": 40,
+                },
+                {
+                    "name": "Cohen's κ",
+                    "type": "bar",
+                    "data": kappa_vals,
+                    "itemStyle": {"color": "#4caf50"},
+                    "barMaxWidth": 40,
+                },
+            ],
+            "tooltip": {"trigger": "axis"},
+            "legend": {"bottom": 0},
+            "grid": {"bottom": 60},
+        }
+        ui.echart(chart_opts).classes("w-full").style("height: 300px;")
+
+
+def _render_api_stats_panel(runs: list[dict], items_by_key: dict) -> None:
+    """Render collapsible API model statistics: reasoning tokens, throughput, batch rate."""
+    if not items_by_key:
+        return
+
+    all_items = list(items_by_key.values())
+
+    # Group items by model for generator stats
+    gen_by_model: dict[str, list[dict]] = {}
+    judge_by_model: dict[str, list[dict]] = {}
+    for item in all_items:
+        model = item.get("model", "unknown")
+        gen_by_model.setdefault(model, []).append(item)
+        j = item.get("judgment")
+        if j:
+            # Judge model is inferred from the run
+            judge_by_model.setdefault(model, []).append(item)
+
+    # Build run lookup for judge model
+    run_by_iter: dict[int, dict] = {}
+    for r in runs:
+        run_by_iter[r["iteration"]] = r
+
+    # Separate judge items by actual judge model
+    judge_items_by_model: dict[str, list[dict]] = {}
+    for item in all_items:
+        j = item.get("judgment")
+        if not j:
+            continue
+        run = run_by_iter.get(item.get("iteration"))
+        jmodel = run.get("judge_model", "unknown") if run else "unknown"
+        judge_items_by_model.setdefault(jmodel, []).append(item)
+
+    with ui.expansion("API Model Statistics", icon="analytics").classes(
+        "w-full q-mx-md q-mt-md"
+    ):
+        # 4a. Average Reasoning Tokens per Request
+        _render_reasoning_tokens_chart(gen_by_model, judge_items_by_model)
+
+        # 4b. Throughput (per-request)
+        _render_throughput_chart(gen_by_model, judge_items_by_model)
+
+        # 4c. Batch-level samples/second
+        _render_batch_rate_table(runs, items_by_key)
+
+
+def _render_reasoning_tokens_chart(
+    gen_by_model: dict[str, list[dict]],
+    judge_by_model: dict[str, list[dict]],
+) -> None:
+    """Render average reasoning tokens per request, grouped by model."""
+    models = sorted(set(gen_by_model) | set(judge_by_model))
+    if not models:
+        return
+
+    gen_means = []
+    judge_means = []
+    for model in models:
+        # Generator reasoning tokens
+        gen_items = gen_by_model.get(model, [])
+        gen_rt = [
+            i.get("reasoning_tokens")
+            for i in gen_items
+            if i.get("reasoning_tokens") is not None
+        ]
+        gen_means.append(round(statistics.mean(gen_rt)) if gen_rt else None)
+
+        # Judge reasoning tokens (from judgment JSON)
+        j_items = judge_by_model.get(model, [])
+        j_rt = []
+        for item in j_items:
+            j = item.get("judgment")
+            if not j:
+                continue
+            for part in ("preflection", "reflection"):
+                part_usage = j.get(part, {}).get("usage", {})
+                rt = part_usage.get("reasoning_tokens")
+                if rt is not None:
+                    j_rt.append(rt)
+        judge_means.append(round(statistics.mean(j_rt)) if j_rt else None)
+
+    has_data = any(v is not None for v in gen_means + judge_means)
+    if not has_data:
+        ui.label("No token usage data available (older items).").classes(
+            "text-grey-6 text-caption q-pa-sm"
+        )
+        return
+
+    with ui.card().classes("w-full q-pa-md q-mt-sm"):
+        ui.label("Avg Reasoning Tokens / Request").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        chart_opts = {
+            "xAxis": {"type": "category", "data": models},
+            "yAxis": {"type": "value", "name": "Tokens"},
+            "series": [
+                {
+                    "name": "Generator",
+                    "type": "bar",
+                    "data": gen_means,
+                    "itemStyle": {"color": "#2196f3"},
+                    "barMaxWidth": 40,
+                },
+                {
+                    "name": "Judge",
+                    "type": "bar",
+                    "data": judge_means,
+                    "itemStyle": {"color": "#ff9800"},
+                    "barMaxWidth": 40,
+                },
+            ],
+            "tooltip": {"trigger": "axis"},
+            "legend": {"bottom": 0},
+            "grid": {"bottom": 60},
+        }
+        ui.echart(chart_opts).classes("w-full").style("height: 250px;")
+
+
+def _render_throughput_chart(
+    gen_by_model: dict[str, list[dict]],
+    judge_by_model: dict[str, list[dict]],
+) -> None:
+    """Render per-request throughput (requests/sec) by model from latency_ms."""
+    models = sorted(set(gen_by_model) | set(judge_by_model))
+    if not models:
+        return
+
+    gen_tp = []
+    judge_tp = []
+    for model in models:
+        gen_items = gen_by_model.get(model, [])
+        gen_lat = [i["latency_ms"] for i in gen_items if i.get("latency_ms")]
+        gen_tp.append(round(1000 / statistics.mean(gen_lat), 2) if gen_lat else None)
+
+        # Judge items don't have separate latency, but the overall item latency
+        # includes both gen+judge. For now show gen-side throughput.
+        judge_tp.append(None)
+
+    with ui.card().classes("w-full q-pa-md q-mt-sm"):
+        ui.label("Per-Request Throughput (req/s)").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        chart_opts = {
+            "xAxis": {"type": "category", "data": models},
+            "yAxis": {"type": "value", "name": "req/s"},
+            "series": [
+                {
+                    "name": "Generator",
+                    "type": "bar",
+                    "data": gen_tp,
+                    "itemStyle": {"color": "#2196f3"},
+                    "barMaxWidth": 40,
+                },
+            ],
+            "tooltip": {"trigger": "axis"},
+            "grid": {"bottom": 40},
+        }
+        ui.echart(chart_opts).classes("w-full").style("height: 250px;")
+
+
+def _render_batch_rate_table(
+    runs: list[dict], items_by_key: dict[tuple[str, int], dict]
+) -> None:
+    """Render batch-level samples/second table per run."""
+    from datetime import datetime
+
+    rows = []
+    for run in runs[-20:]:  # last 20 runs
+        it = run["iteration"]
+        it_items = [v for (iid, itr), v in items_by_key.items() if itr == it]
+        if len(it_items) < 2:
+            continue
+        timestamps = []
+        for item in it_items:
+            ts = item.get("timestamp", "")
+            if ts:
+                try:
+                    timestamps.append(datetime.fromisoformat(ts))
+                except ValueError:
+                    pass
+        if len(timestamps) < 2:
+            continue
+        span = (max(timestamps) - min(timestamps)).total_seconds()
+        if span <= 0:
+            continue
+        rate = len(it_items) / span
+        rows.append(
+            {
+                "iteration": it,
+                "model": run.get("generator_model", "?"),
+                "n_items": len(it_items),
+                "span_s": f"{span:.1f}",
+                "rate": f"{rate:.2f}",
+            }
+        )
+
+    if not rows:
+        return
+
+    with ui.card().classes("w-full q-pa-md q-mt-sm"):
+        ui.label("Batch Throughput (samples/s)").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        cols = [
+            {
+                "name": "iteration",
+                "label": "Iter",
+                "field": "iteration",
+                "sortable": True,
+            },
+            {"name": "model", "label": "Generator", "field": "model"},
+            {"name": "n_items", "label": "Items", "field": "n_items"},
+            {"name": "span_s", "label": "Span (s)", "field": "span_s"},
+            {"name": "rate", "label": "samples/s", "field": "rate"},
+        ]
+        with ui.scroll_area().style("max-height: 200px;"):
+            ui.table(
+                columns=cols, rows=list(reversed(rows)), row_key="iteration"
+            ).classes("w-full")
+
+
+def _render_judge_judge_correlations(runs: list[dict]) -> None:
+    """Render pairwise judge-judge correlation matrix/table.
+
+    For each pair of judge models, computes Pearson r on scores and Cohen's kappa
+    on decisions for items judged by both.
+    """
+    import re as _re_jj
+
+    correlations = load_judge_correlations()
+    if not correlations:
+        return
+
+    # Find latest judge prompt per judge model
+    prompt_versions: dict[str, dict[str, int]] = {}
+    for c in correlations:
+        model = c["judge_model"]
+        prompt = c["judge_prompt"]
+        m = _re_jj.search(r"_v(\d+)", prompt)
+        v = int(m.group(1)) if m else 0
+        prompt_versions.setdefault(model, {})[prompt] = v
+
+    latest_prompt: dict[str, str] = {}
+    for model, prompts in prompt_versions.items():
+        latest_prompt[model] = max(prompts, key=prompts.get)
+
+    # Filter to latest prompt per model
+    filtered = [
+        c
+        for c in correlations
+        if latest_prompt.get(c["judge_model"]) == c["judge_prompt"]
+    ]
+    if not filtered:
+        return
+
+    # Group by (item_id, iteration) -> {judge_model: judgment}
+    by_item: dict[tuple[str, int], dict[str, dict]] = {}
+    for c in filtered:
+        key = (c["item_id"], c["iteration"])
+        by_item.setdefault(key, {})[c["judge_model"]] = c["judgment"]
+
+    judge_models = sorted(latest_prompt.keys())
+    if len(judge_models) < 2:
+        return
+
+    # Compute pairwise correlations
+    pair_results: dict[tuple[str, str], dict] = {}
+    for i, m_a in enumerate(judge_models):
+        for j, m_b in enumerate(judge_models):
+            if j <= i:
+                continue
+            score_pairs = []
+            decision_pairs = []
+            for judgments in by_item.values():
+                if m_a in judgments and m_b in judgments:
+                    j_a = judgments[m_a]
+                    j_b = judgments[m_b]
+                    agg_a = j_a.get("aggregate")
+                    agg_b = j_b.get("aggregate")
+                    if agg_a is not None and agg_b is not None:
+                        score_pairs.append((agg_a, agg_b))
+                    dec_a = j_a.get("decision", "")
+                    dec_b = j_b.get("decision", "")
+                    if dec_a and dec_b:
+                        decision_pairs.append((dec_a, dec_b))
+            pair_results[(m_a, m_b)] = {
+                "pearson": _pearson(score_pairs),
+                "kappa": _cohens_kappa(decision_pairs),
+                "n": len(score_pairs),
+            }
+
+    if not pair_results:
+        return
+
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        ui.label("Judge-Judge Correlations").classes("text-h6 text-weight-bold")
+        ui.label(
+            "Pairwise agreement between judge models (latest prompt per model)."
+        ).classes("text-caption text-grey-7")
+
+        if len(judge_models) <= 4:
+            # Render as table for small number of judges
+            rows = []
+            for (m_a, m_b), result in pair_results.items():
+                pr = result["pearson"]
+                kp = result["kappa"]
+                rows.append(
+                    {
+                        "pair": f"{m_a} vs {m_b}",
+                        "n": result["n"],
+                        "pearson": f"{pr:.3f}" if pr is not None else "N/A",
+                        "kappa": f"{kp:.3f}" if kp is not None else "N/A",
+                    }
+                )
+            cols = [
+                {"name": "pair", "label": "Judge Pair", "field": "pair"},
+                {"name": "n", "label": "N items", "field": "n"},
+                {"name": "pearson", "label": "Pearson r", "field": "pearson"},
+                {"name": "kappa", "label": "Cohen's κ", "field": "kappa"},
+            ]
+            ui.table(columns=cols, rows=rows, row_key="pair").classes("w-full")
+        else:
+            # Heatmap for many judges
+            heatmap_data = []
+            for i, m_a in enumerate(judge_models):
+                for j, m_b in enumerate(judge_models):
+                    if i == j:
+                        heatmap_data.append([i, j, 1.0])
+                    elif (m_a, m_b) in pair_results:
+                        val = pair_results[(m_a, m_b)]["pearson"]
+                        heatmap_data.append(
+                            [i, j, round(val, 3) if val is not None else None]
+                        )
+                        heatmap_data.append(
+                            [j, i, round(val, 3) if val is not None else None]
+                        )
+            chart_opts = {
+                "xAxis": {"type": "category", "data": judge_models},
+                "yAxis": {"type": "category", "data": judge_models},
+                "visualMap": {
+                    "min": -1,
+                    "max": 1,
+                    "calculable": True,
+                    "orient": "horizontal",
+                    "left": "center",
+                    "bottom": 0,
+                    "inRange": {"color": ["#d32f2f", "#fff", "#388e3c"]},
+                },
+                "series": [
+                    {
+                        "type": "heatmap",
+                        "data": heatmap_data,
+                        "label": {"show": True, "fontSize": 11},
+                    }
+                ],
+                "tooltip": {"position": "top"},
+                "grid": {"bottom": 80},
+            }
+            ui.echart(chart_opts).classes("w-full").style("height: 400px;")
+
+
 @ui.page("/pipeline")
 def pipeline_monitoring_page():
     """Pipeline monitoring dashboard: iteration table, trends, calibration."""
@@ -1003,6 +1547,18 @@ def pipeline_monitoring_page():
                                 label="Generator Model",
                                 on_change=_on_corr_gen_filter,
                             ).classes("w-48")
+
+    # --- Per-Generator Acceptance Rate Bar Chart ---
+    _render_acceptance_rate_chart(runs, iter_stats)
+
+    # --- Per-Judge Calibration Bar Chart ---
+    _render_calibration_bar_chart()
+
+    # --- API Model Statistics (collapsible) ---
+    _render_api_stats_panel(runs, items_by_key)
+
+    # --- Judge-Judge Correlations ---
+    _render_judge_judge_correlations(runs)
 
     # --- Iteration Table ---
     with ui.expansion(
@@ -1564,13 +2120,33 @@ def pipeline_review_page():
         {_prompt_version(r["judge_prompt"]) for r in runs}, key=_version_sort_key
     )
 
-    # State — prompts default to latest version, models default to All
+    # Per-model latest prompt versions (for "latest" filter option)
+    _latest_gen_prompt: dict[str, str] = {}
+    for r in runs:
+        model = r.get("generator_model", "unknown")
+        v = _prompt_version(r["gen_prompt"])
+        if model not in _latest_gen_prompt or _version_sort_key(v) > _version_sort_key(
+            _latest_gen_prompt[model]
+        ):
+            _latest_gen_prompt[model] = v
+
+    _latest_judge_prompt: dict[str, str] = {}
+    for r in runs:
+        model = r.get("judge_model", "unknown")
+        v = _prompt_version(r["judge_prompt"])
+        if model not in _latest_judge_prompt or _version_sort_key(
+            v
+        ) > _version_sort_key(_latest_judge_prompt[model]):
+            _latest_judge_prompt[model] = v
+
+    # State — prompts default to "latest" (per-model), models default to All
+    LATEST = "latest"
     state = {
         "pos": 0,
         "gen_model": None,
-        "gen_prompt": all_gen_prompts[-1],
+        "gen_prompt": LATEST,
         "judge_model": None,
-        "judge_prompt": all_judge_prompts[-1],
+        "judge_prompt": LATEST,
     }
 
     # --- Filter bar ---
@@ -1582,7 +2158,7 @@ def pipeline_review_page():
         ).classes("w-40")
 
         gen_prompt_select = ui.select(
-            options=["All"] + all_gen_prompts,
+            options=["latest", "All"] + all_gen_prompts,
             value=state["gen_prompt"],
             label="Gen Prompt",
         ).classes("w-32")
@@ -1594,7 +2170,7 @@ def pipeline_review_page():
         ).classes("w-40")
 
         judge_prompt_select = ui.select(
-            options=["All"] + all_judge_prompts,
+            options=["latest", "All"] + all_judge_prompts,
             value=state["judge_prompt"],
             label="Judge Prompt",
         ).classes("w-32")
@@ -1755,16 +2331,22 @@ def pipeline_review_page():
                 continue
             if state["judge_model"] and r.get("judge_model") != state["judge_model"]:
                 continue
-            if (
-                state["gen_prompt"]
-                and _prompt_version(r["gen_prompt"]) != state["gen_prompt"]
-            ):
-                continue
-            if (
-                state["judge_prompt"]
-                and _prompt_version(r["judge_prompt"]) != state["judge_prompt"]
-            ):
-                continue
+            gp = state["gen_prompt"]
+            if gp:
+                rv = _prompt_version(r["gen_prompt"])
+                if gp == LATEST:
+                    if rv != _latest_gen_prompt.get(r.get("generator_model", ""), ""):
+                        continue
+                elif rv != gp:
+                    continue
+            jp = state["judge_prompt"]
+            if jp:
+                rv = _prompt_version(r["judge_prompt"])
+                if jp == LATEST:
+                    if rv != _latest_judge_prompt.get(r.get("judge_model", ""), ""):
+                        continue
+                elif rv != jp:
+                    continue
             result.append(r["iteration"])
         return result
 
