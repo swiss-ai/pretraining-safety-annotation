@@ -1345,18 +1345,22 @@ def pipeline_monitoring_page():
 
         loop_timer = ui.timer(3.0, _poll_loop_status, active=False)
 
+        cross_btn = None
+
         def _disable_all_buttons():
             judge_btn.disable()
             gen_btn.disable()
             full_loop_btn.disable()
-            cross_btn.disable()
+            if cross_btn is not None:
+                cross_btn.disable()
             interrupt_btn.set_visibility(True)
 
         def _enable_all_buttons():
             judge_btn.enable()
             gen_btn.enable()
             full_loop_btn.enable()
-            cross_btn.enable()
+            if cross_btn is not None:
+                cross_btn.enable()
             interrupt_btn.set_visibility(False)
 
         def _start_improver(role: str, aliases: list[str] | None):
