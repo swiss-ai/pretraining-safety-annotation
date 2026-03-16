@@ -690,16 +690,8 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             "itemStyle": {"color": "#4caf50"},
             "barMaxWidth": 60,
         }
-        # Error bars via custom series (scatter with error extent)
-        error_data = []
-        for i, (lo, hi) in enumerate(zip(ci_low, ci_high)):
-            error_data.append(
-                {
-                    "value": [i, rates[i]],
-                    "low": lo,
-                    "high": hi,
-                }
-            )
+        # Error bars as scatter points at the mean, with markLine whiskers
+        # symbol "none" hides the scatter dot; markLine draws CI range
         error_series = {
             "name": "95% CI",
             "type": "scatter",
@@ -708,10 +700,11 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             "markLine": {
                 "silent": True,
                 "symbol": ["none", "none"],
-                "lineStyle": {"color": "#666", "width": 1.5},
+                "lineStyle": {"color": "#666", "width": 1.5, "type": "solid"},
+                "label": {"show": False},
                 "data": [
                     [
-                        {"xAxis": i, "yAxis": lo, "symbol": "dash"},
+                        {"xAxis": i, "yAxis": lo},
                         {"xAxis": i, "yAxis": hi},
                     ]
                     for i, (lo, hi) in enumerate(zip(ci_low, ci_high))
@@ -722,10 +715,7 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             "xAxis": {"type": "category", "data": models},
             "yAxis": {"type": "value", "name": "Accept %", "min": 0, "max": 100},
             "series": [bar_series, error_series],
-            "tooltip": {
-                "trigger": "axis",
-                "formatter": None,  # default
-            },
+            "tooltip": {"trigger": "axis"},
             "grid": {"bottom": 60},
         }
         ui.echart(chart_opts).classes("w-full").style("height: 300px;")
