@@ -819,23 +819,23 @@ def _render_api_stats_panel(runs: list[dict], items_by_key: dict) -> None:
 
     all_items = list(items_by_key.values())
 
-    # Group items by model for generator stats
-    gen_by_model: dict[str, list[dict]] = {}
-    judge_by_model: dict[str, list[dict]] = {}
-    for item in all_items:
-        model = item.get("model", "unknown")
-        gen_by_model.setdefault(model, []).append(item)
-        j = item.get("judgment")
-        if j:
-            # Judge model is inferred from the run
-            judge_by_model.setdefault(model, []).append(item)
-
-    # Build run lookup for judge model
+    # Build run lookup: iteration -> run (carries alias info)
     run_by_iter: dict[int, dict] = {}
     for r in runs:
         run_by_iter[r["iteration"]] = r
 
-    # Separate judge items by actual judge model
+    # Group items by generator alias (resolved from run metadata)
+    gen_by_model: dict[str, list[dict]] = {}
+    for item in all_items:
+        run = run_by_iter.get(item.get("iteration"))
+        gen_alias = (
+            run.get("generator_model", item.get("model", "unknown"))
+            if run
+            else item.get("model", "unknown")
+        )
+        gen_by_model.setdefault(gen_alias, []).append(item)
+
+    # Group judged items by judge alias (from run metadata)
     judge_items_by_model: dict[str, list[dict]] = {}
     for item in all_items:
         j = item.get("judgment")
