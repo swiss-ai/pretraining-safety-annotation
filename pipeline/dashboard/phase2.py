@@ -848,128 +848,164 @@ def _render_api_stats_panel(runs: list[dict], items_by_key: dict) -> None:
     with ui.expansion("API Model Statistics", icon="analytics").classes(
         "w-full q-mx-md q-mt-md"
     ):
-        # 4a. Average Reasoning Tokens per Request
-        _render_reasoning_tokens_chart(gen_by_model, judge_items_by_model)
+        has_gen_data = (
+            any(
+                item.get("reasoning_tokens") is not None
+                for items in gen_by_model.values()
+                for item in items
+            )
+            if gen_by_model
+            else False
+        )
+        has_judge_data = (
+            any(
+                item.get("judgment", {}).get("preflection", {}).get("usage") is not None
+                for items in judge_items_by_model.values()
+                for item in items
+            )
+            if judge_items_by_model
+            else False
+        )
 
-        # 4b. Throughput (per-request)
-        _render_throughput_chart(gen_by_model, judge_items_by_model)
+        if not has_gen_data and not has_judge_data:
+            ui.label("No token usage data available (older items).").classes(
+                "text-grey-6 text-caption q-pa-sm"
+            )
+        else:
+            with ui.row().classes("w-full gap-4"):
+                with ui.column().classes("flex-1"):
+                    _render_role_stats("Generator", gen_by_model, "#2196f3")
+                with ui.column().classes("flex-1"):
+                    _render_role_stats_judge("Judge", judge_items_by_model, "#ff9800")
 
-        # 4c. Batch-level samples/second
         _render_batch_rate_table(runs, items_by_key)
 
 
-def _render_reasoning_tokens_chart(
-    gen_by_model: dict[str, list[dict]],
-    judge_by_model: dict[str, list[dict]],
+def _render_role_stats(
+    role: str,
+    by_model: dict[str, list[dict]],
+    color: str,
 ) -> None:
-    """Render average reasoning tokens per request, grouped by model."""
-    models = sorted(set(gen_by_model) | set(judge_by_model))
+    """Render reasoning tokens + throughput charts for generator models."""
+    models = sorted(by_model)
     if not models:
+        ui.label(f"No {role.lower()} data.").classes("text-grey-6 text-caption")
         return
 
-    gen_means = []
-    judge_means = []
+    rt_means = []
+    tp_vals = []
     for model in models:
-        # Generator reasoning tokens
-        gen_items = gen_by_model.get(model, [])
-        gen_rt = [
+        items = by_model[model]
+        rt = [
             i.get("reasoning_tokens")
-            for i in gen_items
+            for i in items
             if i.get("reasoning_tokens") is not None
         ]
-        gen_means.append(round(statistics.mean(gen_rt)) if gen_rt else None)
+        rt_means.append(round(statistics.mean(rt)) if rt else None)
+        lat = [i["latency_ms"] for i in items if i.get("latency_ms")]
+        tp_vals.append(round(1000 / statistics.mean(lat), 2) if lat else None)
 
-        # Judge reasoning tokens (from judgment JSON)
-        j_items = judge_by_model.get(model, [])
-        j_rt = []
-        for item in j_items:
+    with ui.card().classes("w-full q-pa-md"):
+        ui.label(f"{role} — Avg Reasoning Tokens").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        if any(v is not None for v in rt_means):
+            ui.echart(
+                {
+                    "xAxis": {"type": "category", "data": models},
+                    "yAxis": {"type": "value", "name": "Tokens"},
+                    "series": [
+                        {
+                            "name": role,
+                            "type": "bar",
+                            "data": rt_means,
+                            "itemStyle": {"color": color},
+                            "barMaxWidth": 50,
+                        }
+                    ],
+                    "tooltip": {"trigger": "axis"},
+                    "grid": {"bottom": 40},
+                }
+            ).classes("w-full").style("height: 220px;")
+        else:
+            ui.label("No token data (older items).").classes("text-grey-6 text-caption")
+
+    with ui.card().classes("w-full q-pa-md q-mt-sm"):
+        ui.label(f"{role} — Throughput (req/s)").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        if any(v is not None for v in tp_vals):
+            ui.echart(
+                {
+                    "xAxis": {"type": "category", "data": models},
+                    "yAxis": {"type": "value", "name": "req/s"},
+                    "series": [
+                        {
+                            "name": role,
+                            "type": "bar",
+                            "data": tp_vals,
+                            "itemStyle": {"color": color},
+                            "barMaxWidth": 50,
+                        }
+                    ],
+                    "tooltip": {"trigger": "axis"},
+                    "grid": {"bottom": 40},
+                }
+            ).classes("w-full").style("height: 220px;")
+        else:
+            ui.label("No latency data.").classes("text-grey-6 text-caption")
+
+
+def _render_role_stats_judge(
+    role: str,
+    by_model: dict[str, list[dict]],
+    color: str,
+) -> None:
+    """Render reasoning tokens chart for judge models (tokens from judgment JSON)."""
+    models = sorted(by_model)
+    if not models:
+        ui.label(f"No {role.lower()} data.").classes("text-grey-6 text-caption")
+        return
+
+    rt_means = []
+    for model in models:
+        items = by_model[model]
+        rt = []
+        for item in items:
             j = item.get("judgment")
             if not j:
                 continue
             for part in ("preflection", "reflection"):
                 part_usage = j.get(part, {}).get("usage", {})
-                rt = part_usage.get("reasoning_tokens")
-                if rt is not None:
-                    j_rt.append(rt)
-        judge_means.append(round(statistics.mean(j_rt)) if j_rt else None)
+                val = part_usage.get("reasoning_tokens")
+                if val is not None:
+                    rt.append(val)
+        rt_means.append(round(statistics.mean(rt)) if rt else None)
 
-    has_data = any(v is not None for v in gen_means + judge_means)
-    if not has_data:
-        ui.label("No token usage data available (older items).").classes(
-            "text-grey-6 text-caption q-pa-sm"
-        )
-        return
-
-    with ui.card().classes("w-full q-pa-md q-mt-sm"):
-        ui.label("Avg Reasoning Tokens / Request").classes(
+    with ui.card().classes("w-full q-pa-md"):
+        ui.label(f"{role} — Avg Reasoning Tokens").classes(
             "text-subtitle2 text-weight-bold"
         )
-        chart_opts = {
-            "xAxis": {"type": "category", "data": models},
-            "yAxis": {"type": "value", "name": "Tokens"},
-            "series": [
+        if any(v is not None for v in rt_means):
+            ui.echart(
                 {
-                    "name": "Generator",
-                    "type": "bar",
-                    "data": gen_means,
-                    "itemStyle": {"color": "#2196f3"},
-                    "barMaxWidth": 40,
-                },
-                {
-                    "name": "Judge",
-                    "type": "bar",
-                    "data": judge_means,
-                    "itemStyle": {"color": "#ff9800"},
-                    "barMaxWidth": 40,
-                },
-            ],
-            "tooltip": {"trigger": "axis"},
-            "legend": {"bottom": 0},
-            "grid": {"bottom": 60},
-        }
-        ui.echart(chart_opts).classes("w-full").style("height: 250px;")
-
-
-def _render_throughput_chart(
-    gen_by_model: dict[str, list[dict]],
-    judge_by_model: dict[str, list[dict]],
-) -> None:
-    """Render per-request throughput (requests/sec) by model from latency_ms."""
-    models = sorted(set(gen_by_model) | set(judge_by_model))
-    if not models:
-        return
-
-    gen_tp = []
-    judge_tp = []
-    for model in models:
-        gen_items = gen_by_model.get(model, [])
-        gen_lat = [i["latency_ms"] for i in gen_items if i.get("latency_ms")]
-        gen_tp.append(round(1000 / statistics.mean(gen_lat), 2) if gen_lat else None)
-
-        # Judge items don't have separate latency, but the overall item latency
-        # includes both gen+judge. For now show gen-side throughput.
-        judge_tp.append(None)
-
-    with ui.card().classes("w-full q-pa-md q-mt-sm"):
-        ui.label("Per-Request Throughput (req/s)").classes(
-            "text-subtitle2 text-weight-bold"
-        )
-        chart_opts = {
-            "xAxis": {"type": "category", "data": models},
-            "yAxis": {"type": "value", "name": "req/s"},
-            "series": [
-                {
-                    "name": "Generator",
-                    "type": "bar",
-                    "data": gen_tp,
-                    "itemStyle": {"color": "#2196f3"},
-                    "barMaxWidth": 40,
-                },
-            ],
-            "tooltip": {"trigger": "axis"},
-            "grid": {"bottom": 40},
-        }
-        ui.echart(chart_opts).classes("w-full").style("height: 250px;")
+                    "xAxis": {"type": "category", "data": models},
+                    "yAxis": {"type": "value", "name": "Tokens"},
+                    "series": [
+                        {
+                            "name": role,
+                            "type": "bar",
+                            "data": rt_means,
+                            "itemStyle": {"color": color},
+                            "barMaxWidth": 50,
+                        }
+                    ],
+                    "tooltip": {"trigger": "axis"},
+                    "grid": {"bottom": 40},
+                }
+            ).classes("w-full").style("height: 220px;")
+        else:
+            ui.label("No token data (older items).").classes("text-grey-6 text-caption")
 
 
 def _render_batch_rate_table(
