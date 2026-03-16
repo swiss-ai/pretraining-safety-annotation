@@ -859,7 +859,7 @@ def pipeline_monitoring_page():
 
                     def _on_gen_filter(e):
                         val = None if e.value == "All" else e.value
-                        trend_chart.options = _build_trend_chart(val)
+                        trend_chart.options.update(_build_trend_chart(val))
                         trend_chart.update()
 
                     ui.select(
@@ -971,7 +971,7 @@ def pipeline_monitoring_page():
                     )
 
                     def _refresh_corr_chart():
-                        corr_chart.options = _build_corr_chart_filtered()
+                        corr_chart.options.update(_build_corr_chart_filtered())
                         corr_chart.update()
 
                     with ui.row().classes("gap-2"):
