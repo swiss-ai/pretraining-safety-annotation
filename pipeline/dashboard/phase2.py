@@ -1538,8 +1538,6 @@ def pipeline_review_page():
 
     # Build run metadata lookups
     run_by_iter = {r["iteration"]: r for r in runs}
-    all_gen_models_review = sorted({r.get("generator_model", "unknown") for r in runs})
-    all_judge_models_review = sorted({r.get("judge_model", "unknown") for r in runs})
     # group_id → list of iterations in that group
     group_iters: dict[str, list[int]] = {}
     for r in runs:
@@ -1547,40 +1545,59 @@ def pipeline_review_page():
         if gid:
             group_iters.setdefault(gid, []).append(r["iteration"])
 
-    # State
+    def _prompt_version(filename: str) -> str:
+        """Extract version from prompt filename, e.g. 'generator_v1.md' -> 'v1'."""
+        import re
+
+        m = re.search(r"(v\d+)", filename)
+        return m.group(1) if m else filename
+
+    def _version_sort_key(v: str) -> int:
+        return int(v[1:]) if v.startswith("v") and v[1:].isdigit() else 0
+
+    all_gen_models = sorted({r.get("generator_model", "unknown") for r in runs})
+    all_judge_models = sorted({r.get("judge_model", "unknown") for r in runs})
+    all_gen_prompts = sorted(
+        {_prompt_version(r["gen_prompt"]) for r in runs}, key=_version_sort_key
+    )
+    all_judge_prompts = sorted(
+        {_prompt_version(r["judge_prompt"]) for r in runs}, key=_version_sort_key
+    )
+
+    # State — prompts default to latest version, models default to All
     state = {
-        "iteration": runs[-1]["iteration"],
         "pos": 0,
-        "gen_filter": None,
-        "judge_filter": None,
+        "gen_model": None,
+        "gen_prompt": all_gen_prompts[-1],
+        "judge_model": None,
+        "judge_prompt": all_judge_prompts[-1],
     }
 
-    # --- Iteration selector ---
+    # --- Filter bar ---
     with ui.row().classes("q-px-md q-mt-md items-center gap-4"):
-        iter_options = [r["iteration"] for r in runs]
-        iter_select = ui.select(
-            options=iter_options,
-            value=state["iteration"],
-            label="Iteration",
+        gen_model_select = ui.select(
+            options=["All"] + all_gen_models,
+            value="All",
+            label="Generator",
+        ).classes("w-40")
+
+        gen_prompt_select = ui.select(
+            options=["All"] + all_gen_prompts,
+            value=state["gen_prompt"],
+            label="Gen Prompt",
         ).classes("w-32")
 
-        if len(all_gen_models_review) > 1:
-            gen_filter_select = ui.select(
-                options=["All"] + all_gen_models_review,
-                value="All",
-                label="Generator",
-            ).classes("w-40")
-        else:
-            gen_filter_select = None
+        judge_model_select = ui.select(
+            options=["All"] + all_judge_models,
+            value="All",
+            label="Judge",
+        ).classes("w-40")
 
-        if len(all_judge_models_review) > 1:
-            judge_filter_select = ui.select(
-                options=["All"] + all_judge_models_review,
-                value="All",
-                label="Judge",
-            ).classes("w-40")
-        else:
-            judge_filter_select = None
+        judge_prompt_select = ui.select(
+            options=["All"] + all_judge_prompts,
+            value=state["judge_prompt"],
+            label="Judge Prompt",
+        ).classes("w-32")
 
         sort_select = ui.select(
             options=["Low score first", "High score first", "Default order"],
@@ -1730,20 +1747,40 @@ def pipeline_review_page():
                         color="primary",
                     )
 
-    def _filtered_iter_options() -> list[int]:
-        """Return iteration numbers filtered by current generator/judge model selections."""
-        options = []
+    def _filtered_iterations() -> list[int]:
+        """Return iteration numbers matching current filter selections."""
+        result = []
         for r in runs:
-            if state["gen_filter"] and r.get("generator_model") != state["gen_filter"]:
+            if state["gen_model"] and r.get("generator_model") != state["gen_model"]:
                 continue
-            if state["judge_filter"] and r.get("judge_model") != state["judge_filter"]:
+            if state["judge_model"] and r.get("judge_model") != state["judge_model"]:
                 continue
-            options.append(r["iteration"])
-        return options
+            if (
+                state["gen_prompt"]
+                and _prompt_version(r["gen_prompt"]) != state["gen_prompt"]
+            ):
+                continue
+            if (
+                state["judge_prompt"]
+                and _prompt_version(r["judge_prompt"]) != state["judge_prompt"]
+            ):
+                continue
+            result.append(r["iteration"])
+        return result
 
     def get_sorted_items() -> list[dict]:
-        items = load_items_for_iteration(state["iteration"])
-        judged = [i for i in items if i.get("judgment")]
+        """Load items from all matching iterations, deduplicate, sort."""
+        iters = _filtered_iterations()
+        all_items: list[dict] = []
+        for it in iters:
+            all_items.extend(load_items_for_iteration(it))
+        # Deduplicate by item_id — keep highest iteration
+        seen: dict[str, dict] = {}
+        for item in all_items:
+            key = item["item_id"]
+            if key not in seen or item["iteration"] > seen[key]["iteration"]:
+                seen[key] = item
+        judged = [i for i in seen.values() if i.get("judgment")]
         sort = sort_select.value
         if sort == "Low score first":
             judged.sort(key=lambda i: i["judgment"]["aggregate"])
@@ -1757,18 +1794,16 @@ def pipeline_review_page():
     def _first_unreviewed_pos(items: list[dict]) -> int:
         """Return index of the first item without a review from this viewer."""
         reviewed = load_latest_reviews()
-        reviewed_ids = {
-            k[0] for k in reviewed if k[1] == state["iteration"] and k[2] == viewer_id
-        }
+        reviewed_keys = {(k[0], k[1]) for k in reviewed if k[2] == viewer_id}
         for i, item in enumerate(items):
-            if item["item_id"] not in reviewed_ids:
+            if (item["item_id"], item["iteration"]) not in reviewed_keys:
                 return i
         return 0
 
     def update_display():
         items = current_items_list()
         if not items:
-            nav_label.set_text("No judged items in this iteration")
+            nav_label.set_text("No judged items for this filter")
             return
 
         state["pos"] = max(0, min(state["pos"], len(items) - 1))
@@ -1808,18 +1843,19 @@ def pipeline_review_page():
         judge_section.clear()
         with judge_section:
             # Collect all judgments for this item: current iteration + siblings from same group
+            item_iter = item["iteration"]
             judgments_to_show: list[tuple[str, dict]] = []
             judgment = item.get("judgment", {})
             if judgment:
-                cur_run = run_by_iter.get(state["iteration"], {})
+                cur_run = run_by_iter.get(item_iter, {})
                 cur_judge = cur_run.get("judge_model", "")
                 judgments_to_show.append((cur_judge, judgment))
 
             # Look for sibling iterations in the same group (single query)
-            cur_run = run_by_iter.get(state["iteration"], {})
+            cur_run = run_by_iter.get(item_iter, {})
             cur_gid = cur_run.get("group_id")
             if cur_gid and cur_gid in group_iters:
-                sib_iters = [i for i in group_iters[cur_gid] if i != state["iteration"]]
+                sib_iters = [i for i in group_iters[cur_gid] if i != item_iter]
                 if sib_iters:
                     sib_items = load_item_across_iterations(item["item_id"], sib_iters)
                     for si in sib_items:
@@ -1853,7 +1889,7 @@ def pipeline_review_page():
 
         # Pre-fill from existing review
         latest_reviews = load_latest_reviews()
-        existing = latest_reviews.get((item["item_id"], state["iteration"], viewer_id))
+        existing = latest_reviews.get((item["item_id"], item["iteration"], viewer_id))
         if existing:
             ex_scores = existing["scores"]
             # Handle both per-part {part: {dim: int}} and legacy flat {dim: int} formats
@@ -1935,7 +1971,7 @@ def pipeline_review_page():
         )
         save_review(
             item_id=item["item_id"],
-            iteration=state["iteration"],
+            iteration=item["iteration"],
             reviewer_id=viewer_id,
             scores=scores,
             aggregate=aggregate,
@@ -1945,42 +1981,38 @@ def pipeline_review_page():
         ui.notify("Review saved!", type="positive")
         navigate(1)
 
-    def on_iteration_change(e):
-        state["iteration"] = int(e.value)
+    def _on_filter_change():
+        """Re-filter and reset position when any filter changes."""
+        state["pos"] = 0
         items = current_items_list()
         state["pos"] = _first_unreviewed_pos(items) if items else 0
         update_display()
 
-    def on_sort_change(_):
+    def _on_gen_model_change(e):
+        state["gen_model"] = None if e.value == "All" else e.value
+        _on_filter_change()
+
+    def _on_gen_prompt_change(e):
+        state["gen_prompt"] = None if e.value == "All" else e.value
+        _on_filter_change()
+
+    def _on_judge_model_change(e):
+        state["judge_model"] = None if e.value == "All" else e.value
+        _on_filter_change()
+
+    def _on_judge_prompt_change(e):
+        state["judge_prompt"] = None if e.value == "All" else e.value
+        _on_filter_change()
+
+    def _on_sort_change(_):
         state["pos"] = 0
         update_display()
 
-    def _on_gen_filter_change(e):
-        state["gen_filter"] = None if e.value == "All" else e.value
-        new_opts = _filtered_iter_options()
-        iter_select.options = new_opts
-        if state["iteration"] not in new_opts and new_opts:
-            state["iteration"] = new_opts[-1]
-            iter_select.value = state["iteration"]
-        state["pos"] = 0
-        update_display()
-
-    def _on_judge_filter_change(e):
-        state["judge_filter"] = None if e.value == "All" else e.value
-        new_opts = _filtered_iter_options()
-        iter_select.options = new_opts
-        if state["iteration"] not in new_opts and new_opts:
-            state["iteration"] = new_opts[-1]
-            iter_select.value = state["iteration"]
-        state["pos"] = 0
-        update_display()
-
-    iter_select.on_value_change(on_iteration_change)
-    sort_select.on_value_change(on_sort_change)
-    if gen_filter_select:
-        gen_filter_select.on_value_change(_on_gen_filter_change)
-    if judge_filter_select:
-        judge_filter_select.on_value_change(_on_judge_filter_change)
+    gen_model_select.on_value_change(_on_gen_model_change)
+    gen_prompt_select.on_value_change(_on_gen_prompt_change)
+    judge_model_select.on_value_change(_on_judge_model_change)
+    judge_prompt_select.on_value_change(_on_judge_prompt_change)
+    sort_select.on_value_change(_on_sort_change)
     # Start at first unreviewed item
     items = current_items_list()
     state["pos"] = _first_unreviewed_pos(items) if items else 0
