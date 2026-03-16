@@ -187,6 +187,10 @@ Do NOT waste time querying empty data — run the batch first.
 
 ## {role_label} Improvement for model: {target_alias}
 
+**IMPORTANT: Other improver agents may be running in parallel for different models.**
+You are ONLY responsible for the **{target_alias}** model. Ignore iterations, errors, or data
+belonging to other models. When analyzing results, filter by your target model.
+
 {phase_instructions}
 {first_run_note}
 ## Cross-model evaluation
