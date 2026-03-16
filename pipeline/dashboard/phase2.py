@@ -273,7 +273,7 @@ def _render_calibration_from_items(cal: dict) -> None:
                     ui.label(f"  {short}: {val}").classes("text-body2")
 
 
-def _render_judge_scores(judgment: dict) -> None:
+def _render_judge_scores(judgment: dict, judge_model: str = "") -> None:
     """Render judge score details for a single judgment dict."""
     with ui.row().classes("gap-4"):
         ui.badge(
@@ -284,6 +284,8 @@ def _render_judge_scores(judgment: dict) -> None:
             judgment["decision"].upper(),
             color="green" if judgment["decision"] == "accept" else "red",
         )
+        if judge_model:
+            ui.badge(judge_model, color="teal").props("outline")
         jp = judgment.get("judge_prompt", "")
         if jp:
             ui.badge(jp, color="blue-grey").props("outline")
@@ -1582,40 +1584,6 @@ def pipeline_review_page():
             label="Sort",
         ).classes("w-48")
 
-        rejudge_status = ui.label("").classes("text-caption")
-
-        def _rejudge():
-            rejudge_btn.disable()
-            rejudge_status.set_text("Re-judging with all judge prompts × models...")
-
-            def _thread():
-                try:
-                    from pipeline.phase2.run import rejudge_all_prompts_and_models
-
-                    total = rejudge_all_prompts_and_models(cfg)
-                    rejudge_status.set_text(
-                        f"Re-judged {total} items. Refresh to see results."
-                    )
-                    rejudge_btn.enable()
-                except Exception as exc:
-                    rejudge_status.set_text(f"Error: {exc}")
-                    rejudge_btn.enable()
-
-            threading.Thread(target=_thread, daemon=True).start()
-
-        rejudge_btn = (
-            ui.button(
-                "Re-judge Reviewed Items",
-                icon="gavel",
-                on_click=_rejudge,
-                color="secondary",
-            )
-            .props("dense outline")
-            .tooltip(
-                "Re-judge all reviewed items with all judge prompts × all judge models"
-            )
-        )
-
     # --- Main split panel ---
     with (
         ui.splitter(value=35)
@@ -1868,9 +1836,10 @@ def pipeline_review_page():
                     with ui.tab_panels(jtabs).classes("w-full"):
                         for (jm, jdg), tab in zip(judgments_to_show, tab_objs):
                             with ui.tab_panel(tab):
-                                _render_judge_scores(jdg)
+                                _render_judge_scores(jdg, judge_model=jm)
                 else:
-                    _render_judge_scores(judgments_to_show[0][1])
+                    jm, jdg = judgments_to_show[0]
+                    _render_judge_scores(jdg, judge_model=jm)
 
         gold_section.clear()
         gold_expansion.set_visibility(bool(item.get("is_gold")))
