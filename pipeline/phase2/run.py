@@ -170,6 +170,10 @@ def _parse_generation(raw: str) -> dict:
     required = {"analysis", "preflection", "reflection"}
     missing = required - set(parsed.keys())
     assert not missing, f"Missing fields in generation: {missing}"
+    # Some models return string fields as lists — coerce to str
+    for field in ("analysis", "preflection", "reflection"):
+        if isinstance(parsed[field], list):
+            parsed[field] = "\n".join(str(x) for x in parsed[field])
     return parsed
 
 
@@ -435,6 +439,7 @@ def judge_batch(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     save: bool = True,
+    floor_threshold: int = 2,
 ) -> list[dict]:
     """Judge generated reflections. Judges preflection and reflection separately.
 
@@ -449,6 +454,7 @@ def judge_batch(
     prompt_filename = prompt_path.name
 
     async def judge_one(item: dict) -> dict:
+        t0 = time.monotonic()
         pre_parsed, pre_raw, pre_reasoning, pre_usage = await _judge_one_part(
             item,
             "preflection",
@@ -467,13 +473,14 @@ def judge_batch(
             client,
             semaphore,
         )
+        judge_latency_ms = int((time.monotonic() - t0) * 1000)
 
         all_scores = list(pre_parsed["scores"].values()) + list(
             ref_parsed["scores"].values()
         )
         aggregate = sum(all_scores) / len(all_scores)
-        # Floor rule: any dimension <= 2 forces reject, matching judge prompt
-        has_floor_violation = any(s <= 2 for s in all_scores)
+        # Floor rule: any dimension ≤ floor_threshold forces reject (documented in judge prompt)
+        has_floor_violation = any(s <= floor_threshold for s in all_scores)
         decision = (
             "reject"
             if has_floor_violation or aggregate < accept_threshold
@@ -507,6 +514,7 @@ def judge_batch(
             "judge_prompt": prompt_filename,
             "raw_responses": {"preflection": pre_raw, "reflection": ref_raw},
             "usage": judge_usage,
+            "latency_ms": judge_latency_ms,
             "timestamp": __import__("datetime")
             .datetime.now(__import__("datetime").timezone.utc)
             .isoformat(),
@@ -620,6 +628,7 @@ def _run_one_pair_inner(
         cfg.phase2.scoring.accept_threshold,
         client,
         semaphore,
+        floor_threshold=cfg.phase2.scoring.floor_threshold,
     )
 
     summary = _make_run_summary(iteration, judged)
@@ -843,6 +852,7 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
                 client=client,
                 semaphore=semaphore,
                 save=False,
+                floor_threshold=cfg.phase2.scoring.floor_threshold,
             )
 
             for item in judged:

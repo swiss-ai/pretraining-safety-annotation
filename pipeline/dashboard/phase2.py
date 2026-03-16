@@ -968,9 +968,11 @@ def _render_role_stats_judge(
         return
 
     rt_means = []
+    tp_vals = []
     for model in models:
         items = by_model[model]
         rt = []
+        latencies = []
         for item in items:
             j = item.get("judgment")
             if not j:
@@ -980,7 +982,13 @@ def _render_role_stats_judge(
                 val = part_usage.get("reasoning_tokens")
                 if val is not None:
                     rt.append(val)
+            lat = j.get("latency_ms")
+            if lat is not None:
+                latencies.append(lat)
         rt_means.append(round(statistics.mean(rt)) if rt else None)
+        tp_vals.append(
+            round(1000 / statistics.mean(latencies), 2) if latencies else None
+        )
 
     with ui.card().classes("w-full q-pa-md"):
         ui.label(f"{role} — Avg Reasoning Tokens").classes(
@@ -1006,6 +1014,33 @@ def _render_role_stats_judge(
             ).classes("w-full").style("height: 220px;")
         else:
             ui.label("No token data (older items).").classes("text-grey-6 text-caption")
+
+    with ui.card().classes("w-full q-pa-md q-mt-sm"):
+        ui.label(f"{role} — Throughput (req/s)").classes(
+            "text-subtitle2 text-weight-bold"
+        )
+        if any(v is not None for v in tp_vals):
+            ui.echart(
+                {
+                    "xAxis": {"type": "category", "data": models},
+                    "yAxis": {"type": "value", "name": "req/s"},
+                    "series": [
+                        {
+                            "name": role,
+                            "type": "bar",
+                            "data": tp_vals,
+                            "itemStyle": {"color": color},
+                            "barMaxWidth": 50,
+                        }
+                    ],
+                    "tooltip": {"trigger": "axis"},
+                    "grid": {"bottom": 40},
+                }
+            ).classes("w-full").style("height: 220px;")
+        else:
+            ui.label("No latency data (older items).").classes(
+                "text-grey-6 text-caption"
+            )
 
 
 def _render_batch_rate_table(
