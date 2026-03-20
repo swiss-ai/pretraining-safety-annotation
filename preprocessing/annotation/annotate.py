@@ -164,15 +164,26 @@ def _shard_pattern(rank: int) -> str:
 
 
 def count_existing_rows(output_dir: Path, rank: int) -> int:
-    """Count rows already written for this rank across all part files."""
+    """Count rows already written for this rank across all part files.
+
+    Corrupt files (e.g. missing footer from a killed job) are deleted so that
+    resume starts cleanly from the last complete flush.
+    """
     total = 0
     for f in sorted(output_dir.glob(_shard_pattern(rank))):
-        total += pq.read_metadata(str(f)).num_rows
+        try:
+            total += pq.read_metadata(str(f)).num_rows
+        except Exception:
+            print(f"WARNING: corrupt parquet {f.name}, deleting for clean resume")
+            f.unlink()
     return total
 
 
 def next_part_index(output_dir: Path, rank: int) -> int:
-    """Find the next available part index for this rank."""
+    """Find the next available part index for this rank.
+
+    Must be called *after* count_existing_rows (which cleans up corrupt files).
+    """
     existing = sorted(output_dir.glob(_shard_pattern(rank)))
     if not existing:
         return 0
@@ -217,11 +228,10 @@ def _prepare_pool(
     max_length: int,
     batch_size: int,
     token_budget: int,
-) -> list[tuple[list[str], torch.Tensor, torch.Tensor]]:
+) -> list[tuple[list[str], torch.Tensor, torch.Tensor, int, int]]:
     """Tokenize a pool of texts, sort by actual token length, and build padded batches.
 
-    Returns list of (batch_ids, input_ids_tensor, attention_mask_tensor)
-    ready for GPU inference.
+    Returns list of (batch_ids, input_ids, attention_mask, actual_tokens, padded_tokens).
     """
     encodings = tokenizer(
         pool_texts,
@@ -238,7 +248,10 @@ def _prepare_pool(
         end = min(pos + batch_size, len(order))
         longest_tokens = token_lengths[order[end - 1]]
         bucket = _next_bucket(longest_tokens)
-        bs = max(1, min(batch_size, token_budget // bucket))
+        bs = max(1, min(end - pos, token_budget // bucket))
+        # Recompute bucket from the actual batch boundary (shorter sequences)
+        bucket = _next_bucket(token_lengths[order[pos + bs - 1]])
+        bs = max(1, min(end - pos, token_budget // bucket))
         idx = order[pos : pos + bs]
         pos += bs
 

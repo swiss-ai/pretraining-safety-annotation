@@ -12,25 +12,27 @@
 # Runs incrementally: re-submit after timeout and it resumes via manifest.
 #
 # Usage:
-#   sbatch preprocessing/download_job.sh                  # default: 47142 shards
-#   sbatch preprocessing/download_job.sh --n-shards 100   # small test
+#   sbatch preprocessing/download_job.sh          # default: 47142 shards
+#   sbatch preprocessing/download_job.sh 100      # small test
 
 set -euo pipefail
 
 cd /users/jminder/repositories/model-raising-data
-
-echo "Job $SLURM_JOB_ID on $(hostname) — $(date)"
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    echo "Job $SLURM_JOB_ID on $(hostname) — $(date)"
+fi
 echo "CPUs: $(nproc)"
 
-N_SHARDS="${1:---n-shards 47142}"
+N_SHARDS="${1:-47142}"
 
 uv run python -m preprocessing.download \
     --dataset allenai/dolma3_mix-6T \
-    ${N_SHARDS} \
-    --output-dir ${SCRATCH}/dolma3_mix-1T \
+    --n-shards "${N_SHARDS}" \
+    --output-dir "${SCRATCH}/dolma3_mix-1T" \
     --shuffle --seed 42 \
     --columns text id source \
     --ignore-errors \
-    --workers 16x§x§§
+    --workers 32 \
+    --overwrite
 
 echo "Finished — $(date)"

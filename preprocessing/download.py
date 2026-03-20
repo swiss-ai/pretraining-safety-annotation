@@ -39,11 +39,21 @@ from tqdm import tqdm
 DEFAULT_DATASET = "HuggingFaceFW/finephrase"
 
 
-def _worker_init(ignore_errors: bool):
-    """Per-process initializer: patch lenient column cast if needed."""
-    if not ignore_errors:
-        return
+_worker_ds = None  # per-process cached dataset object
+
+
+def _patch_lenient_column_cast():
+    """Monkey-patch datasets to drop extra columns instead of raising CastError.
+
+    HF's schema casting rejects tables whose columns don't exactly match the
+    target schema. This is common with heterogeneous datasets (e.g. dolma3)
+    where some shards have extra metadata columns.  The patch drops extra
+    columns before delegating to the original cast, so the data is preserved.
+    """
     import datasets.table as dt
+
+    if getattr(dt.cast_table_to_schema, "_lenient_patched", False):
+        return
 
     _orig_schema = dt.cast_table_to_schema
 
@@ -53,6 +63,7 @@ def _worker_init(ignore_errors: bool):
             table = table.drop(list(extra))
         return _orig_schema(table, schema)
 
+    _lenient_schema._lenient_patched = True
     dt.cast_table_to_schema = _lenient_schema
 
     _orig_features = dt.cast_table_to_features
@@ -66,25 +77,33 @@ def _worker_init(ignore_errors: bool):
     dt.cast_table_to_features = _lenient_features
 
 
+def _worker_init(dataset: str, subset: str | None, ignore_errors: bool):
+    """Per-process initializer: load dataset once and patch column cast if needed."""
+    global _worker_ds
+
+    if ignore_errors:
+        _patch_lenient_column_cast()
+
+    from datasets import load_dataset
+
+    _worker_ds = load_dataset(dataset, subset, split="train", streaming=True)
+
+
 def _download_one(
-    dataset: str,
-    subset: str | None,
     shard_idx: int,
     out_path: str,
     columns: list[str] | None,
 ) -> tuple[int, int | None, str | None]:
     """Download a single upstream shard to a parquet file.
 
-    Each worker creates its own dataset connection (required for multiprocessing).
+    Uses the per-process cached dataset (set up in _worker_init).
     Returns (shard_idx, n_rows, error_msg). n_rows is None on failure.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
-    from datasets import load_dataset
 
     try:
-        ds = load_dataset(dataset, subset, split="train", streaming=True)
-        shard = ds.shard(num_shards=ds.n_shards, index=shard_idx)
+        shard = _worker_ds.shard(num_shards=_worker_ds.n_shards, index=shard_idx)
         if columns is not None:
             shard = shard.select_columns(columns)
         rows = [dict(sample) for sample in shard]
@@ -134,10 +153,8 @@ def _find_completed(output_dir: Path) -> set[int]:
     return {int(f.stem) for f in done_dir.glob("*.done")}
 
 
-def _mark_done(output_dir: Path, upstream_idx: int):
+def _mark_done(done_dir: Path, upstream_idx: int):
     """Write a marker file so we know this shard is complete on resume."""
-    done_dir = output_dir / ".done"
-    done_dir.mkdir(exist_ok=True)
     (done_dir / f"{upstream_idx}.done").touch()
 
 
@@ -177,7 +194,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.ignore_errors:
-        _worker_init(True)  # patch main process too (for manifest creation)
+        _patch_lenient_column_cast()
 
     from datasets import load_dataset
 
@@ -197,8 +214,13 @@ def main() -> None:
         print("All shards already downloaded.")
         return
 
+    done_dir = output_dir / ".done"
+    done_dir.mkdir(exist_ok=True)
+
+    # Count existing parquet files for sequential naming
+    next_part_idx = len(list(output_dir.glob("part_*.parquet")))
+
     errors: list[tuple[int, str]] = []
-    n_ok = len(completed)
     n_written_this_run = 0
     t_start = time.time()
     pbar = tqdm(total=len(shard_order), initial=len(completed), desc="Shards", unit="shard")
@@ -208,14 +230,14 @@ def main() -> None:
     with ProcessPoolExecutor(
         max_workers=args.workers,
         initializer=_worker_init,
-        initargs=(args.ignore_errors,),
+        initargs=(args.dataset, args.subset, args.ignore_errors),
     ) as pool:
         futures = {}
 
         def _submit_next():
             for i in candidates:
                 tmp_path = str(output_dir / f"_tmp_{i}.parquet")
-                fut = pool.submit(_download_one, args.dataset, args.subset, i, tmp_path, args.columns)
+                fut = pool.submit(_download_one, i, tmp_path, args.columns)
                 futures[fut] = (i, tmp_path)
                 return True
             return False
@@ -234,37 +256,30 @@ def main() -> None:
                 Path(tmp_path).unlink(missing_ok=True)
                 if args.ignore_errors:
                     tqdm.write(f"WARNING: shard {upstream_idx} — {err_msg}, skipping")
-                    _mark_done(output_dir, upstream_idx)  # don't retry bad shards
-                    n_ok += 1
+                    _mark_done(done_dir, upstream_idx)
                     pbar.update(1)
                     _submit_next()
                     continue
                 raise RuntimeError(f"Shard {upstream_idx}: {err_msg}")
 
-            Path(tmp_path).rename(output_dir / f"part_{n_ok:05d}.parquet")
-            _mark_done(output_dir, upstream_idx)
+            Path(tmp_path).rename(output_dir / f"part_{next_part_idx:05d}.parquet")
+            _mark_done(done_dir, upstream_idx)
             n_written_this_run += rows
-            n_ok += 1
+            next_part_idx += 1
             pbar.update(1)
             _submit_next()
 
     pbar.close()
     elapsed = time.time() - t_start
 
-    # Count total rows across all runs
-    import pyarrow.parquet as pq
-
-    total_rows = 0
-    for f in output_dir.glob("part_*.parquet"):
-        total_rows += pq.read_metadata(str(f)).num_rows
-
+    n_downloaded = len(completed) + len(remaining) - len(errors)
     metadata = {
         "source_dataset": args.dataset,
         "subset": args.subset,
-        "n_shards": n_ok,
+        "n_shards_downloaded": next_part_idx,
+        "n_shards_skipped": len(errors),
         "total_upstream_shards": n_total,
-        "total_rows": total_rows,
-        "shards_skipped": len(errors),
+        "total_rows": n_written_this_run,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "elapsed_s": round(elapsed, 1),
     }
@@ -277,7 +292,7 @@ def main() -> None:
 
     error_msg = f", {len(errors)} skipped" if errors else ""
     print(f"Done this run: {n_written_this_run:,} rows ({elapsed:.1f}s{error_msg})")
-    print(f"Total: {n_ok}/{len(shard_order)} shards, {total_rows:,} rows in {output_dir}")
+    print(f"Total: {next_part_idx} shards in {output_dir}")
 
 
 if __name__ == "__main__":
