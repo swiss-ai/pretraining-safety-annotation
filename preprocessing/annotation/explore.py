@@ -71,8 +71,8 @@ def main() -> None:
     id_col, text_col = args.id_column, args.text_column
     for f in data_files:
         src = pq.read_table(f, columns=[id_col, text_col])
-        for i in range(len(src)):
-            sample_id = str(src[id_col][i].as_py())
+        ids = [str(x) for x in src[id_col].to_pylist()]
+        for i, sample_id in enumerate(ids):
             if sample_id not in target_ids:
                 continue
             score, probs = ids_scores[sample_id]

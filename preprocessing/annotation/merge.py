@@ -70,9 +70,11 @@ def _read_task_annotations(task_dir: Path) -> tuple[dict, np.ndarray]:
     shard_files = []
     for rank in range(world_size):
         rank_shards = sorted(task_dir.glob(f"shard_{rank:04d}_part*.parquet"))
+        assert rank_shards, (
+            f"Task {task_dir.name}: no shards for rank {rank} "
+            f"(expected {world_size} ranks)"
+        )
         shard_files.extend(rank_shards)
-
-    assert shard_files, f"No annotation shards found in {task_dir}"
 
     scores = []
     for sf in shard_files:
