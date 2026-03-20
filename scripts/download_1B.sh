@@ -1,0 +1,1 @@
+uv run python preprocessing/download.py --dataset allenai/dolma3_mix-6T  --shuffle  --tokens 1000000000 --chars-per-token 4.068 --columns text id source --output-dir $SCRATCH/dolma3_mix-1B --shuffle-buffer 1000 --ignore-errors --max-tokens-per-sample 2048
