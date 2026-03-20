@@ -12,3 +12,6 @@ annotation_data/
 data/
 .claude/
 tmp_gold_output.txt
+core_*
+preprocessing/logs/
+preprocessing/annotation/logs/
