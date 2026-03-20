@@ -24,6 +24,10 @@ Usage::
     # Quick test on single GPU
     python -m preprocessing.annotation.annotate --max-samples 1000
 
+    # Process a slice of local parquet files (used by array_job.sh)
+    torchrun --nproc_per_node=4 -m preprocessing.annotation.annotate \
+        --data-dir $SCRATCH/dolma3_mix-1T --file-start 0 --file-count 471
+
     # Monitor progress from login node
     cat data/safety_annotations/all/progress.json
 """
@@ -121,6 +125,18 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Load from local parquet files instead of streaming from HF (e.g. $SCRATCH/finephrase/all)",
+    )
+    p.add_argument(
+        "--file-start",
+        type=int,
+        default=0,
+        help="Index of first parquet file to process (for array job slicing, default: 0)",
+    )
+    p.add_argument(
+        "--file-count",
+        type=int,
+        default=None,
+        help="Number of parquet files to process (default: all remaining from --file-start)",
     )
     return p.parse_args()
 
@@ -414,8 +430,13 @@ def main() -> None:
     if args.data_dir is not None:
         from glob import glob as _glob
 
-        data_files = sorted(_glob(f"{args.data_dir}/*.parquet"))
-        assert data_files, f"No parquet files found in {args.data_dir}"
+        data_files = sorted(_glob(f"{args.data_dir}/part_*.parquet"))
+        assert data_files, f"No part_*.parquet files found in {args.data_dir}"
+        if args.file_count is not None:
+            data_files = data_files[args.file_start : args.file_start + args.file_count]
+        elif args.file_start > 0:
+            data_files = data_files[args.file_start :]
+        assert data_files, f"No files in slice [file_start={args.file_start}, file_count={args.file_count}]"
         if is_main:
             print(f"Loading from local parquet: {args.data_dir} ({len(data_files)} files)")
         ds = load_dataset("parquet", data_files=data_files, split="train")
@@ -427,10 +448,13 @@ def main() -> None:
             streaming=True,
         )
 
+    n_input_rows = len(ds) if args.data_dir is not None else None
+
     per_gpu = None
     if args.max_samples is not None:
         ds = ds.take(args.max_samples)
         per_gpu = args.max_samples // world_size
+        n_input_rows = args.max_samples
     elif args.data_dir is not None:
         per_gpu = len(ds) // world_size
 
@@ -444,6 +468,18 @@ def main() -> None:
     if args.subset is not None:
         output_dir = output_dir / args.subset
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── task metadata (for merge.py) ────────────────────────────────
+    if is_main and args.data_dir is not None:
+        task_meta = {
+            "data_dir": args.data_dir,
+            "file_start": args.file_start,
+            "file_count": len(data_files),
+            "n_input_rows": n_input_rows,
+            "world_size": world_size,
+            "files": [Path(f).name for f in data_files],
+        }
+        (output_dir / "task_meta.json").write_text(json.dumps(task_meta, indent=2) + "\n")
 
     n_skip = 0
     if not args.no_resume:
@@ -541,6 +577,7 @@ def main() -> None:
     teardown_distributed()
 
     if is_main:
+        (output_dir / "DONE").touch()
         print(f"All done. Shards in {output_dir}/")
 
 
