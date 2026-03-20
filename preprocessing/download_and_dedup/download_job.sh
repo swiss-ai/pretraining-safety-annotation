@@ -12,8 +12,8 @@
 # Runs incrementally: re-submit after timeout and it resumes via manifest.
 #
 # Usage:
-#   sbatch preprocessing/download_job.sh          # default: 47142 shards
-#   sbatch preprocessing/download_job.sh 100      # small test
+#   sbatch preprocessing/download_and_dedup/download_job.sh          # default: all shards
+#   sbatch preprocessing/download_and_dedup/download_job.sh 100      # small test
 
 set -euo pipefail
 
@@ -23,16 +23,19 @@ if [ -n "${SLURM_JOB_ID:-}" ]; then
 fi
 echo "CPUs: $(nproc)"
 
-N_SHARDS="${1:-47142}"
+N_SHARDS_ARG=""
+if [ -n "${1:-}" ]; then
+    N_SHARDS_ARG="--n-shards $1"
+fi
 
-uv run python -m preprocessing.download \
+uv run python -m preprocessing.download_and_dedup.download \
     --dataset allenai/dolma3_mix-6T \
-    --n-shards "${N_SHARDS}" \
-    --output-dir "${SCRATCH}/dolma3_mix-1T" \
     --shuffle --seed 42 \
+    ${N_SHARDS_ARG} \
     --columns text id source \
     --ignore-errors \
     --workers 32 \
-    --overwrite
+    --output-dir $SCRATCH/dolma3_mix-dedup \
+    2>&1 | tee dolma3_mix-dedup_download.log
 
 echo "Finished — $(date)"

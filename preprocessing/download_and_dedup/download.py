@@ -1,28 +1,27 @@
 """Download upstream shards from a HuggingFace dataset to local parquet files.
 
 Selects N upstream shards (optionally shuffled for cross-source diversity),
-and writes one local parquet file per shard. Uses multiprocessing to bypass
-the GIL (JSON/zstd parsing is CPU-bound).
+deduplicates rows by ID within each shard, and writes one local parquet file
+per shard. Uses multiprocessing to bypass the GIL (JSON/zstd parsing is
+CPU-bound).
 
 Supports incremental resume: the shuffled shard plan is saved to a manifest
 file on first run. On restart, already-downloaded shards are skipped.
 
-Use estimate_chars_per_token.py to compute how many shards you need for a
-given token budget.
-
 Usage::
 
-    # Download 5000 shuffled shards from dolma3 (8 workers)
-    python -m preprocessing.download --dataset allenai/dolma3_mix-6T \
+    # Download all shards from dolma3 (8 workers)
+    python -m preprocessing.download_and_dedup.download --dataset allenai/dolma3_mix-6T \
+        --shuffle --seed 42 --columns text id source \
+        --ignore-errors --workers 8
+
+    # Download only 5000 shards
+    python -m preprocessing.download_and_dedup.download --dataset allenai/dolma3_mix-6T \
         --n-shards 5000 --shuffle --seed 42 --columns text id source \
         --ignore-errors --workers 8
 
-    # Small test download
-    python -m preprocessing.download --dataset allenai/dolma3_mix-6T \
-        --n-shards 10 --columns text id source --ignore-errors
-
     # Overwrite existing data (resets manifest)
-    python -m preprocessing.download --n-shards 5000 --overwrite
+    python -m preprocessing.download_and_dedup.download --n-shards 5000 --overwrite
 """
 
 import argparse
@@ -40,6 +39,7 @@ DEFAULT_DATASET = "HuggingFaceFW/finephrase"
 
 
 _worker_ds = None  # per-process cached dataset object
+_worker_min_chars = 0  # minimum text length to keep a row
 
 
 def _patch_lenient_column_cast():
@@ -77,9 +77,9 @@ def _patch_lenient_column_cast():
     dt.cast_table_to_features = _lenient_features
 
 
-def _worker_init(dataset: str, subset: str | None, ignore_errors: bool):
+def _worker_init(dataset: str, subset: str | None, ignore_errors: bool, min_chars: int):
     """Per-process initializer: load dataset once and patch column cast if needed."""
-    global _worker_ds
+    global _worker_ds, _worker_min_chars
 
     if ignore_errors:
         _patch_lenient_column_cast()
@@ -87,17 +87,22 @@ def _worker_init(dataset: str, subset: str | None, ignore_errors: bool):
     from datasets import load_dataset
 
     _worker_ds = load_dataset(dataset, subset, split="train", streaming=True)
+    _worker_min_chars = min_chars
 
 
 def _download_one(
     shard_idx: int,
     out_path: str,
     columns: list[str] | None,
-) -> tuple[int, int | None, str | None]:
+) -> dict:
     """Download a single upstream shard to a parquet file.
 
     Uses the per-process cached dataset (set up in _worker_init).
-    Returns (shard_idx, n_rows, error_msg). n_rows is None on failure.
+    Deduplicates rows by ID to work around upstream data duplication
+    in datasets like allenai/dolma3_mix-6T (see report_upstream_dupes.py).
+    Filters rows shorter than _worker_min_chars.
+
+    Returns dict with keys: shard_idx, n_out, n_raw, n_after_dedup, n_chars, error.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -108,11 +113,37 @@ def _download_one(
             shard = shard.select_columns(columns)
         rows = [dict(sample) for sample in shard]
     except Exception as e:
-        return shard_idx, None, f"{type(e).__name__}: {e}"
+        return {"shard_idx": shard_idx, "error": f"{type(e).__name__}: {e}"}
+
+    n_raw = len(rows)
+
+    if columns is None or "id" in columns:
+        seen: set[str] = set()
+        deduped = []
+        for row in rows:
+            rid = row["id"]
+            if rid not in seen:
+                seen.add(rid)
+                deduped.append(row)
+        rows = deduped
+
+    n_after_dedup = len(rows)
+
+    if _worker_min_chars > 0:
+        rows = [r for r in rows if len(r.get("text", "")) >= _worker_min_chars]
+
+    n_chars = sum(len(row.get("text", "")) for row in rows)
 
     table = pa.Table.from_pylist(rows)
     pq.write_table(table, out_path)
-    return shard_idx, len(rows), None
+    return {
+        "shard_idx": shard_idx,
+        "n_out": len(rows),
+        "n_raw": n_raw,
+        "n_after_dedup": n_after_dedup,
+        "n_chars": n_chars,
+        "error": None,
+    }
 
 
 def _load_or_create_manifest(output_dir: Path, args, n_total: int) -> list[int]:
@@ -166,13 +197,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dataset", type=str, default=DEFAULT_DATASET, help=f"HuggingFace dataset ID (default: {DEFAULT_DATASET})")
     p.add_argument("--subset", default=None, help="Dataset configuration/subset name")
     p.add_argument("--columns", nargs="+", default=None, help="Columns to keep (default: all)")
-    p.add_argument("--n-shards", type=int, required=True, help="Number of upstream shards to download")
+    p.add_argument("--n-shards", type=int, default=None, help="Number of upstream shards to download (default: all)")
     p.add_argument("--output-dir", type=str, default=None, help=f"Output directory (default: $SCRATCH/<dataset_name>)")
     p.add_argument("--overwrite", action="store_true", help="Remove existing data before downloading")
     p.add_argument("--shuffle", action="store_true", help="Shuffle upstream shard order for cross-source diversity")
     p.add_argument("--seed", type=int, default=None, help="Random seed for --shuffle")
     p.add_argument("--ignore-errors", action="store_true", help="Skip bad shards instead of crashing")
     p.add_argument("--workers", type=int, default=4, help="Parallel download workers (default: 4)")
+    p.add_argument("--min-chars", type=int, default=32, help="Drop rows with fewer than N characters (default: 32, 0 to disable)")
+    p.add_argument("--chars-per-token", type=float, default=4.0, help="Chars/token ratio for token estimate in summary (default: 4.0)")
     args = p.parse_args()
 
     if args.output_dir is None:
@@ -202,6 +235,9 @@ def main() -> None:
     n_total = ds.n_shards
     del ds
 
+    if args.n_shards is None:
+        args.n_shards = n_total
+
     # Load or create the shard plan (deterministic across restarts)
     shard_order = _load_or_create_manifest(output_dir, args, n_total)
 
@@ -222,6 +258,9 @@ def main() -> None:
 
     errors: list[tuple[int, str]] = []
     n_written_this_run = 0
+    n_raw_this_run = 0
+    n_after_dedup_this_run = 0
+    n_chars_this_run = 0
     t_start = time.time()
     pbar = tqdm(total=len(shard_order), initial=len(completed), desc="Shards", unit="shard")
 
@@ -230,7 +269,7 @@ def main() -> None:
     with ProcessPoolExecutor(
         max_workers=args.workers,
         initializer=_worker_init,
-        initargs=(args.dataset, args.subset, args.ignore_errors),
+        initargs=(args.dataset, args.subset, args.ignore_errors, args.min_chars),
     ) as pool:
         futures = {}
 
@@ -249,7 +288,8 @@ def main() -> None:
         while futures:
             done = next(as_completed(futures))
             upstream_idx, tmp_path = futures.pop(done)
-            _, rows, err_msg = done.result()
+            result = done.result()
+            err_msg = result["error"]
 
             if err_msg is not None:
                 errors.append((upstream_idx, err_msg))
@@ -264,7 +304,10 @@ def main() -> None:
 
             Path(tmp_path).rename(output_dir / f"part_{next_part_idx:05d}.parquet")
             _mark_done(done_dir, upstream_idx)
-            n_written_this_run += rows
+            n_written_this_run += result["n_out"]
+            n_raw_this_run += result["n_raw"]
+            n_after_dedup_this_run += result["n_after_dedup"]
+            n_chars_this_run += result["n_chars"]
             next_part_idx += 1
             pbar.update(1)
             _submit_next()
@@ -280,6 +323,12 @@ def main() -> None:
         "n_shards_skipped": len(errors),
         "total_upstream_shards": n_total,
         "total_rows": n_written_this_run,
+        "total_rows_before_dedup": n_raw_this_run,
+        "total_rows_after_dedup": n_after_dedup_this_run,
+        "min_chars": args.min_chars,
+        "total_chars": n_chars_this_run,
+        "chars_per_token": args.chars_per_token,
+        "estimated_tokens": round(n_chars_this_run / args.chars_per_token),
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "elapsed_s": round(elapsed, 1),
     }
@@ -290,9 +339,33 @@ def main() -> None:
         metadata["shuffle_seed"] = args.seed
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
-    error_msg = f", {len(errors)} skipped" if errors else ""
-    print(f"Done this run: {n_written_this_run:,} rows ({elapsed:.1f}s{error_msg})")
-    print(f"Total: {next_part_idx} shards in {output_dir}")
+    n_dupes = n_raw_this_run - n_after_dedup_this_run
+    n_short = n_after_dedup_this_run - n_written_this_run
+    dedup_pct = 100 * n_dupes / n_raw_this_run if n_raw_this_run > 0 else 0
+    short_pct = 100 * n_short / n_after_dedup_this_run if n_after_dedup_this_run > 0 else 0
+    est_tokens = n_chars_this_run / args.chars_per_token
+
+    def _fmt_tokens(n: float) -> str:
+        if n >= 1e12:
+            return f"{n / 1e12:.2f}T"
+        if n >= 1e9:
+            return f"{n / 1e9:.2f}B"
+        if n >= 1e6:
+            return f"{n / 1e6:.2f}M"
+        return f"{n:,.0f}"
+
+    print(f"\n{'='*60}")
+    print(f"  Dataset:      {args.dataset}")
+    print(f"  Output:       {output_dir}")
+    print(f"  Shards:       {next_part_idx:,} downloaded ({len(errors)} skipped)")
+    print(f"  Rows (raw):   {n_raw_this_run:,}")
+    print(f"  Dedup:        {n_dupes:,} removed ({dedup_pct:.1f}%)")
+    print(f"  Short (<{args.min_chars}): {n_short:,} removed ({short_pct:.1f}%)")
+    print(f"  Rows (out):   {n_written_this_run:,}")
+    print(f"  Characters:   {n_chars_this_run:,}")
+    print(f"  Est tokens:   {_fmt_tokens(est_tokens)} ({args.chars_per_token} chars/token)")
+    print(f"  Elapsed:      {elapsed:.1f}s")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
