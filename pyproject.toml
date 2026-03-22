@@ -13,6 +13,7 @@ dependencies = [
     "krippendorff>=0.8.2",
     "loguru>=0.7.3",
     "nicegui>=3.8.0",
+    "nvidia-ml-py>=13.595.45",
     "omegaconf>=2.3.0",
     "openai>=2.25.0",
     "pyfirecrest>=3.7.0",
