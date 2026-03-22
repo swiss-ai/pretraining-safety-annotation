@@ -520,7 +520,12 @@ def main() -> None:
     if n_skip > 0:
         if is_main:
             print(f"Resuming: skipping {n_skip:,} already-processed samples per GPU")
-        ds = ds.skip(n_skip)
+        if per_gpu is not None and n_skip >= per_gpu:
+            if is_main:
+                print(f"Rank already complete ({n_skip:,} >= {per_gpu:,}), skipping to teardown.")
+            ds = ds.take(0)
+        else:
+            ds = ds.skip(n_skip)
         if per_gpu is not None and is_main:
             remaining = max(0, per_gpu - n_skip)
             print(f"Will process {remaining:,} more samples per GPU (of {per_gpu:,} target)")
