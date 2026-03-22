@@ -1,13 +1,12 @@
-"""Tokenize dolma3 parquets into training-ready format.
+"""Tokenize dolma3 parquets into two Megatron-format training streams.
 
 Two pipelines controlled by ``--pipeline {compact,split,both}``:
 
 * **compact** — tokenize ``has_annotation=False`` samples into packed
-  2048-token windows via datatrove (ParquetReader → AnnotationFilter →
-  TruncatingDocumentTokenizer → Merge+Shuffle → ContextShuffle).
-* **split** — extract ``has_annotation=True`` samples, truncate text to
-  ``seq_length - reflection_budget`` tokens, and write as parquet for the
-  downstream reflection pipeline.
+  2048-token windows via datatrove, output as Megatron ``.bin`` + ``.idx``.
+* **split** — tokenize ``has_annotation=True`` samples, one per padded
+  2049-token window, output as Megatron ``.bin`` + ``.idx`` plus a sidecar
+  parquet with original text and token lengths for downstream reflection.
 
 Usage::
 
@@ -24,7 +23,6 @@ Usage::
 
 import argparse
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from tqdm import tqdm
@@ -43,16 +41,14 @@ def _count_parquets(data_dir: str) -> int:
 
 
 def run_compact(args: argparse.Namespace) -> None:
-    """Tokenize has_annotation=False samples into packed token windows."""
+    """Tokenize has_annotation=False samples into packed Megatron .bin + .idx."""
     from datatrove.executor.local import LocalPipelineExecutor
     from datatrove.pipeline.readers import ParquetReader
-    from datatrove.pipeline.tokens.context_shuffler import (
-        DocumentTokenizerContextShuffler,
-    )
     from datatrove.pipeline.tokens.merger import DocumentTokenizerMerger
 
     from preprocessing.tokenization.steps import (
         AnnotationFilter,
+        MegatronContextShuffler,
         TruncatingDocumentTokenizer,
     )
 
@@ -101,13 +97,14 @@ def run_compact(args: argparse.Namespace) -> None:
         depends=stage1,
     )
 
-    # Stage 3: context shuffle into (seq_length + 1)-token windows
+    # Stage 3: context shuffle → Megatron .bin + .idx
     stage3 = LocalPipelineExecutor(
         pipeline=[
-            DocumentTokenizerContextShuffler(
+            MegatronContextShuffler(
                 input_folder=str(out / "merged"),
-                output_folder=str(out / "final"),
+                output_folder=str(out / "megatron"),
                 window_size=args.seq_length + 1,
+                save_filename="compact",
             ),
         ],
         tasks=1,
@@ -116,7 +113,7 @@ def run_compact(args: argparse.Namespace) -> None:
     )
 
     stage3.run()
-    print(f"Compact done → {out / 'final'}")
+    print(f"Compact done → {out / 'megatron'}")
 
 
 # ---------------------------------------------------------------------------
@@ -124,88 +121,154 @@ def run_compact(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _split_one(input_path: str, output_path: str, max_tokens: int) -> dict:
-    """Filter has_annotation=True rows, truncate text, write parquet."""
-    import pyarrow as pa
+def _scan_annotated(data_dir: str) -> list[dict]:
+    """Scan input parquets and collect lightweight metadata for annotated rows.
+
+    Returns a list of ``{doc_id, file_path, row_index}`` dicts (text not loaded).
+    """
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
-    from pipeline.tokenizer import truncate_to_max_tokens
+    input_files = sorted(Path(data_dir).rglob("*.parquet"))
+    assert len(input_files) > 0, f"No parquet files found in {data_dir}"
 
-    table = pq.read_table(input_path)
-    n_in = len(table)
-
-    mask = pc.equal(table.column("has_annotation"), True)
-    filtered = table.filter(mask)
-    n_out = len(filtered)
-
-    if n_out == 0:
-        return {"input": input_path, "n_in": n_in, "n_out": 0}
-
-    texts = filtered.column("text").to_pylist()
-    truncated = [truncate_to_max_tokens(t, max_tokens) for t in texts]
-    filtered = filtered.set_column(
-        filtered.schema.get_field_index("text"),
-        "text",
-        pa.array(truncated),
-    )
-    pq.write_table(filtered, output_path)
-    return {"input": input_path, "n_in": n_in, "n_out": n_out}
+    entries: list[dict] = []
+    for fpath in tqdm(input_files, desc="Scanning annotated", unit="file"):
+        table = pq.read_table(fpath, columns=["id", "has_annotation"])
+        mask = pc.equal(table.column("has_annotation"), True)
+        ids = table.filter(mask).column("id").to_pylist()
+        indices = pc.indices_nonzero(mask).to_pylist()
+        for doc_id, row_idx in zip(ids, indices):
+            entries.append(
+                {"doc_id": doc_id, "file_path": str(fpath), "row_index": row_idx}
+            )
+    return entries
 
 
-def _find_completed(output_dir: Path) -> set[str]:
-    """Return stems of input files already processed (from .done markers)."""
-    done_dir = output_dir / ".done"
-    if not done_dir.exists():
-        return set()
-    return {f.stem for f in done_dir.glob("*.done")}
-
-
-def _mark_done(done_dir: Path, stem: str):
-    """Write a marker so this file is skipped on resume."""
-    (done_dir / f"{stem}.done").touch()
+# EOS token id for <|endoftext|> — matches the compact path's eos_token config.
+# NOTE: this is NOT tokenizer.eos_token_id (which is 2 for SmolLM2-Instruct).
+_EOS_TOKEN_ID = 0
 
 
 def run_split(args: argparse.Namespace) -> None:
-    """Extract has_annotation=True samples, truncate text, write parquet."""
+    """Tokenize has_annotation=True samples into padded Megatron .bin + .idx + sidecar."""
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datatrove.pipeline.tokens.megatron_tokenizer import MegatronTokenizedFile
+
+    from pipeline.tokenizer import _get_tokenizer
+
     out = Path(args.output_dir) / "annotated"
     out.mkdir(parents=True, exist_ok=True)
-    done_dir = out / ".done"
-    done_dir.mkdir(exist_ok=True)
 
-    max_tokens = args.seq_length - args.reflection_budget
-    input_files = sorted(Path(args.data_dir).rglob("*.parquet"))
-    assert len(input_files) > 0, f"No parquet files found in {args.data_dir}"
-
-    completed = _find_completed(out)
-    remaining = [(f, f.stem) for f in input_files if f.stem not in completed]
-    print(
-        f"Split: {len(input_files)} input files, {len(completed)} done, "
-        f"{len(remaining)} remaining, max_tokens={max_tokens}"
-    )
-
-    if not remaining:
-        print("All files already processed.")
+    bin_final = out / "annotated.bin"
+    if bin_final.exists():
+        print(f"Split: {bin_final} already exists, skipping.")
         return
 
-    total_in = 0
-    total_out = 0
+    max_tokens = args.seq_length - args.reflection_budget
+    window_size = args.seq_length + 1  # 2049
 
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {}
-        for input_file, stem in remaining:
-            output_file = str(out / f"{stem}.parquet")
-            fut = pool.submit(_split_one, str(input_file), output_file, max_tokens)
-            futures[fut] = stem
+    # --- Pass 1: collect lightweight metadata ---
+    entries = _scan_annotated(args.data_dir)
+    n_annotated = len(entries)
+    assert n_annotated > 0, "No has_annotation=True rows found"
+    print(f"Split: {n_annotated} annotated samples, max_tokens={max_tokens}")
 
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Split", unit="file"):
-            stem = futures[fut]
-            result = fut.result()
-            total_in += result["n_in"]
-            total_out += result["n_out"]
-            _mark_done(done_dir, stem)
+    # --- Shuffle with fixed seed ---
+    rng = np.random.default_rng(args.seed)
+    perm = rng.permutation(n_annotated)
+    entries = [entries[i] for i in perm]
 
-    print(f"Split done → {out} ({total_out:,} annotated rows from {total_in:,} total)")
+    # --- Pass 2: group by file, read text, build position→data mapping ---
+    # Group entries by file_path for efficient I/O
+    from collections import defaultdict
+    file_groups: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+    for pos, entry in enumerate(entries):
+        file_groups[entry["file_path"]].append(
+            (pos, entry["row_index"], entry["doc_id"])
+        )
+
+    # Allocate arrays indexed by shuffled position
+    texts: list[str | None] = [None] * n_annotated
+    doc_ids: list[str | None] = [None] * n_annotated
+
+    tokenizer = _get_tokenizer()
+
+    for fpath, group in tqdm(file_groups.items(), desc="Reading annotated texts", unit="file"):
+        table = pq.read_table(fpath, columns=["id", "text"])
+        row_indices = [row_idx for _, row_idx, _ in group]
+        subtable = table.take(row_indices)
+        file_texts = subtable.column("text").to_pylist()
+        for (pos, _, did), text in zip(group, file_texts):
+            texts[pos] = text
+            doc_ids[pos] = did
+
+    # --- Write .bin + .idx + sidecar + token_lengths ---
+    megatron_file = MegatronTokenizedFile(
+        output_folder=str(out),
+        filename="annotated_tmp",  # writes annotated_tmp.bin + .idx, renamed after
+        token_size=2,
+    )
+
+    token_lengths: list[int] = []
+    sidecar_doc_ids: list[str] = []
+    sidecar_texts: list[str] = []
+
+    for pos in tqdm(range(n_annotated), desc="Tokenizing + writing", unit="doc"):
+        text = texts[pos]
+        did = doc_ids[pos]
+        assert text is not None and did is not None
+
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        assert len(token_ids) > 0, f"Empty tokenization for doc {did}"
+
+        content = token_ids[:max_tokens]
+        actual_length = len(content)
+        padding_len = window_size - actual_length - 1  # -1 for EOS
+        assert padding_len >= 0, (
+            f"Content too long: {actual_length} + 1 EOS > {window_size}"
+        )
+        window = content + [_EOS_TOKEN_ID] * (1 + padding_len)
+        assert len(window) == window_size
+
+        megatron_file.write(window)
+        token_lengths.append(actual_length)
+        sidecar_doc_ids.append(did)
+        sidecar_texts.append(text)
+
+        # Free memory as we go
+        texts[pos] = None
+        doc_ids[pos] = None
+
+    megatron_file.close()
+
+    # Atomic rename
+    (out / "annotated_tmp.bin").rename(bin_final)
+    (out / "annotated_tmp.idx").rename(out / "annotated.idx")
+
+    # token_lengths.npy
+    np.save(str(out / "token_lengths.npy"), np.array(token_lengths, dtype=np.int32))
+
+    # sidecar.parquet
+    sidecar = pa.table({
+        "doc_id": pa.array(sidecar_doc_ids, type=pa.string()),
+        "text": pa.array(sidecar_texts, type=pa.string()),
+        "token_length": pa.array(token_lengths, type=pa.int32()),
+        "reflection": pa.array([""] * n_annotated, type=pa.string()),
+        "preflection": pa.array([""] * n_annotated, type=pa.string()),
+        "reflection_position": pa.array([0] * n_annotated, type=pa.int32()),
+    })
+    pq.write_table(sidecar, str(out / "sidecar.parquet"))
+
+    print(
+        f"Split done → {out}\n"
+        f"  {n_annotated:,} annotated windows in annotated.bin + annotated.idx\n"
+        f"  sidecar.parquet ({n_annotated:,} rows)\n"
+        f"  token_lengths.npy (min={min(token_lengths)}, max={max(token_lengths)})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +320,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=64,
         help="Parallel workers (default: 64)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="RNG seed for annotated shuffle (default: 42)",
     )
     p.add_argument(
         "--pipeline",
