@@ -24,6 +24,11 @@ EXTRA_ARGS="$*"
 echo "Job $SLURM_JOB_ID on $(hostname) — $(date)"
 echo "Extra args: ${EXTRA_ARGS}"
 
+# ── experiment tracking ──────────────────────────────────────────
+uv run python -m experiment_tracker start --stage annotation \
+    --config "{\"job\": \"annotation\", \"args\": \"${EXTRA_ARGS}\"}" \
+    --tags annotation
+
 NGPUS=$(nvidia-smi -L | wc -l)
 nvidia-smi -L
 echo "Launching torchrun with $NGPUS GPUs inside container"
@@ -45,5 +50,17 @@ srun --environment=/users/jminder/repositories/model-raising-data/preprocessing/
             -m preprocessing.annotation.annotate \
             ${EXTRA_ARGS}
     "
+
+# ── experiment tracking (finish) — pull GPU metrics if available ──
+ANNOT_DIR=$(echo "$EXTRA_ARGS" | grep -oP '(?<=--output-dir\s)\S+' || echo "data/safety_annotations")
+GPU_METRICS="{}"
+if [ -f "$ANNOT_DIR/gpu_monitor.json" ]; then
+    GPU_METRICS=$(python3 -c "
+import json
+m = json.load(open('$ANNOT_DIR/gpu_monitor.json'))
+print(json.dumps({k: m[k] for k in ['gpu_hours','wall_clock_s','avg_utilization_pct'] if k in m}))
+")
+fi
+uv run python -m experiment_tracker finish --stage annotation --metrics "$GPU_METRICS"
 
 echo "Finished — $(date)"

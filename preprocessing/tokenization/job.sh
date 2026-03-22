@@ -24,11 +24,20 @@ fi
 echo "CPUs: $(nproc)"
 
 EXTRA_ARGS="${*:-}"
+OUTPUT_DIR="${SCRATCH}/tokenized"
+
+# ── experiment tracking ──────────────────────────────────────────
+uv run python -m experiment_tracker start --stage tokenization \
+    --config "{\"job\": \"tokenization\", \"args\": \"${EXTRA_ARGS}\", \"output_dir\": \"$OUTPUT_DIR\"}" \
+    --tags tokenization
 
 uv run python -m preprocessing.tokenization.tokenize \
     --data-dir "${SCRATCH}/dolma3_mix-1T" \
     --output-dir "${SCRATCH}/tokenized" \
     --workers 64 \
     ${EXTRA_ARGS}
+
+# ── experiment tracking (finish) ─────────────────────────────────
+uv run python -m experiment_tracker finish --stage tokenization
 
 echo "Finished — $(date)"

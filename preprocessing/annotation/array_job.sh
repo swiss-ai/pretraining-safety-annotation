@@ -55,6 +55,11 @@ echo "Extra args: ${EXTRA_ARGS}"
 
 NGPUS=$(nvidia-smi -L | wc -l)
 nvidia-smi -L
+# ── experiment tracking ──────────────────────────────────────────
+uv run python -m experiment_tracker start --stage annotation \
+    --config "{\"job\": \"annotation-array\", \"task_id\": $SLURM_ARRAY_TASK_ID, \"file_start\": $FILE_START, \"file_count\": $FILE_COUNT, \"output_dir\": \"$TASK_OUTPUT_DIR\"}" \
+    --tags annotation,array
+
 echo "Launching torchrun with $NGPUS GPUs inside container"
 
 srun --environment=/users/jminder/repositories/model-raising-data/preprocessing/annotation/env.toml \
@@ -76,5 +81,16 @@ srun --environment=/users/jminder/repositories/model-raising-data/preprocessing/
             --file-count $FILE_COUNT \
             ${EXTRA_ARGS}
     "
+
+# ── experiment tracking (finish) ─────────────────────────────────
+GPU_METRICS="{}"
+if [ -f "$TASK_OUTPUT_DIR/gpu_monitor.json" ]; then
+    GPU_METRICS=$(python3 -c "
+import json
+m = json.load(open('$TASK_OUTPUT_DIR/gpu_monitor.json'))
+print(json.dumps({k: m[k] for k in ['gpu_hours','wall_clock_s','avg_utilization_pct'] if k in m}))
+")
+fi
+uv run python -m experiment_tracker finish --stage annotation --metrics "$GPU_METRICS"
 
 echo "Task $SLURM_ARRAY_TASK_ID finished — $(date)"

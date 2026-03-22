@@ -1,32 +1,38 @@
-# Tokenization Pipeline
+# Tokenization -- pack and split into training-ready format
 
-Tokenize downloaded dolma3 parquets into training-ready format.
+Tokenizes parquets into two streams: compact packed windows for training (.ds binary) and annotated text for the reflection pipeline (truncated parquet).
 
-## Assumptions
+## Pipeline position
 
-- **Input**: parquets in `$SCRATCH/dolma3_mix-1T/` with columns `text` (str), `id` (str), `source` (str), `has_annotation` (bool).
-- **`has_annotation=True`**: sample will receive a reflection — routed to the split path (text only, no tokenization yet).
-- **`has_annotation=False`**: standard training sample — tokenized and packed into binary windows.
-- **Tokenizer**: `HuggingFaceTB/SmolLM2-1.7B-Instruct`, EOS = `<|endoftext|>` (token id 0).
+```
+  subsample_and_stratify       tokenization
+$SCRATCH/dolma3_mix-1T/   --> tokenize.py --> $SCRATCH/tokenized/
+  (with has_annotation)       compact + split   compact/final/ + annotated/
+```
 
-## Sequence Lengths
+## Input
 
-| Path | Tokens | Rationale |
-|------|--------|-----------|
-| Compact | 2048 | Full training context window |
-| Annotated (split) | 1920 | 2048 − 128 reserved for future reflection |
+`$SCRATCH/dolma3_mix-1T/part_*.parquet` with columns:
+- `text` (str)
+- `id` (str)
+- `source` (str)
+- `has_annotation` (bool)
 
-## Output Formats
+Tokenizer: `HuggingFaceTB/SmolLM2-1.7B-Instruct`, EOS = `<|endoftext|>` (token id 0).
+
+## Output
 
 ```
 $SCRATCH/tokenized/
-├── compact/final/       # packed 2048-token windows (.ds files), training-ready
-├── annotated/           # text parquet for reflection pipeline (truncated to 1920 tokens)
+├── compact/final/    # packed 2048-token windows (.ds files), training-ready
+├── annotated/        # text parquet for reflection pipeline (truncated to 1920 tokens)
 └── logs/
 ```
 
-- **Compact**: datatrove `.ds` binary — 2049-token windows (2048 + 1 for next-token prediction).
-- **Annotated**: parquet with original columns, text truncated to 1920 tokens.
+| Path | Format | Sequence length | Routing |
+|------|--------|-----------------|---------|
+| `compact/final/` | datatrove `.ds` binary (2049 tokens: 2048 + 1 for NTP) | 2048 | `has_annotation=False` |
+| `annotated/` | parquet with original columns, text truncated | 1920 (2048 - 128 reserved for reflection) | `has_annotation=True` |
 
 ## Usage
 
@@ -46,35 +52,30 @@ uv run python -m preprocessing.tokenization.tokenize --pipeline split
 sbatch preprocessing/tokenization/job.sh
 ```
 
-## Resume
-
-- **Compact**: datatrove's `skip_completed=True` skips already-tokenized tasks.
-- **Split**: `.done` markers in `$OUT/annotated/.done/` track completed input files.
-
-Re-submit the job after timeout and it picks up where it left off.
-
-## Pre-scaling checklist
+### Pre-scaling checklist
 
 Run a small test on real data before launching the full job:
 
 ```bash
-# ~50 files, 4 workers — should finish in a few minutes
 uv run python -m preprocessing.tokenization.tokenize \
     --data-dir $SCRATCH/dolma3_mix-1T \
     --output-dir $SCRATCH/tokenized-test \
     --workers 4
 ```
 
-Things to verify:
-- [ ] `has_annotation` column exists and is bool in all input parquets (pipeline will assert-fail if missing)
-- [ ] Compact: spot-check that `.ds` windows decode to coherent text, EOS separates documents
-- [ ] Compact: confirm token count / window count is plausible (48 non-annotated docs with our test data → 8 windows)
-- [ ] Split: annotated parquets have truncated text ≤ 1920 tokens (decode a few and count)
-- [ ] Split: no rows with `has_annotation=False` leaked into the annotated output
-- [ ] Resume: kill and re-run — compact should skip completed tasks, split should skip done-marked files
-- [ ] Memory / disk: watch peak RSS and scratch usage — extrapolate to full dataset
+Verify:
+- `has_annotation` column exists and is bool in all input parquets
+- Compact: `.ds` windows decode to coherent text, EOS separates documents
+- Split: annotated parquets have truncated text <= 1920 tokens, no `has_annotation=False` rows leaked
+- Resume: kill and re-run -- compact skips completed tasks, split skips done-marked files
 
-## Dependencies
+## Experiment tracking
 
-- `datatrove` — tokenization, merging, context shuffling.
-- `pipeline.tokenizer` — `truncate_to_max_tokens` for the split path.
+`data/experiments/tokenization.jsonl` in the repo logs each run (committed to git).
+
+## Resume
+
+- **Compact**: datatrove's `skip_completed=True` skips already-tokenized tasks.
+- **Split**: `.done` markers in `$OUT/annotated/.done/` track completed input files.
+
+Re-submit the job after timeout and it picks up where it left off.

@@ -24,6 +24,12 @@ fi
 echo "CPUs: $(nproc)"
 
 N_SHARDS="${1:-47142}"
+OUTPUT_DIR="$SCRATCH/dolma3_mix-1T"
+
+# ── experiment tracking ──────────────────────────────────────────
+uv run python -m experiment_tracker start --stage download \
+    --config "{\"job\": \"download\", \"n_shards\": $N_SHARDS, \"dataset\": \"allenai/dolma3_mix-6T\", \"output_dir\": \"$OUTPUT_DIR\"}" \
+    --tags download
 
 uv run python -m preprocessing.download_and_dedup.download \
     --dataset allenai/dolma3_mix-6T \
@@ -34,5 +40,8 @@ uv run python -m preprocessing.download_and_dedup.download \
     --workers 32 \
     --output-dir $SCRATCH/dolma3_mix-1T \
     2>&1 | tee dolma3_mix-1T_download.log
+
+# ── experiment tracking (finish) ─────────────────────────────────
+uv run python -m experiment_tracker finish --stage download
 
 echo "Finished — $(date)"

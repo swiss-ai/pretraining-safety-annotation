@@ -1,19 +1,35 @@
-# Download & Dedup
+# Download & Dedup -- download HF dataset shards to local parquet
 
-Download upstream HuggingFace dataset shards to local parquet files, with short-text filtering.
+Downloads upstream shards via HuggingFace streaming, filters short texts, and writes local parquet files with incremental resume.
 
-## Note on upstream row repetition
+## Pipeline position
 
-Upstream `allenai/dolma3_mix-6T` (and its 7B variant) contain within-file row repetition: ~45% of JSONL.zst shards have rows repeated 2-7x consecutively. This is **intentional quality-aware upsampling** by the dataset authors — higher-quality documents are repeated more often. See `report_upstream_dupes.py` to inspect this on any specific shard.
+```
+  [HuggingFace]           download_and_dedup          annotation
+allenai/dolma3_mix-6T --> download.py          -->  annotate.py + merge.py --> ...
+```
 
-## Scripts
+## Input
 
-### `download.py` — Download
+Remote HuggingFace streaming dataset (`allenai/dolma3_mix-6T` by default).
 
-Downloads upstream shards via HuggingFace streaming, filters short texts, and writes local parquet files. Supports incremental resume via manifest + done markers.
+## Output
 
-**Cleaning steps (per shard):**
-1. Drop rows where `text` has fewer than `--min-chars` characters (default: 32)
+```
+$SCRATCH/dolma3_mix-1T/
+├── part_00000.parquet    # one per upstream shard (short texts filtered)
+├── part_00001.parquet
+├── ...
+├── manifest.json         # deterministic shard plan (survives restarts)
+├── metadata.json         # download stats (row counts, char counts, token estimate)
+└── .done/                # per-shard completion markers for resume
+```
+
+### Note on upstream row repetition
+
+Upstream `allenai/dolma3_mix-6T` contains within-file row repetition: ~45% of shards have rows repeated 2-7x consecutively. This is **intentional quality-aware upsampling** by the dataset authors -- higher-quality documents are repeated more often. The download stage does NOT deduplicate; dedup happens later in the annotation pipeline (`_compute_dedup_indices` in `annotate.py`). See `report_upstream_dupes.py` to inspect repetition statistics on any shard.
+
+## Usage
 
 ```bash
 # Download ~1T tokens worth of shuffled shards from dolma3
@@ -23,64 +39,29 @@ python -m preprocessing.download_and_dedup.download \
     --columns text id source \
     --ignore-errors --workers 8
 
-# Small test
+# Small test (10 shards)
 python -m preprocessing.download_and_dedup.download \
     --dataset allenai/dolma3_mix-6T \
     --n-shards 10 --columns text id source --ignore-errors
-```
 
-**Input:** Remote HuggingFace streaming dataset.
-
-**Output:**
-- `part_XXXXX.parquet` — one parquet file per upstream shard (short texts filtered)
-- `manifest.json` — deterministic shard plan (survives restarts)
-- `metadata.json` — download stats (row counts, char counts, token estimate)
-- `.done/` — per-shard completion markers for resume
-
-### `download_job.sh` — SLURM wrapper
-
-```bash
-sbatch preprocessing/download_and_dedup/download_job.sh        # default: 47142 shards (~1T tokens)
+# SLURM wrapper (default: 47142 shards)
+sbatch preprocessing/download_and_dedup/download_job.sh
 sbatch preprocessing/download_and_dedup/download_job.sh 100    # small test
 ```
 
-### `estimate_chars_per_token.py` — Token budget calculator
+### Scripts
 
-Samples local parquet data to estimate chars-per-token and compute how many shards are needed for a token budget.
+| Script | Purpose |
+|--------|---------|
+| `download.py` | Per-shard download with short-text filter and incremental resume |
+| `download_job.sh` | SLURM wrapper |
+| `estimate_chars_per_token.py` | Sample local parquets to estimate `--n-shards` for a token budget |
+| `report_upstream_dupes.py` | Download a specific upstream shard and report repetition statistics |
 
-```bash
-python -m preprocessing.download_and_dedup.estimate_chars_per_token \
-    --data-dir $SCRATCH/dolma3_mix-1T \
-    --tokenizer allenai/OLMo-2-0325-32B \
-    --target-tokens 1_000_000_000_000
-```
+## Experiment tracking
 
-### `report_upstream_dupes.py` — Inspect upstream row repetition
+`metadata.json` in the output directory records download stats (row counts, char counts, token estimates). `data/experiments/download.jsonl` in the repo logs each run (committed to git).
 
-Downloads a specific shard from HuggingFace and reports repetition statistics (for understanding the quality-aware upsampling).
+## Resume
 
-```bash
-python preprocessing/download_and_dedup/report_upstream_dupes.py \
-    --dataset allenai/dolma3_mix-6T \
-    --file data/common_crawl-crime_and_law-0019/shard_00000079.jsonl.zst
-```
-
-## Pipeline overview
-
-```
-estimate_chars_per_token.py
-  → compute --n-shards for token budget
-
-download.py (via download_job.sh)
-  → $SCRATCH/dataset_name/part_*.parquet
-
-preprocessing/annotation/annotate.py (via annotation/job.sh)
-  → data/safety_annotations/shard_*_part*.parquet
-  → columns: id, safety_score (int8, 0-5), safety_probs (list<float32>)
-
-preprocessing/annotation/analyze.py
-  → console summary of score distribution
-
-preprocessing/annotation/explore.py
-  → join annotations back to source texts for manual inspection
-```
+Incremental: the shuffled shard plan is saved to `manifest.json` on first run. On restart, shards with a `.done/` marker are skipped. Resubmit the same job and it picks up where it left off.

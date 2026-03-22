@@ -528,7 +528,7 @@ def main() -> None:
     progress_path = output_dir / "progress.json"
 
     # ── GPU monitor ─────────────────────────────────────────────────
-    from preprocessing.gpu_monitor import GPUMonitor
+    from gpu_monitor import GPUMonitor
 
     gpu_monitor = GPUMonitor(
         output_dir=output_dir, device=device, world_size=world_size, rank=rank,
