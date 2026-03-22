@@ -13,7 +13,7 @@ Usage::
 
     python -m preprocessing.annotation.merge \\
         --data-dir $SCRATCH/dolma3_mix-1T \\
-        --annotation-dir data/safety_annotations/dolma3 \\
+        --annotation-dir $SCRATCH/safety_annotations/dolma3 \\
         --output-dir $SCRATCH/dolma3_mix-1T_annotated \\
         --workers 8
 """

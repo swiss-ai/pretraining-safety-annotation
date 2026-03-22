@@ -12,8 +12,8 @@
 # Runs incrementally: re-submit after timeout and it resumes via manifest.
 #
 # Usage:
-#   sbatch preprocessing/download_and_dedup/download_job.sh          # default: 47142 shards (~1T tokens)
-#   sbatch preprocessing/download_and_dedup/download_job.sh 100      # small test
+#   sbatch preprocessing/download/download_job.sh          # default: 47142 shards (~1T tokens)
+#   sbatch preprocessing/download/download_job.sh 100      # small test
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ uv run python -m experiment_tracker start --stage download \
     --config "{\"job\": \"download\", \"n_shards\": $N_SHARDS, \"dataset\": \"allenai/dolma3_mix-6T\", \"output_dir\": \"$OUTPUT_DIR\"}" \
     --tags download
 
-uv run python -m preprocessing.download_and_dedup.download \
+uv run python -m preprocessing.download.download \
     --dataset allenai/dolma3_mix-6T \
     --n-shards "${N_SHARDS}" \
     --shuffle --seed 42 \

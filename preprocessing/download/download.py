@@ -10,17 +10,17 @@ file on first run. On restart, already-downloaded shards are skipped.
 Usage::
 
     # Download all shards from dolma3 (8 workers)
-    python -m preprocessing.download_and_dedup.download --dataset allenai/dolma3_mix-6T \
+    python -m preprocessing.download.download --dataset allenai/dolma3_mix-6T \
         --shuffle --seed 42 --columns text id source \
         --ignore-errors --workers 8
 
     # Download only 5000 shards
-    python -m preprocessing.download_and_dedup.download --dataset allenai/dolma3_mix-6T \
+    python -m preprocessing.download.download --dataset allenai/dolma3_mix-6T \
         --n-shards 5000 --shuffle --seed 42 --columns text id source \
         --ignore-errors --workers 8
 
     # Overwrite existing data (resets manifest)
-    python -m preprocessing.download_and_dedup.download --n-shards 5000 --overwrite
+    python -m preprocessing.download.download --n-shards 5000 --overwrite
 """
 
 import argparse

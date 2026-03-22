@@ -13,6 +13,7 @@ Usage::
 """
 
 import argparse
+import os
 import random
 from glob import glob as _glob
 from pathlib import Path
@@ -32,7 +33,11 @@ LABELS = {
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Explore high-severity safety annotations.")
-    p.add_argument("--annotations-dir", default="data/safety_annotations/all", help="Dir with annotation shard parquet files")
+    scratch = os.environ.get(
+        "SCRATCH",
+        f"/iopsstor/scratch/cscs/{os.environ.get('USER', 'unknown')}",
+    )
+    p.add_argument("--annotations-dir", default=f"{scratch}/safety_annotations/all", help="Dir with annotation shard parquet files")
     p.add_argument("--min-score", type=int, default=4, help="Minimum score to show (default: 4)")
     p.add_argument("-n", type=int, default=None, help="Sample N items randomly (default: show all)")
     p.add_argument("--max-chars", type=int, default=1000, help="Truncate text display (0=no limit)")

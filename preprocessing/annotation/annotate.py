@@ -29,7 +29,7 @@ Usage::
         --data-dir $SCRATCH/dolma3_mix-1T --file-start 0 --file-count 471
 
     # Monitor progress from login node
-    cat data/safety_annotations/all/progress.json
+    cat $SCRATCH/safety_annotations/all/progress.json
 """
 
 import argparse
@@ -91,10 +91,14 @@ def parse_args() -> argparse.Namespace:
         help="Limit total samples across all GPUs (default: full dataset)",
     )
     p.add_argument("--batch-size", type=int, default=64)
+    scratch = os.environ.get(
+        "SCRATCH",
+        f"/iopsstor/scratch/cscs/{os.environ.get('USER', 'unknown')}",
+    )
     p.add_argument(
         "--output-dir",
         type=str,
-        default="data/safety_annotations",
+        default=f"{scratch}/safety_annotations",
     )
     p.add_argument("--model-name", type=str, default=MODEL_ID)
     p.add_argument(
@@ -384,7 +388,7 @@ def write_progress(
 ) -> None:
     """Write a JSON progress file (rank 0 only) for easy monitoring.
 
-    Check with: cat data/safety_annotations/<subset>/progress.json
+    Check with: cat $SCRATCH/safety_annotations/<subset>/progress.json
     """
     elapsed = time.time() - t_start
     rate = n_this_run / elapsed if elapsed > 0 else 0.0

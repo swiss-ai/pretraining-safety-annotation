@@ -1,11 +1,11 @@
-# Download & Dedup -- download HF dataset shards to local parquet
+# Download -- download HF dataset shards to local parquet
 
 Downloads upstream shards via HuggingFace streaming, filters short texts, and writes local parquet files with incremental resume.
 
 ## Pipeline position
 
 ```
-  [HuggingFace]           download_and_dedup          annotation
+  [HuggingFace]           download          annotation
 allenai/dolma3_mix-6T --> download.py          -->  annotate.py + merge.py --> ...
 ```
 
@@ -33,20 +33,20 @@ Upstream `allenai/dolma3_mix-6T` contains within-file row repetition: ~45% of sh
 
 ```bash
 # Download ~1T tokens worth of shuffled shards from dolma3
-python -m preprocessing.download_and_dedup.download \
+python -m preprocessing.download.download \
     --dataset allenai/dolma3_mix-6T \
     --n-shards 47142 --shuffle --seed 42 \
     --columns text id source \
     --ignore-errors --workers 8
 
 # Small test (10 shards)
-python -m preprocessing.download_and_dedup.download \
+python -m preprocessing.download.download \
     --dataset allenai/dolma3_mix-6T \
     --n-shards 10 --columns text id source --ignore-errors
 
 # SLURM wrapper (default: 47142 shards)
-sbatch preprocessing/download_and_dedup/download_job.sh
-sbatch preprocessing/download_and_dedup/download_job.sh 100    # small test
+sbatch preprocessing/download/download_job.sh
+sbatch preprocessing/download/download_job.sh 100    # small test
 ```
 
 ### Scripts

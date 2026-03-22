@@ -16,7 +16,7 @@ if Path(OUT_DIR).exists():
 # Download 10 shards with 4 workers (enough to trigger the bug if present)
 result = subprocess.run(
     [
-        sys.executable, "-m", "preprocessing.download_and_dedup.download",
+        sys.executable, "-m", "preprocessing.download.download",
         "--dataset", "allenai/dolma3_mix-6T",
         "--n-shards", "10",
         "--output-dir", OUT_DIR,

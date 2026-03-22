@@ -48,7 +48,7 @@ configs/
 └── config.yaml                # global config (phase1 + phase2 + dashboard)
 
 preprocessing/
-├── download_and_dedup/        # download HF shards to local parquet with dedup
+├── download/        # download HF shards to local parquet with dedup
 │   ├── download.py            # per-shard download, dedup by ID, short-text filter
 │   └── download_job.sh        # SLURM wrapper
 ├── annotation/                # safety score annotation (0–5 scale)

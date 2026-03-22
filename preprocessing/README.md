@@ -3,7 +3,7 @@
 ## Pipeline position
 
 ```
-download_and_dedup    annotation           subsample_and_stratify    tokenization
+download    annotation           subsample_and_stratify    tokenization
   download.py    -->  annotate.py + merge  -->  subsample.py       -->  tokenize.py
   (HF -> parquet)     (safety scores)           (budget + stratify)     (pack + split)
 ```
@@ -34,19 +34,22 @@ data/
 │   ├── download.jsonl
 │   ├── annotation.jsonl
 │   └── tokenization.jsonl
-└── safety_annotations/               # annotation shards (intermediate)
-    ├── task_0000/
-    │   ├── shard_*_part*.parquet
-    │   ├── task_meta.json
-    │   ├── gpu_monitor.json
-    │   └── DONE
-    └── ...
+
+$SCRATCH/
+├── ...
+├── safety_annotations/               # annotation shards (intermediate)
+│   ├── task_0000/
+│   │   ├── shard_*_part*.parquet
+│   │   ├── task_meta.json
+│   │   ├── gpu_monitor.json
+│   │   └── DONE
+│   └── ...
 ```
 
 ### Path conventions
 
-- `$SCRATCH/` -- large data (parquets, tokenized binaries)
-- `data/` -- metadata, intermediate annotation shards
+- `$SCRATCH/` -- large data (parquets, tokenized binaries, annotation shards)
+- `data/` -- metadata, experiment logs
 
 ## Usage
 
@@ -54,7 +57,7 @@ Each module is run independently. See submodule READMEs:
 
 | Module | Description |
 |--------|-------------|
-| `download_and_dedup/` | Download HF shards to local parquet with short-text filter |
+| `download/` | Download HF shards to local parquet with short-text filter |
 | `annotation/` | Safety-score classification (multi-GPU) + id-based merge |
 | `subsample_and_stratify/` | Token-budgeted stratified subsampling with annotation marking |
 | `tokenization/` | Compact packed windows (.ds) + annotated text split (parquet) |

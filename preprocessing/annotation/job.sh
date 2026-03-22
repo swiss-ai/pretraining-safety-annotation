@@ -52,7 +52,7 @@ srun --environment=/users/jminder/repositories/model-raising-data/preprocessing/
     "
 
 # ── experiment tracking (finish) — pull GPU metrics if available ──
-ANNOT_DIR=$(echo "$EXTRA_ARGS" | grep -oP '(?<=--output-dir\s)\S+' || echo "data/safety_annotations")
+ANNOT_DIR=$(echo "$EXTRA_ARGS" | grep -oP '(?<=--output-dir\s)\S+' || echo "$SCRATCH/safety_annotations")
 GPU_METRICS="{}"
 if [ -f "$ANNOT_DIR/gpu_monitor.json" ]; then
     GPU_METRICS=$(python3 -c "

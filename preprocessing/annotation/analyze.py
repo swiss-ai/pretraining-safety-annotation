@@ -47,4 +47,9 @@ def analyze(data_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    analyze(sys.argv[1] if len(sys.argv) > 1 else "data/safety_annotations/all")
+    import os
+    scratch = os.environ.get(
+        "SCRATCH",
+        f"/iopsstor/scratch/cscs/{os.environ.get('USER', 'unknown')}",
+    )
+    analyze(sys.argv[1] if len(sys.argv) > 1 else f"{scratch}/safety_annotations/all")

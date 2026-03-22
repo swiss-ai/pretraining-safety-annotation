@@ -5,7 +5,7 @@ Annotates text datasets with safety scores using [locuslab/safety-classifier_gte
 ## Pipeline position
 
 ```
-  download_and_dedup          annotation                    subsample_and_stratify
+  download          annotation                    subsample_and_stratify
 $SCRATCH/dolma3_mix-1T/ --> annotate.py --> merge.py -->  subsample.py --> ...
                             (per-task,     (id-based
                              4x GH200)      join)
@@ -26,7 +26,7 @@ Alternatively, `annotate.py` can stream directly from HuggingFace (`--dataset`).
 Per-task directories under `--output-dir`:
 
 ```
-data/safety_annotations/dolma3/
+$SCRATCH/safety_annotations/dolma3/
 ├── task_0000/
 │   ├── shard_0000_part0000.parquet   # rank 0 output
 │   ├── shard_0001_part0000.parquet   # rank 1 output
@@ -79,16 +79,16 @@ TOTAL=$(ls $SCRATCH/dolma3_mix-1T/part_*.parquet | wc -l)
 
 # 2. Submit 100 tasks, max 20 concurrent
 sbatch --array=0-99%20 preprocessing/annotation/array_job.sh \
-    $SCRATCH/dolma3_mix-1T data/safety_annotations/dolma3 100 $TOTAL
+    $SCRATCH/dolma3_mix-1T $SCRATCH/safety_annotations/dolma3 100 $TOTAL
 
 # 3. Resubmit failed tasks (annotate.py resumes automatically)
 sbatch --array=5,23,71%20 preprocessing/annotation/array_job.sh \
-    $SCRATCH/dolma3_mix-1T data/safety_annotations/dolma3 100 $TOTAL
+    $SCRATCH/dolma3_mix-1T $SCRATCH/safety_annotations/dolma3 100 $TOTAL
 
 # 4. Merge annotations into output parquet
 python -m preprocessing.annotation.merge \
     --data-dir $SCRATCH/dolma3_mix-1T \
-    --annotation-dir data/safety_annotations/dolma3 \
+    --annotation-dir $SCRATCH/safety_annotations/dolma3 \
     --output-dir $SCRATCH/dolma3_mix-1T_annotated \
     --workers 8
 ```
@@ -112,16 +112,16 @@ Before scaling to the full dataset, validate end-to-end on a small dataset:
 # 1. Run a 2-task array with --max-samples 1000 per task
 TOTAL=$(ls $SCRATCH/dolma3_mix-1B/part_*.parquet | wc -l)
 sbatch --array=0-1 preprocessing/annotation/array_job.sh \
-    $SCRATCH/dolma3_mix-1B data/safety_annotations/dolma3_test 2 $TOTAL \
+    $SCRATCH/dolma3_mix-1B $SCRATCH/safety_annotations/dolma3_test 2 $TOTAL \
     --max-samples 1000
 
 # 2. Check both tasks completed
-ls data/safety_annotations/dolma3_test/task_*/DONE
+ls $SCRATCH/safety_annotations/dolma3_test/task_*/DONE
 
 # 3. Run merge
 python -m preprocessing.annotation.merge \
     --data-dir $SCRATCH/dolma3_mix-1B \
-    --annotation-dir data/safety_annotations/dolma3_test \
+    --annotation-dir $SCRATCH/safety_annotations/dolma3_test \
     --output-dir $SCRATCH/dolma3_mix-1B_annotated_test \
     --workers 4
 

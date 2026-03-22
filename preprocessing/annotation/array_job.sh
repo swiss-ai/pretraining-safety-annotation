@@ -14,11 +14,11 @@
 # Usage:
 #   TOTAL=$(ls $SCRATCH/dolma3_mix-1T/part_*.parquet | wc -l)
 #   sbatch --array=0-99%20 preprocessing/annotation/array_job.sh \
-#       $SCRATCH/dolma3_mix-1T data/safety_annotations/dolma3 100 $TOTAL
+#       $SCRATCH/dolma3_mix-1T $SCRATCH/safety_annotations/dolma3 100 $TOTAL
 #
 #   # Resubmit failed tasks (same args — resume handles partial work)
 #   sbatch --array=5,23,71%20 preprocessing/annotation/array_job.sh \
-#       $SCRATCH/dolma3_mix-1T data/safety_annotations/dolma3 100 $TOTAL
+#       $SCRATCH/dolma3_mix-1T $SCRATCH/safety_annotations/dolma3 100 $TOTAL
 
 set -euo pipefail
 

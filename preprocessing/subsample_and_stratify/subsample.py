@@ -13,13 +13,13 @@ Usage::
 
     python -m preprocessing.subsample_and_stratify.subsample \
         --source-dir $SCRATCH/dolma3_mix-1T \
-        --annotations-dir data/safety_annotations/all \
+        --annotations-dir $SCRATCH/safety_annotations/all \
         --target-tokens 500_000_000_000
 
     # Smaller test run
     python -m preprocessing.subsample_and_stratify.subsample \
         --source-dir $SCRATCH/dolma3_mix-10m \
-        --annotations-dir data/safety_annotations/test \
+        --annotations-dir $SCRATCH/safety_annotations/test \
         --target-tokens 1_000_000 --output-dir $SCRATCH/subsampled_test
 """
 
