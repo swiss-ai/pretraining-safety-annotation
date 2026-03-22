@@ -34,7 +34,7 @@ srun --environment=/users/jminder/repositories/model-raising-data/preprocessing/
         echo 'Inside container on \$(hostname)'
         python -c 'import torch; print(\"torch\", torch.__version__, \"cuda:\", torch.cuda.is_available(), \"nccl:\", torch.distributed.is_nccl_available())'
         # Install missing deps into container python (cached after first run)
-        pip install --quiet datasets transformers pyarrow tqdm
+        pip install --quiet datasets transformers pyarrow tqdm nvidia-ml-py
         # Use container's torchrun (has NCCL), set PYTHONPATH so it finds our code
         export PYTHONPATH=/users/jminder/repositories/model-raising-data:\${PYTHONPATH:-}
         torchrun \

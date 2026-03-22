@@ -527,6 +527,14 @@ def main() -> None:
     writer = pq.ParquetWriter(str(output_path), PARQUET_SCHEMA)
     progress_path = output_dir / "progress.json"
 
+    # ── GPU monitor ─────────────────────────────────────────────────
+    from preprocessing.gpu_monitor import GPUMonitor
+
+    gpu_monitor = GPUMonitor(
+        output_dir=output_dir, device=device, world_size=world_size, rank=rank,
+    )
+    gpu_monitor.__enter__()
+
     # ── processing loop ──────────────────────────────────────────────
     pool_size = args.batch_size * 128
     token_budget = args.batch_size * 512
@@ -601,6 +609,8 @@ def main() -> None:
         print(f"Rank 0: wrote {n_written:,} new rows (total for this GPU: {total_gpu:,})")
         print(f"Padding overhead: {overhead:.1f}% ({total_actual_tokens:,} actual / {total_padded_tokens:,} padded tokens)")
         print(f"Output: {output_path}")
+
+    gpu_monitor.__exit__(None, None, None)
 
     teardown_distributed()
 
