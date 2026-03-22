@@ -292,9 +292,8 @@ def _prepare_pool(
         longest_tokens = token_lengths[order[end - 1]]
         bucket = _next_bucket(longest_tokens)
         bs = max(1, min(end - pos, token_budget // bucket))
-        # Recompute bucket from the actual batch boundary (shorter sequences)
+        # Tighten bucket to actual longest in batch (bs may be < full window)
         bucket = _next_bucket(token_lengths[order[pos + bs - 1]])
-        bs = max(1, min(end - pos, token_budget // bucket))
         idx = order[pos : pos + bs]
         pos += bs
 
@@ -466,7 +465,8 @@ def main() -> None:
         assert data_files, f"No files in slice [file_start={args.file_start}, file_count={args.file_count}]"
         if is_main:
             print(f"Loading from local parquet: {args.data_dir} ({len(data_files)} files)")
-        ds = load_dataset("parquet", data_files=data_files, split="train")
+        ds = load_dataset("parquet", data_files=data_files, split="train",
+                          columns=[args.id_column, args.text_column])
         dedup_indices, n_original = _compute_dedup_indices(data_files, args.id_column)
         ds = ds.select(dedup_indices)
         if is_main and n_original > 0:
