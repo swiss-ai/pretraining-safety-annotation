@@ -92,6 +92,9 @@ bash preprocessing/annotation/status.sh
 
 # 4. Merge annotations into output parquet (on a compute node)
 sbatch preprocessing/annotation/merge_job.sh
+
+# 5. Upload deduplicated annotations to HuggingFace Hub
+sbatch preprocessing/annotation/upload_job.sh
 ```
 
 ### Scripts
@@ -103,6 +106,8 @@ sbatch preprocessing/annotation/merge_job.sh
 | `job.sh` | Single-node SLURM wrapper |
 | `merge.py` | Id-based join of annotation shards back onto original parquets |
 | `merge_job.sh` | SLURM wrapper for merge (64 workers on GH200 node, ~244 CPUs) |
+| `upload_annotations.py` | Consolidate + deduplicate annotations and upload to HF Hub |
+| `upload_job.sh` | SLURM wrapper for upload (~34GB RAM for 130M-entry dict) |
 | `status.sh` | Live progress dashboard for running annotation jobs |
 | `verify_scores.py` | Re-classify samples on GPU to verify pipeline correctness |
 | `analyze.py` | Console summary of score distribution |
