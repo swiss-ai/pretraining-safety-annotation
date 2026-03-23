@@ -17,10 +17,10 @@ import pyarrow.parquet as pq
 TEST_DIR = Path.home() / "tmp" / "test_subsample"
 
 
-def _setup_test_data(test_dir: Path) -> tuple[Path, Path]:
-    """Create synthetic source and annotation parquet files.
+def _setup_test_data(test_dir: Path) -> Path:
+    """Create synthetic source parquet files with safety_score included.
 
-    Returns (source_dir, annotations_dir).
+    Returns source_dir.
 
     Layout:
     - 2 source files with 500 rows each (1000 total)
@@ -29,9 +29,7 @@ def _setup_test_data(test_dir: Path) -> tuple[Path, Path]:
     - Score distribution: 50 bad (score 4-5), 950 good (score 0-3)
     """
     source_dir = test_dir / "source"
-    annotations_dir = test_dir / "annotations"
     source_dir.mkdir(parents=True, exist_ok=True)
-    annotations_dir.mkdir(parents=True, exist_ok=True)
 
     ids_all = []
     texts_all = []
@@ -50,7 +48,6 @@ def _setup_test_data(test_dir: Path) -> tuple[Path, Path]:
         else:
             scores_all.append(i % 4)  # 0, 1, 2, 3
 
-    # Write 2 source files (500 rows each)
     for part_idx in range(2):
         start = part_idx * 500
         end = start + 500
@@ -58,26 +55,19 @@ def _setup_test_data(test_dir: Path) -> tuple[Path, Path]:
             "id": ids_all[start:end],
             "text": texts_all[start:end],
             "source": ["test"] * 500,
+            "safety_score": pa.array(scores_all[start:end], type=pa.int8()),
         })
         pq.write_table(table, source_dir / f"part_{part_idx:05d}.parquet")
 
-    # Write 1 annotation shard
-    ann_table = pa.table({
-        "id": ids_all,
-        "safety_score": pa.array(scores_all, type=pa.int8()),
-    })
-    pq.write_table(ann_table, annotations_dir / "shard_00000.parquet")
-
-    return source_dir, annotations_dir
+    return source_dir
 
 
-def _run_subsample(source_dir: Path, annotations_dir: Path, output_dir: Path) -> str:
+def _run_subsample(source_dir: Path, output_dir: Path) -> str:
     """Run the subsample script and return stdout."""
     result = subprocess.run(
         [
             sys.executable, "-m", "preprocessing.subsample_and_stratify.subsample",
             "--source-dir", str(source_dir),
-            "--annotations-dir", str(annotations_dir),
             "--output-dir", str(output_dir),
             "--target-tokens", "10000",
             "--bad-fraction", "0.025",
@@ -111,6 +101,7 @@ def _verify_output(output_dir: Path) -> None:
     # Check schema has required columns
     col_names = combined.column_names
     assert "safety_score" in col_names, f"Missing safety_score column. Columns: {col_names}"
+    assert col_names.count("safety_score") == 1, f"Duplicate safety_score column. Columns: {col_names}"
     assert "has_annotation" in col_names, f"Missing has_annotation column. Columns: {col_names}"
     assert "id" in col_names, f"Missing id column. Columns: {col_names}"
     assert "text" in col_names, f"Missing text column. Columns: {col_names}"
@@ -184,9 +175,9 @@ def main() -> None:
     if TEST_DIR.exists():
         shutil.rmtree(TEST_DIR)
 
-    source_dir, annotations_dir = _setup_test_data(TEST_DIR)
+    source_dir = _setup_test_data(TEST_DIR)
     output_dir = TEST_DIR / "output"
-    _run_subsample(source_dir, annotations_dir, output_dir)
+    _run_subsample(source_dir, output_dir)
     _verify_output(output_dir)
 
     # Cleanup

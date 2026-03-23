@@ -12,14 +12,12 @@ Two-pass algorithm:
 Usage::
 
     python -m preprocessing.subsample_and_stratify.subsample \
-        --source-dir $SCRATCH/dolma3_mix-1T \
-        --annotations-dir $SCRATCH/safety_annotations/all \
+        --source-dir $SCRATCH/dolma3_mix-1T_annotated \
         --target-tokens 500_000_000_000
 
     # Smaller test run
     python -m preprocessing.subsample_and_stratify.subsample \
-        --source-dir $SCRATCH/dolma3_mix-10m \
-        --annotations-dir $SCRATCH/safety_annotations/test \
+        --source-dir $SCRATCH/dolma3_mix-10m_annotated \
         --target-tokens 1_000_000 --output-dir $SCRATCH/subsampled_test
 """
 
@@ -37,30 +35,16 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 
 
-def load_annotations(annotations_dir: Path) -> dict[str, int]:
-    """Load all annotation shards into a dict mapping id → safety_score."""
-    files = sorted(annotations_dir.glob("shard_*.parquet"))
-    assert files, f"No shard_*.parquet files found in {annotations_dir}"
-    print(f"Loading annotations from {len(files)} shard files...")
-    annotations: dict[str, int] = {}
-    for f in tqdm(files, desc="Annotation shards"):
-        table = pq.read_table(f, columns=["id", "safety_score"])
-        ids = table.column("id").to_pylist()
-        scores = table.column("safety_score").to_pylist()
-        for doc_id, score in zip(ids, scores):
-            annotations[doc_id] = score
-    print(f"Loaded {len(annotations):,} annotations")
-    return annotations
-
-
 def scan_source(
     source_dir: Path,
-    annotations: dict[str, int],
     id_column: str,
     text_column: str,
     chars_per_token: float,
 ) -> pa.Table:
     """Scan source parquet files and build a lightweight index table.
+
+    Source files must contain ``id``, ``text``, and ``safety_score`` columns
+    (produced by the annotation merge step).
 
     Returns a PyArrow table with columns:
     ``(id: string, est_tokens: float32, safety_score: int8, file_idx: int32)``.
@@ -74,33 +58,19 @@ def scan_source(
     all_scores: list[pa.Array] = []
     all_file_idx: list[pa.Array] = []
 
-    n_missing = 0
     for file_idx, fpath in enumerate(tqdm(source_files, desc="Source files")):
-        table = pq.read_table(fpath, columns=[id_column, text_column])
+        table = pq.read_table(fpath, columns=[id_column, text_column, "safety_score"])
         ids = table.column(id_column)
         text = table.column(text_column)
+        scores = table.column("safety_score").cast(pa.int8())
 
-        # est_tokens = utf8_length(text) / chars_per_token
         lengths = pc.utf8_length(text).cast(pa.float32())
         est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float32()))
 
-        # Look up safety scores (batch convert to avoid per-row .as_py())
-        id_list = ids.to_pylist()
-        scores = []
-        for doc_id in id_list:
-            score = annotations.get(doc_id)
-            if score is None:
-                n_missing += 1
-            scores.append(score if score is not None else -1)
-
         all_ids.append(ids)
         all_tokens.append(est_tokens)
-        all_scores.append(pa.array(scores, type=pa.int8()))
+        all_scores.append(scores)
         all_file_idx.append(pa.array([file_idx] * len(table), type=pa.int32()))
-
-    assert n_missing == 0, (
-        f"{n_missing:,} source rows have no annotation — all rows must be annotated"
-    )
 
     # Column arrays from pq.read_table are ChunkedArrays; flatten before concat
     def _concat(arrays: list[pa.Array | pa.ChunkedArray]) -> pa.Array:
@@ -282,20 +252,16 @@ def write_output(
     """Re-read source files for selected rows and write output parquet files.
 
     Groups selected rows by file_idx to minimize source file reads.
-    Adds ``safety_score`` (int8) and ``has_annotation`` (bool) columns
-    from the selected table's metadata.
+    Source files already contain ``safety_score``; this function adds
+    the ``has_annotation`` (bool) column.
     """
     source_files = sorted(source_dir.glob("part_*.parquet"))
 
-    # Build lookups from the selected table (already carries scores + annotations)
     id_col = selected.column("id").to_pylist()
     file_idx_col = selected.column("file_idx").to_pylist()
     annotation_col = selected.column("has_annotation").to_pylist()
-    score_col = selected.column("safety_score").to_pylist()
 
-    id_to_meta: dict[str, tuple[int, bool]] = {}
-    for doc_id, score, has_ann in zip(id_col, score_col, annotation_col):
-        id_to_meta[doc_id] = (score, has_ann)
+    id_to_annotation: dict[str, bool] = dict(zip(id_col, annotation_col))
 
     # Group by file_idx
     files_needed: dict[int, set[str]] = {}
@@ -332,14 +298,10 @@ def write_output(
         mask = pc.is_in(ids, value_set=pa.array(list(target_ids), type=ids.type))
         filtered = table.filter(mask)
 
-        # Add safety_score and has_annotation columns from selected table metadata
         filtered_ids = filtered.column(id_column).to_pylist()
-        meta = [id_to_meta[doc_id] for doc_id in filtered_ids]
         filtered = filtered.append_column(
-            "safety_score", pa.array([m[0] for m in meta], type=pa.int8()),
-        )
-        filtered = filtered.append_column(
-            "has_annotation", pa.array([m[1] for m in meta], type=pa.bool_()),
+            "has_annotation",
+            pa.array([id_to_annotation[doc_id] for doc_id in filtered_ids], type=pa.bool_()),
         )
 
         buffer_rows.append(filtered)
@@ -373,9 +335,7 @@ def parse_args() -> argparse.Namespace:
         description="Stratified subsampling with annotation marking.",
     )
     p.add_argument("--source-dir", type=str, required=True,
-                   help="Dir with part_*.parquet source files")
-    p.add_argument("--annotations-dir", type=str, required=True,
-                   help="Dir with shard_*.parquet annotation files")
+                   help="Dir with part_*.parquet source files (must include safety_score column)")
     p.add_argument("--output-dir", type=str, default=f"{scratch}/subsampled",
                    help="Output directory (default: $SCRATCH/subsampled)")
     p.add_argument("--target-tokens", type=float, default=500_000_000_000,
@@ -402,11 +362,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     source_dir = Path(args.source_dir)
-    annotations_dir = Path(args.annotations_dir)
     output_dir = Path(args.output_dir)
 
     assert source_dir.exists(), f"Source dir not found: {source_dir}"
-    assert annotations_dir.exists(), f"Annotations dir not found: {annotations_dir}"
 
     if args.overwrite and output_dir.exists():
         print(f"--overwrite: removing {output_dir}")
@@ -417,10 +375,9 @@ def main() -> None:
 
     t_start = time.time()
 
-    # Pass 1: load annotations and scan source
-    annotations = load_annotations(annotations_dir)
+    # Pass 1: scan source files and build index
     index = scan_source(
-        source_dir, annotations, args.id_column, args.text_column, args.chars_per_token,
+        source_dir, args.id_column, args.text_column, args.chars_per_token,
     )
 
     # Sampling
@@ -437,7 +394,6 @@ def main() -> None:
     elapsed = time.time() - t_start
     metadata = {
         "source_dir": str(source_dir),
-        "annotations_dir": str(annotations_dir),
         "target_tokens": args.target_tokens,
         "bad_fraction": args.bad_fraction,
         "good_fraction": args.good_fraction,
