@@ -170,9 +170,15 @@ def setup_distributed() -> tuple[int, int, torch.device]:
     return rank, world_size, device
 
 
-def teardown_distributed() -> None:
+def teardown_distributed(timeout_s: int = 120) -> None:
+    """Barrier + destroy, with a timeout so a stuck rank doesn't hang the job."""
     if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+        try:
+            torch.distributed.barrier(timeout=torch.distributed.default_pg_timeout
+                                      if timeout_s is None
+                                      else __import__("datetime").timedelta(seconds=timeout_s))
+        except Exception as e:
+            print(f"WARNING: barrier timed out or failed ({e}), proceeding with teardown")
         torch.distributed.destroy_process_group()
 
 
@@ -621,11 +627,11 @@ def main() -> None:
 
     gpu_monitor.__exit__(None, None, None)
 
-    teardown_distributed()
-
     if is_main:
         (output_dir / "DONE").touch()
         print(f"All done. Shards in {output_dir}/")
+
+    teardown_distributed()
 
 
 if __name__ == "__main__":
