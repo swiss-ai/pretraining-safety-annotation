@@ -1,15 +1,20 @@
-# Subsample & Stratify -- token-budgeted stratified subsampling
+# Subsample & Stratify -- annotation-based subsampling
 
-Produces a token-budgeted subset where a controlled fraction of tokens is marked for annotation (`has_annotation=True`), split between "bad" (safety_score 4-5) and "good" (safety_score 0-3) strata.
+Produces two token-budgeted subsets from annotated source data:
 
-Default: 500B tokens total, 5% annotated (2.5% bad + 2.5% good = 12.5B each), 95% unmarked (475B).
+- **`annotated/`** — rows with `has_annotation=True` (safety_score >= threshold + matched random sample)
+- **`unannotated/`** — the remaining rows (`has_annotation=False`)
+
+The annotation ratio in the output matches the full dataset.  A global per-row priority (seeded RNG) ensures monotonic subset inclusion: sampling at budget X is always a subset of budget X+Y with identical flags.
 
 ## Pipeline position
 
 ```
-  annotation + merge           subsample_and_stratify     tokenization
-$SCRATCH/dolma3_mix-1T_annotated --> subsample.py       --> tokenize.py
-                                    (budget + stratify)
+  annotation + merge           subsample_and_stratify          tokenization
+$SCRATCH/dolma3_mix-1T_annotated --> subsample.py          --> tokenize.py
+                                    (annotate + budget fill)
+                                    ├── annotated/          --> split path
+                                    └── unannotated/        --> compact path
 ```
 
 ## Input
@@ -19,17 +24,20 @@ $SCRATCH/dolma3_mix-1T_annotated --> subsample.py       --> tokenize.py
 ## Output
 
 ```
-$SCRATCH/subsampled/
-├── part_00000.parquet    # all source columns + safety_score + has_annotation
-├── part_00001.parquet
-├── ...
-└── metadata.json         # sampling parameters, stratum statistics
+$SCRATCH/dolma3_subsampled/
+├── annotated/
+│   ├── part_00000.parquet    # source columns + has_annotation=True
+│   └── ...
+├── unannotated/
+│   ├── part_00000.parquet    # source columns + has_annotation=False
+│   └── ...
+└── metadata.json             # sampling parameters, annotation ratio, stats
 ```
 
 ## Usage
 
 ```bash
-# Full run (500B tokens, 5% annotated)
+# Full run (500B tokens, annotation threshold=3)
 python -m preprocessing.subsample_and_stratify.subsample \
     --source-dir $SCRATCH/dolma3_mix-1T_annotated
 
@@ -38,40 +46,37 @@ python -m preprocessing.subsample_and_stratify.subsample \
     --source-dir $SCRATCH/dolma3_mix-10m_annotated \
     --target-tokens 1_000_000 --output-dir $SCRATCH/subsampled_test
 
-# Custom fractions (10% annotated: 5% bad + 5% good)
+# Custom threshold (annotate scores >= 4 only)
 python -m preprocessing.subsample_and_stratify.subsample \
     --source-dir $SCRATCH/dolma3_mix-1T_annotated \
-    --bad-fraction 0.05 --good-fraction 0.05
+    --annotation-threshold 4
+
+# Legacy stratified mode (three independent budgets, single output dir)
+python -m preprocessing.subsample_and_stratify.subsample \
+    --source-dir $SCRATCH/dolma3_mix-1T_annotated \
+    --bad-fraction 0.025 --good-fraction 0.025
 ```
 
 ### Algorithm
 
-Two-pass approach to stay within memory on cluster nodes (~40 GB):
+Two-pass approach:
 
-1. **Scan & Index** -- iterate source files reading `id`, `text`, and `safety_score`, estimate tokens (`utf8_length / chars_per_token`), build lightweight in-memory index `(id, est_tokens, safety_score, file_idx)`.
-2. **Sample** -- split index into bad (score 4-5) and non-bad (score 0-3), shuffle each pool (seeded), greedily fill token budgets via cumulative sum. If total available tokens < target, all budgets scale proportionally to maintain ratios.
-3. **Write** -- re-read only source files containing selected rows, filter to selected IDs, add `has_annotation` column, write buffered output.
-
-### Upload to HuggingFace
-
-```bash
-python -m preprocessing.subsample_and_stratify.upload \
-    --data-dir $SCRATCH/subsampled \
-    --repo-id jminder/dolma3-subsampled-500B \
-    --private
-```
+1. **Scan & Index** -- iterate source files reading `id`, `text`, and `safety_score`, estimate tokens, build in-memory index.
+2. **Mark annotations** (budget-independent) -- all rows with `safety_score >= threshold` are annotated; an equal token budget of lower-score rows (by priority) is also annotated.  Compute annotation ratio R.
+3. **Fill budgets** -- annotated pool gets `target_tokens * R`, unannotated gets `target_tokens * (1-R)`.  Each pool is filled by global priority via greedy cumulative sum.
+4. **Write** -- re-read source files for selected rows, write to `annotated/` and `unannotated/` subdirectories.
 
 ### Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `subsample.py` | Stratified subsampling with annotation marking |
+| `subsample.py` | Annotation-based subsampling with two output datasets |
 | `upload.py` | Upload subsampled dataset to HuggingFace Hub |
-| `test_subsample.py` | End-to-end test with synthetic data |
+| `test_subsample.py` | End-to-end test + monotonic subset verification |
 
 ### End-to-end test
 
-Creates a synthetic dataset (1000 rows, known score distribution), runs the pipeline, and verifies token budgets, annotation ratios, output schema, and metadata.
+Creates a synthetic dataset (1000 rows, known score distribution), runs the pipeline, verifies two output directories, annotation ratios, schema, metadata, and monotonic subset guarantee (5K ⊂ 10K).
 
 ```bash
 python -m preprocessing.subsample_and_stratify.test_subsample
@@ -79,8 +84,8 @@ python -m preprocessing.subsample_and_stratify.test_subsample
 
 ## Experiment tracking
 
-`metadata.json` in the output directory records sampling parameters and stratum statistics (token counts, row counts per stratum, budgets).
+`metadata.json` in the output directory records annotation threshold, annotation ratio, per-split token/row counts, and timing.
 
 ## Resume
 
-Not applicable -- the pipeline is a single-pass batch job. Re-run overwrites the output directory.
+Not applicable -- the pipeline is a single-pass batch job. Re-run with `--overwrite` to replace.

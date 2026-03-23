@@ -8,7 +8,8 @@
 #SBATCH --output=preprocessing/subsample_and_stratify/logs/slurm-%j.out
 #SBATCH --error=preprocessing/subsample_and_stratify/logs/slurm-%j.err
 #
-# Stratified subsampling: 500B tokens from annotated dolma3_mix-1T.
+# Annotation-based subsampling: produces two output directories
+# (annotated + unannotated) from the merged annotated source.
 # CPU-only job. Reads safety_score directly from source parquet files.
 #
 # Usage:
@@ -24,7 +25,7 @@ set -euo pipefail
 
 EXTRA_ARGS="$*"
 SCRATCH="/iopsstor/scratch/cscs/jminder"
-OUTPUT_DIR="$SCRATCH/subsampled"
+OUTPUT_DIR="$SCRATCH/dolma3_subsampled"
 
 echo "Job $SLURM_JOB_ID on $(hostname) — $(date)"
 echo "Extra args: ${EXTRA_ARGS}"
@@ -53,3 +54,4 @@ fi
 uv run python -m experiment_tracker finish --stage subsample --metrics "$METRICS"
 
 echo "Finished — $(date)"
+echo "Output: $OUTPUT_DIR/annotated/ and $OUTPUT_DIR/unannotated/"
