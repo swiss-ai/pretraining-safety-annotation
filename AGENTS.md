@@ -33,13 +33,20 @@
 - If you code, make sure to regularly commit things (not to often but semantically well separated parts. Ask if unsure)
 
 # Environment
-- Linux
+- Linux (Clariden cluster, GH200 nodes with 4 GPUs each)
 - use $HOME/tmp rather than /tmp for temporary files, as we're on a cluster and /tmp is not available.
 - `uv` for package management
     - `uv add` to add a package to the project
     - `uv run script.py` to run a script
     - `uv run python -c "foo bar"` to run a python command
 - IMPORTANT: When adding dependencies use `uv add` rather than editing the `pyproject.toml` file.
+
+## SLURM job submission
+- Use `sbatch` with job scripts in the repo (see `preprocessing/*/` for examples)
+- Container-based execution via `srun --environment=env.toml`
+- No `lrun`/`crun` aliases on this cluster — use job scripts directly
+- Known issue: container has CUDA 12 NCCL plugin but runs CUDA 13 — override with `NCCL_NET=Socket` and `NCCL_NET_PLUGIN=ofi` in job scripts
+
 ## Remote cluster access (Clariden/Bristen via FirecREST)
 Credentials in `.env` (`FIRECREST_CONSUMER`, `FIRECREST_SECRET`). Never read or log them.
 ```bash
@@ -50,25 +57,13 @@ uv run python -m slurm.cli cancel --jobid JOBID
 ```
 - Job logs live at `{working_dir}/logs/{jobid}/` on the cluster
 - For quick Python debugging, use `FirecrestClient().head('clariden', path, num_lines=500)`
-- Known issue: `sglang.toml` has CUDA 12 NCCL plugin but containers run CUDA 13 — override with `NCCL_NET=Socket` and `NCCL_NET_PLUGIN=ofi` in job scripts
-
-## Local slurm (lrun/crun)
-For slurm commands, use `source ~/.slurm_aliases`. Then:
-- `crun yourcommand` to run a command on a cpu node.
-- `lrun yourcommand` to run a command on a gpu node.
-- use `--qos=debug` for quick tests that should run for less than 30 minutes (which is probably )
-- **ALWAYS** name jobs with `-J jobname` for easier identification, e.g. `lrun -J train_sae uv run train.py`
-Note: those commands DO WORK, don't get the synthax wrong. Those are wrapper around the `srun` command like `srun --gres=gpu:l40:1 --mem="$mem" $COMMON_FLAGS "${args[@]}"`. So you can use them like `lrun uv run myscript.py`, and not `lrun "uv run myscript.py"`. **IMPORTANT**: When running `lrun`/`crun` in background tasks, ALWAYS prefix with `source ~/.slurm_aliases &&` since background shells don't have aliases loaded.
-
 
 # Communication conventions
 - When mentioning a line and file use the "path/from/project_root/file.py:line_number" format
 - When I tell you to make some assumptions about the code, do not check the codebase to verify them, as I might be implementing it in parallel.
 - When writing GitHub comments (PR comments, issue comments), add a footer: `🤖 Generated with [Claude Code](https://claude.ai/code)`
 
-# Harness recommendations
-
-### Other
+# Agent recommendations
 - Spawn subagents to parallelize work when possible - the bottleneck is time spent, not tokens
 - When you have multiple tests to run, run them in parallel using slurm rather than sequentially
-- Use Opus (default) for subagents on important tasks, not Haiku
+- Use the most capable model for subagents on important tasks
