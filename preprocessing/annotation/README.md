@@ -177,6 +177,12 @@ During the first 20K-file run, 17/33 tasks failed because `torch.distributed.bar
 
 **Impact:** 16/33 tasks completed on the first attempt, 17 had to be resubmitted. No data was lost (resume handled partial shards), but the resubmission restarted most ranks from scratch due to intermediate cancel corrupting in-progress writes.
 
+### Cross-file duplicate IDs break merge assertion (2026-03-23)
+
+Per-file dedup keeps one occurrence of each ID *per file*, but the same ID can appear in different files (cross-file duplicates). The merge builds a global `id → score` dict which deduplicates these, so `len(dict) < n_input_rows`. The original assertion `len(id_to_score) == n_input_rows` failed on task_0000 (4 cross-file duplicates, including one `None` ID).
+
+**Fix (52e41ab):** Assert on total shard rows instead of unique dict entries. Log the cross-file overlap count.
+
 ### Schema mismatch on file 0 (2026-03-22)
 
 `load_dataset("parquet", ...)` loads all columns by default. Some parquet files have `source: null` type while others have `source: string`, causing HF datasets to fail on schema reconciliation. Fixed by passing `columns=[id_column, text_column]` to only load needed columns.
