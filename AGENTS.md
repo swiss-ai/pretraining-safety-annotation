@@ -44,8 +44,6 @@
 ## SLURM job submission
 - Use `sbatch` with job scripts in the repo (see `preprocessing/*/` for examples)
 - Container-based execution via `srun --environment=env.toml`
-- No `lrun`/`crun` aliases on this cluster — use job scripts directly
-- Known issue: container has CUDA 12 NCCL plugin but runs CUDA 13 — override with `NCCL_NET=Socket` and `NCCL_NET_PLUGIN=ofi` in job scripts
 
 ## Remote cluster access (Clariden/Bristen via FirecREST)
 Credentials in `.env` (`FIRECREST_CONSUMER`, `FIRECREST_SECRET`). Never read or log them.
