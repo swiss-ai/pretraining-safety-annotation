@@ -54,7 +54,7 @@ def scan_source(
     (produced by the annotation merge step).
 
     Returns a PyArrow table with columns:
-    ``(id: string, est_tokens: float32, safety_score: int8, file_idx: int32)``.
+    ``(id: string, est_tokens: float64, safety_score: int8, file_idx: int32)``.
     """
     source_files = sorted(source_dir.glob("part_*.parquet"))
     assert source_files, f"No part_*.parquet files found in {source_dir}"
@@ -71,8 +71,8 @@ def scan_source(
         text = table.column(text_column)
         scores = table.column("safety_score").cast(pa.int8())
 
-        lengths = pc.utf8_length(text).cast(pa.float32())
-        est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float32()))
+        lengths = pc.utf8_length(text).cast(pa.float64())
+        est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float64()))
 
         all_ids.append(ids)
         all_tokens.append(est_tokens)
@@ -429,7 +429,7 @@ def _write_partition(
         nonlocal buffer_rows, buffer_count, part_idx
         if not buffer_rows:
             return
-        combined = pa.concat_tables(buffer_rows)
+        combined = pa.concat_tables(buffer_rows, promote_options="permissive")
         out_path = output_subdir / f"part_{part_idx:05d}.parquet"
         pq.write_table(combined, str(out_path))
         part_idx += 1
@@ -495,7 +495,7 @@ def write_output(
         nonlocal buffer_rows, buffer_count, part_idx
         if not buffer_rows:
             return
-        combined = pa.concat_tables(buffer_rows)
+        combined = pa.concat_tables(buffer_rows, promote_options="permissive")
         out_path = output_dir / f"part_{part_idx:05d}.parquet"
         pq.write_table(combined, str(out_path))
         part_idx += 1
