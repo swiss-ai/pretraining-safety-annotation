@@ -87,12 +87,11 @@ sbatch --array=0-32 preprocessing/annotation/array_job.sh \
 sbatch --array=5,23 preprocessing/annotation/array_job.sh \
     $SCRATCH/dolma3_mix-1T $SCRATCH/safety_annotations/dolma3 33 20000
 
-# 3. Merge annotations into output parquet
-python -m preprocessing.annotation.merge \
-    --data-dir $SCRATCH/dolma3_mix-1T \
-    --annotation-dir $SCRATCH/safety_annotations/dolma3 \
-    --output-dir $SCRATCH/dolma3_mix-1T_annotated \
-    --workers 8
+# 3. Monitor progress
+bash preprocessing/annotation/status.sh
+
+# 4. Merge annotations into output parquet (on a compute node)
+sbatch preprocessing/annotation/merge_job.sh
 ```
 
 ### Scripts
@@ -103,6 +102,9 @@ python -m preprocessing.annotation.merge \
 | `array_job.sh` | SLURM array wrapper: partitions input files across N tasks |
 | `job.sh` | Single-node SLURM wrapper |
 | `merge.py` | Id-based join of annotation shards back onto original parquets |
+| `merge_job.sh` | SLURM wrapper for merge (64 workers on GH200 node, ~244 CPUs) |
+| `status.sh` | Live progress dashboard for running annotation jobs |
+| `verify_scores.py` | Re-classify samples on GPU to verify pipeline correctness |
 | `analyze.py` | Console summary of score distribution |
 | `explore.py` | Join annotations to source texts for manual inspection |
 
@@ -160,6 +162,28 @@ Calibrated on 2026-03-22 from a 10-node estimation run (380 files across varied 
 - `task_meta.json` per task: file list, row counts, world_size, dedup stats
 - `gpu_monitor.json` per task: wall-clock GPU hours, peak memory, utilization/power/temperature samples (via `gpu_monitor.py`)
 - `data/experiments/annotation.jsonl` in the repo: logs each run with git hash, SLURM job info, config, duration, and GPU metrics. Committed and version-controlled.
+
+## Known issues
+
+### NCCL barrier hang at teardown (2026-03-23)
+
+During the first 20K-file run, 17/33 tasks failed because `torch.distributed.barrier()` in `teardown_distributed()` hung indefinitely after inference completed. All data was already flushed and writers closed, but the barrier blocked until SLURM killed the job — preventing the DONE marker from being written.
+
+**Root cause:** NCCL barrier with no timeout. On GH200 nodes, some ranks finish the barrier faster than others; when the gap exceeds NCCL's internal timeout, the collective deadlocks.
+
+**Fix (dadfe1b):**
+1. Added 120s timeout to the barrier — if stuck, logs a warning and proceeds to `destroy_process_group()`
+2. Moved DONE marker write before the barrier — data integrity doesn't depend on the barrier since all writers are already closed
+
+**Impact:** 16/33 tasks completed on the first attempt, 17 had to be resubmitted. No data was lost (resume handled partial shards), but the resubmission restarted most ranks from scratch due to intermediate cancel corrupting in-progress writes.
+
+### Schema mismatch on file 0 (2026-03-22)
+
+`load_dataset("parquet", ...)` loads all columns by default. Some parquet files have `source: null` type while others have `source: string`, causing HF datasets to fail on schema reconciliation. Fixed by passing `columns=[id_column, text_column]` to only load needed columns.
+
+### Classifier false positives at score 5
+
+The safety classifier (locuslab/safety-classifier_gte-large-en-v1.5) produces some false positives at score 5 (severe) — e.g., a real estate agent bio classified as severe with 91% confidence. Verified this is model behavior, not a pipeline bug. Keep this in mind when choosing a filtering threshold in `subsample_and_stratify`.
 
 ## Resume
 
