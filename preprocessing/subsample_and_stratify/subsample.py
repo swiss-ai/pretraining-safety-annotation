@@ -695,6 +695,8 @@ def main() -> None:
         ann_table, unann_table, stats = mark_and_sample(
             index, args.target_tokens, args.seed, args.annotation_threshold,
         )
+        del index  # free ~90GB before write phase
+
         print(f"\nWriting output...")
         ann_dir = output_dir / "annotated"
         unann_dir = output_dir / "unannotated"
@@ -709,6 +711,7 @@ def main() -> None:
                 args.id_column, args.rows_per_file, has_annotation_value=True,
             )
             (ann_dir / "DONE").touch()
+        del ann_table
 
         if (unann_dir / "DONE").exists():
             print(f"\n  Skipping unannotated (DONE marker found at {unann_dir})")
