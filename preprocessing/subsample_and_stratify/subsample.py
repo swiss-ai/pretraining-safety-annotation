@@ -48,75 +48,67 @@ _DEFAULT_SCAN_WORKERS = 16
 def _scan_one_file(
     file_idx: int,
     fpath: Path,
-    id_column: str,
     text_column: str,
     chars_per_token: float,
-) -> tuple[int, pa.Array, pa.Array, pa.Array, int]:
-    """Read one parquet file and return (file_idx, ids, est_tokens, scores, nrows)."""
-    table = pq.read_table(fpath, columns=[id_column, text_column, "safety_score"])
-    ids = table.column(id_column)
+) -> tuple[int, pa.Array, pa.Array, int]:
+    """Read one parquet file and return (file_idx, est_tokens, scores, nrows)."""
+    table = pq.read_table(fpath, columns=[text_column, "safety_score"])
     text = table.column(text_column)
     scores = table.column("safety_score").cast(pa.int8())
 
     lengths = pc.utf8_length(text).cast(pa.float64())
     est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float64()))
-    # Cap at max training sequence length (tokenizer truncates beyond this)
     est_tokens = pc.min_element_wise(est_tokens, pa.scalar(2048.0, pa.float64()))
 
-    # Cast to large_string to avoid 2GB offset overflow when concatenating 1B+ rows
-    ids = ids.cast(pa.large_string())
-    return file_idx, ids, est_tokens, scores, len(table)
+    return file_idx, est_tokens, scores, len(table)
 
 
 def scan_source(
     source_dir: Path,
-    id_column: str,
     text_column: str,
     chars_per_token: float,
     scan_workers: int = _DEFAULT_SCAN_WORKERS,
 ) -> pa.Table:
     """Scan source parquet files and build a lightweight index table.
 
-    Source files must contain ``id``, ``text``, and ``safety_score`` columns
+    Source files must contain ``text`` and ``safety_score`` columns
     (produced by the annotation merge step).  Uses *scan_workers* threads
     for parallel I/O.
 
     Returns a PyArrow table with columns:
-    ``(id: string, est_tokens: float64, safety_score: int8, file_idx: int32)``.
+    ``(est_tokens: float64, safety_score: int8, file_idx: int32, row_idx: int32)``.
     """
     source_files = sorted(source_dir.glob("part_*.parquet"))
     assert source_files, f"No part_*.parquet files found in {source_dir}"
     print(f"\nScanning {len(source_files)} source files ({scan_workers} workers)...")
 
-    # Parallel file reads — results collected in file_idx order
     results: dict[int, tuple] = {}
     with ThreadPoolExecutor(max_workers=scan_workers) as pool:
         futures = {
             pool.submit(
                 _scan_one_file, file_idx, fpath,
-                id_column, text_column, chars_per_token,
+                text_column, chars_per_token,
             ): file_idx
             for file_idx, fpath in enumerate(source_files)
         }
         with tqdm(total=len(source_files), desc="Source files") as pbar:
             for future in as_completed(futures):
-                file_idx, ids, est_tokens, scores, nrows = future.result()
-                results[file_idx] = (ids, est_tokens, scores, nrows)
+                file_idx, est_tokens, scores, nrows = future.result()
+                results[file_idx] = (est_tokens, scores, nrows)
                 pbar.update(1)
 
-    # Assemble in file_idx order, freeing per-file data as we go
     per_file_tables = []
     for file_idx in range(len(source_files)):
-        ids, est_tokens, scores, nrows = results.pop(file_idx)
+        est_tokens, scores, nrows = results.pop(file_idx)
         per_file_tables.append(pa.table({
-            "id": ids,
             "est_tokens": est_tokens,
             "safety_score": scores,
             "file_idx": pa.array([file_idx] * nrows, type=pa.int32()),
+            "row_idx": pa.array(np.arange(nrows, dtype=np.int32())),
         }))
     del results
 
-    index = pa.concat_tables(per_file_tables, promote_options="permissive")
+    index = pa.concat_tables(per_file_tables)
     del per_file_tables
 
     total_tokens = pc.sum(index.column("est_tokens")).as_py()
@@ -144,7 +136,7 @@ def mark_and_sample(
     target_tokens: float,
     seed: int,
     annotation_threshold: int = 3,
-) -> tuple[dict[int, set[str]], dict[int, set[str]], dict]:
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray], dict]:
     """Mark annotations and sample two pools preserving the annotation ratio.
 
     Phase 1 (budget-independent): all rows with safety_score >= *annotation_threshold*
@@ -157,8 +149,7 @@ def mark_and_sample(
     annotation ratio from Phase 1.
 
     Returns ``(ann_files_needed, unann_files_needed, stats_dict)`` where each
-    files_needed is ``{file_idx: set_of_ids}`` — lightweight selection metadata
-    that does not hold references to the index.
+    files_needed is ``{file_idx: np.ndarray of row indices within that file}``.
     """
     total_available = pc.sum(index.column("est_tokens")).as_py()
     est_tokens = index.column("est_tokens").to_numpy(zero_copy_only=False)
@@ -227,27 +218,30 @@ def mark_and_sample(
     ann_selected, ann_actual = _fill_budget(ann_sorted, est_tokens, ann_budget)
     unann_selected, unann_actual = _fill_budget(unann_sorted, est_tokens, unann_budget)
 
-    # Build selection maps as {file_idx: pa.Array of ids} — stays in Arrow
-    # to avoid materializing 925M+ Python string objects (~100GB savings).
-    def _build_files_needed(selected_indices: np.ndarray) -> dict[int, pa.Array]:
-        sel = index.take(pa.array(selected_indices, type=pa.int64()))
-        sort_order = pc.sort_indices(sel.column("file_idx"))
-        sel = sel.take(sort_order)
-        fidxs = sel.column("file_idx").to_numpy(zero_copy_only=False)
-        ids = sel.column("id")
-        del sort_order
-        unique_fidxs, counts = np.unique(fidxs, return_counts=True)
+    # Build selection maps as {file_idx: row_indices_within_file}.
+    # Sort + split is O(N log N) and ~15GB peak.
+    file_idx_np = index.column("file_idx").to_numpy(zero_copy_only=False)
+    row_idx_np = index.column("row_idx").to_numpy(zero_copy_only=False)
+    del index  # free ~20GB before building maps
+
+    def _build_files_needed(selected_indices: np.ndarray) -> dict[int, np.ndarray]:
+        sel_fidxs = file_idx_np[selected_indices]
+        sel_rowidxs = row_idx_np[selected_indices]
+        order = np.argsort(sel_fidxs, kind='mergesort')
+        sorted_fidxs = sel_fidxs[order]
+        sorted_rowidxs = sel_rowidxs[order]
+        unique_fidxs, counts = np.unique(sorted_fidxs, return_counts=True)
         splits = np.cumsum(counts)
         starts = np.concatenate([[0], splits[:-1]])
-        files_needed: dict[int, pa.Array] = {}
+        files_needed: dict[int, np.ndarray] = {}
         for fidx, start, count in zip(unique_fidxs, starts, counts):
-            files_needed[int(fidx)] = ids[int(start):int(start + count)].combine_chunks()
-        del sel
+            files_needed[int(fidx)] = sorted_rowidxs[int(start):int(start + count)].copy()
         return files_needed
 
     print("\nBuilding selection maps...")
     ann_files = _build_files_needed(ann_selected)
     unann_files = _build_files_needed(unann_selected)
+    del file_idx_np, row_idx_np
 
     total_selected = len(ann_selected) + len(unann_selected)
     total_selected_tokens = ann_actual + unann_actual
@@ -434,15 +428,12 @@ def _fill_budget(
 
 def _read_and_filter(
     fpath: Path,
-    target_ids: pa.Array,
-    id_column: str,
+    row_indices: np.ndarray,
     has_annotation_value: bool,
 ) -> pa.Table:
-    """Read a source file, filter to target IDs, and add has_annotation column."""
+    """Read a source file, select rows by position, and add has_annotation column."""
     table = pq.read_table(fpath)
-    ids = table.column(id_column)
-    mask = pc.is_in(ids, value_set=target_ids)
-    filtered = table.filter(mask)
+    filtered = table.take(pa.array(row_indices, type=pa.int32()))
     filtered = filtered.append_column(
         "has_annotation",
         pa.array([has_annotation_value] * len(filtered), type=pa.bool_()),
@@ -452,9 +443,8 @@ def _read_and_filter(
 
 def _write_partition(
     source_dir: Path,
-    files_needed: dict[int, pa.Array],
+    files_needed: dict[int, np.ndarray],
     output_subdir: Path,
-    id_column: str,
     rows_per_file: int,
     has_annotation_value: bool,
     write_workers: int = _DEFAULT_SCAN_WORKERS,
@@ -495,7 +485,7 @@ def _write_partition(
             pool.submit(
                 _read_and_filter,
                 source_files[fidx], files_needed[fidx],
-                id_column, has_annotation_value,
+                has_annotation_value,
             ): fidx
             for fidx in sorted_fidxs
         }
@@ -668,7 +658,7 @@ def main() -> None:
 
     # Pass 1: scan source files and build index (parallel)
     index = scan_source(
-        source_dir, args.id_column, args.text_column, args.chars_per_token,
+        source_dir, args.text_column, args.chars_per_token,
         scan_workers=args.scan_workers,
     )
 
@@ -699,7 +689,6 @@ def main() -> None:
         ann_files, unann_files, stats = mark_and_sample(
             index, args.target_tokens, args.seed, args.annotation_threshold,
         )
-        del index  # free index before write phase
 
         print(f"\nWriting output...")
         ann_dir = output_dir / "annotated"
@@ -712,7 +701,7 @@ def main() -> None:
                 shutil.rmtree(ann_dir)  # clean up partial write
             _write_partition(
                 source_dir, ann_files, ann_dir,
-                args.id_column, args.rows_per_file, has_annotation_value=True,
+                args.rows_per_file, has_annotation_value=True,
             )
             (ann_dir / "DONE").touch()
         del ann_files
@@ -724,7 +713,7 @@ def main() -> None:
                 shutil.rmtree(unann_dir)  # clean up partial write
             _write_partition(
                 source_dir, unann_files, unann_dir,
-                args.id_column, args.rows_per_file, has_annotation_value=False,
+                args.rows_per_file, has_annotation_value=False,
             )
             (unann_dir / "DONE").touch()
         metadata = {
