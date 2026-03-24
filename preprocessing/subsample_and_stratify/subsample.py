@@ -144,7 +144,7 @@ def mark_and_sample(
     target_tokens: float,
     seed: int,
     annotation_threshold: int = 3,
-) -> tuple[pa.Table, pa.Table, dict]:
+) -> tuple[dict[int, set[str]], dict[int, set[str]], dict]:
     """Mark annotations and sample two pools preserving the annotation ratio.
 
     Phase 1 (budget-independent): all rows with safety_score >= *annotation_threshold*
@@ -156,8 +156,9 @@ def mark_and_sample(
     ``target_tokens * R`` and ``target_tokens * (1-R)`` respectively, where R is the
     annotation ratio from Phase 1.
 
-    Returns ``(annotated_table, unannotated_table, stats_dict)`` where each table
-    has the index columns plus ``has_annotation`` (bool).
+    Returns ``(ann_files_needed, unann_files_needed, stats_dict)`` where each
+    files_needed is ``{file_idx: set_of_ids}`` — lightweight selection metadata
+    that does not hold references to the index.
     """
     total_available = pc.sum(index.column("est_tokens")).as_py()
     est_tokens = index.column("est_tokens").to_numpy(zero_copy_only=False)
@@ -226,15 +227,22 @@ def mark_and_sample(
     ann_selected, ann_actual = _fill_budget(ann_sorted, est_tokens, ann_budget)
     unann_selected, unann_actual = _fill_budget(unann_sorted, est_tokens, unann_budget)
 
-    # Build output tables
-    ann_table = index.take(pa.array(ann_selected, type=pa.int64()))
-    ann_table = ann_table.append_column(
-        "has_annotation", pa.array([True] * len(ann_selected), type=pa.bool_()),
-    )
-    unann_table = index.take(pa.array(unann_selected, type=pa.int64()))
-    unann_table = unann_table.append_column(
-        "has_annotation", pa.array([False] * len(unann_selected), type=pa.bool_()),
-    )
+    # Build lightweight selection maps: {file_idx: set(ids)}
+    # Extract only the selected rows' id + file_idx as Python lists,
+    # then discard — no references to the large index table are held.
+    def _build_files_needed(selected_indices: np.ndarray) -> dict[int, set[str]]:
+        sel = index.take(pa.array(selected_indices, type=pa.int64()))
+        ids = sel.column("id").to_pylist()
+        fidxs = sel.column("file_idx").to_pylist()
+        del sel
+        files_needed: dict[int, set[str]] = {}
+        for doc_id, fidx in zip(ids, fidxs):
+            files_needed.setdefault(fidx, set()).add(doc_id)
+        return files_needed
+
+    print("\nBuilding selection maps...")
+    ann_files = _build_files_needed(ann_selected)
+    unann_files = _build_files_needed(unann_selected)
 
     total_selected = len(ann_selected) + len(unann_selected)
     total_selected_tokens = ann_actual + unann_actual
@@ -267,7 +275,7 @@ def mark_and_sample(
         "selected_tokens": total_selected_tokens,
     }
 
-    return ann_table, unann_table, stats
+    return ann_files, unann_files, stats
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +447,7 @@ def _read_and_filter(
 
 def _write_partition(
     source_dir: Path,
-    selected: pa.Table,
+    files_needed: dict[int, set[str]],
     output_subdir: Path,
     id_column: str,
     rows_per_file: int,
@@ -452,13 +460,6 @@ def _write_partition(
     ``has_annotation`` column, and writes buffered parquet output.
     """
     source_files = sorted(source_dir.glob("part_*.parquet"))
-
-    id_col = selected.column("id").to_pylist()
-    file_idx_col = selected.column("file_idx").to_pylist()
-
-    files_needed: dict[int, set[str]] = {}
-    for doc_id, fidx in zip(id_col, file_idx_col):
-        files_needed.setdefault(fidx, set()).add(doc_id)
 
     output_subdir.mkdir(parents=True, exist_ok=True)
 
@@ -692,10 +693,10 @@ def main() -> None:
         }
     else:
         # Default: annotation-based split, two output directories
-        ann_table, unann_table, stats = mark_and_sample(
+        ann_files, unann_files, stats = mark_and_sample(
             index, args.target_tokens, args.seed, args.annotation_threshold,
         )
-        del index  # free ~90GB before write phase
+        del index  # free index before write phase
 
         print(f"\nWriting output...")
         ann_dir = output_dir / "annotated"
@@ -707,11 +708,11 @@ def main() -> None:
             if ann_dir.exists():
                 shutil.rmtree(ann_dir)  # clean up partial write
             _write_partition(
-                source_dir, ann_table, ann_dir,
+                source_dir, ann_files, ann_dir,
                 args.id_column, args.rows_per_file, has_annotation_value=True,
             )
             (ann_dir / "DONE").touch()
-        del ann_table
+        del ann_files
 
         if (unann_dir / "DONE").exists():
             print(f"\n  Skipping unannotated (DONE marker found at {unann_dir})")
@@ -719,7 +720,7 @@ def main() -> None:
             if unann_dir.exists():
                 shutil.rmtree(unann_dir)  # clean up partial write
             _write_partition(
-                source_dir, unann_table, unann_dir,
+                source_dir, unann_files, unann_dir,
                 args.id_column, args.rows_per_file, has_annotation_value=False,
             )
             (unann_dir / "DONE").touch()
