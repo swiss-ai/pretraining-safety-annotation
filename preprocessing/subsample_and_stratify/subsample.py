@@ -1,591 +1,340 @@
 """Annotation-based subsampling with two output datasets.
 
-Produces two subsets from annotated source parquets:
+Two-pass, per-file-independent design that uses ~200MB of RAM regardless
+of dataset size.
 
-* ``annotated/`` — rows marked for annotation (safety_score >= threshold,
-  plus a matched random sample from lower scores).
-* ``unannotated/`` — the remaining rows.
-
-Token budgets are split proportionally so that the annotation ratio in the
-output matches the full dataset.  A global per-row priority (seeded RNG)
-ensures monotonic subset inclusion: sampling at budget X is always a subset
-of sampling at budget X+Y with identical ``has_annotation`` flags.
+Pass 1 (scan): collect per-file statistics (token counts by score bucket).
+Pass 2 (write): for each file independently, select rows using a per-file
+    deterministic RNG and per-file token budget, write to two output dirs.
 
 Usage::
 
     python -m preprocessing.subsample_and_stratify.subsample \
         --source-dir $SCRATCH/dolma3_mix-1T_annotated \
-        --target-tokens 500_000_000_000
+        --target-tokens 1_000_000_000_000
 
-    # Smaller test run
-    python -m preprocessing.subsample_and_stratify.subsample \
-        --source-dir $SCRATCH/dolma3_mix-10m_annotated \
-        --target-tokens 1_000_000 --output-dir $SCRATCH/subsampled_test
-
-    # Legacy stratified mode (three independent budgets)
+    # Custom threshold (annotate scores >= 4 only)
     python -m preprocessing.subsample_and_stratify.subsample \
         --source-dir $SCRATCH/dolma3_mix-1T_annotated \
-        --bad-fraction 0.025 --good-fraction 0.025
+        --annotation-threshold 4
 """
 
 import argparse
 import json
 import os
-import shutil
 import time
+from dataclasses import dataclass, asdict
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-_DEFAULT_SCAN_WORKERS = 16
-_DEFAULT_WRITE_WORKERS = 4
+MAX_EST_TOKENS = 2048
+_DEFAULT_WORKERS = 16
 
 
-def _scan_one_file(
-    file_idx: int,
-    fpath: Path,
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FileStats:
+    file_index: int
+    file_path: str
+    total_rows: int
+    total_tokens: float
+    above_rows: int
+    above_tokens: float
+    below_rows: int
+    below_tokens: float
+
+
+# ---------------------------------------------------------------------------
+# Pass 1: per-file statistics
+# ---------------------------------------------------------------------------
+
+
+def _collect_one_file(
+    file_index: int,
+    file_path: str,
     text_column: str,
     chars_per_token: float,
-) -> tuple[int, pa.Array, pa.Array, int]:
-    """Read one parquet file and return (file_idx, est_tokens, scores, nrows)."""
-    table = pq.read_table(fpath, columns=[text_column, "safety_score"])
-    text = table.column(text_column)
-    scores = table.column("safety_score").cast(pa.int8())
-
-    lengths = pc.utf8_length(text).cast(pa.float64())
+    threshold: int,
+) -> FileStats:
+    """Read one parquet file and return lightweight statistics."""
+    table = pq.read_table(file_path, columns=[text_column, "safety_score"])
+    lengths = pc.utf8_length(table.column(text_column)).cast(pa.float64())
     est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float64()))
-    est_tokens = pc.min_element_wise(est_tokens, pa.scalar(2048.0, pa.float64()))
+    est_tokens = pc.min_element_wise(est_tokens, pa.scalar(float(MAX_EST_TOKENS), pa.float64()))
 
-    return file_idx, est_tokens, scores, len(table)
+    scores = table.column("safety_score")
+    above_mask = pc.greater_equal(scores, threshold)
+
+    above_tokens_arr = pc.filter(est_tokens, above_mask)
+    below_tokens_arr = pc.filter(est_tokens, pc.invert(above_mask))
+
+    return FileStats(
+        file_index=file_index,
+        file_path=file_path,
+        total_rows=len(table),
+        total_tokens=pc.sum(est_tokens).as_py(),
+        above_rows=int(pc.sum(above_mask.cast(pa.int64())).as_py()),
+        above_tokens=pc.sum(above_tokens_arr).as_py() or 0.0,
+        below_rows=len(table) - int(pc.sum(above_mask.cast(pa.int64())).as_py()),
+        below_tokens=pc.sum(below_tokens_arr).as_py() or 0.0,
+    )
 
 
-def scan_source(
+def scan_files(
     source_dir: Path,
     text_column: str,
     chars_per_token: float,
-    scan_workers: int = _DEFAULT_SCAN_WORKERS,
-) -> pa.Table:
-    """Scan source parquet files and build a lightweight index table.
+    threshold: int,
+    workers: int,
+) -> list[FileStats]:
+    """Pass 1: scan all files in parallel, return per-file statistics."""
+    files = sorted(source_dir.glob("part_*.parquet"))
+    assert files, f"No part_*.parquet files found in {source_dir}"
+    print(f"\nPass 1: scanning {len(files)} files ({workers} workers)...")
 
-    Source files must contain ``text`` and ``safety_score`` columns
-    (produced by the annotation merge step).  Uses *scan_workers* threads
-    for parallel I/O.
-
-    Returns a PyArrow table with columns:
-    ``(est_tokens: float64, safety_score: int8, file_idx: int32, row_idx: int32)``.
-    """
-    source_files = sorted(source_dir.glob("part_*.parquet"))
-    assert source_files, f"No part_*.parquet files found in {source_dir}"
-    print(f"\nScanning {len(source_files)} source files ({scan_workers} workers)...")
-
-    results: dict[int, tuple] = {}
-    with ThreadPoolExecutor(max_workers=scan_workers) as pool:
+    stats: list[FileStats] = [None] * len(files)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
-                _scan_one_file, file_idx, fpath,
-                text_column, chars_per_token,
-            ): file_idx
-            for file_idx, fpath in enumerate(source_files)
+                _collect_one_file, i, str(f),
+                text_column, chars_per_token, threshold,
+            ): i
+            for i, f in enumerate(files)
         }
-        with tqdm(total=len(source_files), desc="Source files") as pbar:
+        with tqdm(total=len(files), desc="Scan") as pbar:
             for future in as_completed(futures):
-                file_idx, est_tokens, scores, nrows = future.result()
-                results[file_idx] = (est_tokens, scores, nrows)
+                s = future.result()
+                stats[s.file_index] = s
                 pbar.update(1)
 
-    per_file_tables = []
-    for file_idx in range(len(source_files)):
-        est_tokens, scores, nrows = results.pop(file_idx)
-        per_file_tables.append(pa.table({
-            "est_tokens": est_tokens,
-            "safety_score": scores,
-            "file_idx": pa.array([file_idx] * nrows, type=pa.int32()),
-            "row_idx": pa.array(np.arange(nrows, dtype=np.int32())),
-        }))
-    del results
-
-    index = pa.concat_tables(per_file_tables)
-    del per_file_tables
-
-    total_tokens = pc.sum(index.column("est_tokens")).as_py()
-    print(f"\nIndex: {len(index):,} rows, {_fmt_tokens(total_tokens)} total tokens")
-
-    # Score distribution
-    vc = pc.value_counts(index.column("safety_score"))
-    counts = {v["values"]: v["counts"] for v in vc.to_pylist()}
-    print("\nScore distribution:")
-    for i in range(6):
-        c = counts.get(i, 0)
-        pct = 100 * c / len(index)
-        print(f"  {i}: {c:>12,} ({pct:5.2f}%)")
-
-    return index
+    return stats
 
 
 # ---------------------------------------------------------------------------
-# New annotation-based sampling (default)
+# Budget computation
 # ---------------------------------------------------------------------------
 
 
-def mark_and_sample(
-    index: pa.Table,
-    target_tokens: float,
-    seed: int,
-    annotation_threshold: int = 3,
-) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray], dict]:
-    """Mark annotations and sample two pools preserving the annotation ratio.
+def compute_budgets(
+    stats: list[FileStats],
+    target_tokens: float | None,
+) -> tuple[dict[int, float], dict[int, float], dict]:
+    """Compute per-file token budgets for annotated and unannotated splits.
 
-    Phase 1 (budget-independent): all rows with safety_score >= *annotation_threshold*
-    are annotated.  An equal token budget of lower-score rows (sorted by priority)
-    is also annotated.  This marking is deterministic and independent of
-    *target_tokens*.
-
-    Phase 2 (budget-dependent): each pool (annotated / unannotated) is filled to
-    ``target_tokens * R`` and ``target_tokens * (1-R)`` respectively, where R is the
-    annotation ratio from Phase 1.
-
-    Returns ``(ann_files_needed, unann_files_needed, stats_dict)`` where each
-    files_needed is ``{file_idx: np.ndarray of row indices within that file}``.
+    Returns (ann_budgets, unann_budgets, summary) where each budget dict
+    maps file_index → token budget for that split.
     """
-    total_available = pc.sum(index.column("est_tokens")).as_py()
-    est_tokens = index.column("est_tokens").to_numpy(zero_copy_only=False)
+    global_above = sum(s.above_tokens for s in stats)
+    global_below = sum(s.below_tokens for s in stats)
+    global_total = global_above + global_below
+    global_rows = sum(s.total_rows for s in stats)
 
-    # Global per-row priority — ensures monotonic subset inclusion.
-    rng = np.random.default_rng(seed)
-    priorities = rng.random(len(index))
+    # Annotation marking: above-threshold tokens + matched below-threshold tokens
+    target_below_sample = min(global_above, global_below)
+    total_annotated = global_above + target_below_sample
+    total_unannotated = global_total - total_annotated
+    annotation_ratio = total_annotated / global_total if global_total > 0 else 0
 
-    # ── Phase 1: annotation marking (budget-independent) ─────────────
-    scores = index.column("safety_score")
-    high_mask = pc.greater_equal(scores, annotation_threshold)
-    high_indices = pc.indices_nonzero(high_mask).to_numpy().copy()
-    low_indices = pc.indices_nonzero(pc.invert(high_mask)).to_numpy().copy()
+    # Apply token budget
+    if target_tokens is not None and target_tokens < global_total:
+        scale = target_tokens / global_total
+    else:
+        scale = 1.0
+        target_tokens = global_total
 
-    high_score_tokens = float(est_tokens[high_indices].sum())
+    # Per-file below-threshold sampling budget (proportional to file's below tokens)
+    below_budgets: dict[int, float] = {}
+    for s in stats:
+        if global_below > 0:
+            below_budgets[s.file_index] = target_below_sample * scale * (s.below_tokens / global_below)
+        else:
+            below_budgets[s.file_index] = 0.0
 
-    # Sample low-score rows to match high-score token count
-    low_sorted = low_indices[np.argsort(priorities[low_indices])]
-    sampled_low, sampled_low_tokens = _fill_budget(
-        low_sorted, est_tokens, high_score_tokens,
-    )
-    if sampled_low_tokens < high_score_tokens:
-        print(f"  WARNING: low-score pool shortfall — got {_fmt_tokens(sampled_low_tokens)} "
-              f"of {_fmt_tokens(high_score_tokens)} target")
+    # Per-file annotated budget = file's above tokens * scale + file's below sample budget
+    ann_budgets: dict[int, float] = {}
+    unann_budgets: dict[int, float] = {}
+    for s in stats:
+        ann_budgets[s.file_index] = s.above_tokens * scale + below_budgets[s.file_index]
+        unann_budgets[s.file_index] = (s.below_tokens * scale) - below_budgets[s.file_index]
 
-    # Build annotation mask (fixed per row, independent of target_tokens)
-    is_annotated = np.zeros(len(index), dtype=bool)
-    is_annotated[high_indices] = True
-    is_annotated[sampled_low] = True
-
-    annotated_indices = np.where(is_annotated)[0]
-    unannotated_indices = np.where(~is_annotated)[0]
-
-    total_annotated_tokens = float(est_tokens[annotated_indices].sum())
-    annotation_ratio = total_annotated_tokens / total_available
-
-    print(f"\nAnnotation marking (threshold={annotation_threshold}):")
-    print(f"  High-score (>={annotation_threshold}): {len(high_indices):,} rows, "
-          f"{_fmt_tokens(high_score_tokens)} tokens")
-    print(f"  Sampled low-score:  {len(sampled_low):,} rows, "
-          f"{_fmt_tokens(sampled_low_tokens)} tokens")
-    print(f"  Total annotated:    {len(annotated_indices):,} rows, "
-          f"{_fmt_tokens(total_annotated_tokens)} tokens "
-          f"({100 * annotation_ratio:.2f}%)")
-    print(f"  Total unannotated:  {len(unannotated_indices):,} rows")
-
-    # ── Phase 2: budget filling (preserving annotation ratio) ────────
-    if total_available < target_tokens:
-        scale = total_available / target_tokens
-        print(f"\nWARNING: available tokens ({_fmt_tokens(total_available)}) < "
-              f"target ({_fmt_tokens(target_tokens)}). "
-              f"Scaling budgets by {scale:.4f}.")
-        target_tokens = total_available
-
-    ann_budget = target_tokens * annotation_ratio
-    unann_budget = target_tokens * (1.0 - annotation_ratio)
-
-    print(f"\nSampling budgets:")
-    print(f"  Annotated:   {_fmt_tokens(ann_budget)} ({100 * annotation_ratio:.2f}%)")
-    print(f"  Unannotated: {_fmt_tokens(unann_budget)} ({100 * (1 - annotation_ratio):.2f}%)")
-    print(f"  Total:       {_fmt_tokens(target_tokens)}")
-
-    ann_sorted = annotated_indices[np.argsort(priorities[annotated_indices])]
-    unann_sorted = unannotated_indices[np.argsort(priorities[unannotated_indices])]
-
-    ann_selected, ann_actual = _fill_budget(ann_sorted, est_tokens, ann_budget)
-    unann_selected, unann_actual = _fill_budget(unann_sorted, est_tokens, unann_budget)
-
-    # Compute stats before freeing sampling arrays
-    total_selected = len(ann_selected) + len(unann_selected)
-    total_selected_tokens = ann_actual + unann_actual
-
-    print(f"\nSampling result:")
-    print(f"  Annotated:   {len(ann_selected):,} rows, {_fmt_tokens(ann_actual)} tokens")
-    print(f"  Unannotated: {len(unann_selected):,} rows, {_fmt_tokens(unann_actual)} tokens")
-    print(f"  Total:       {total_selected:,} rows, {_fmt_tokens(total_selected_tokens)} tokens")
-
-    stats = {
-        "target_tokens": target_tokens,
-        "total_available_tokens": total_available,
-        "annotation_threshold": annotation_threshold,
+    summary = {
+        "global_rows": global_rows,
+        "global_tokens": global_total,
+        "global_above_tokens": global_above,
+        "global_below_tokens": global_below,
+        "target_below_sample": target_below_sample * scale,
         "annotation_ratio": annotation_ratio,
-        "high_score_rows": len(high_indices),
-        "high_score_tokens": high_score_tokens,
-        "sampled_good_rows": len(sampled_low),
-        "sampled_good_tokens": sampled_low_tokens,
-        "annotated": {
-            "budget": ann_budget,
-            "selected_rows": len(ann_selected),
-            "selected_tokens": ann_actual,
-        },
-        "unannotated": {
-            "budget": unann_budget,
-            "selected_rows": len(unann_selected),
-            "selected_tokens": unann_actual,
-        },
-        "selected_rows": total_selected,
-        "selected_tokens": total_selected_tokens,
-    }
-
-    # Build selection maps, then free all sampling state + force OS to reclaim pages
-    file_idx_np = index.column("file_idx").to_numpy(zero_copy_only=False)
-    row_idx_np = index.column("row_idx").to_numpy(zero_copy_only=False)
-
-    def _build_files_needed(selected_indices: np.ndarray) -> dict[int, np.ndarray]:
-        sel_fidxs = file_idx_np[selected_indices]
-        sel_rowidxs = row_idx_np[selected_indices]
-        order = np.argsort(sel_fidxs, kind='mergesort')
-        sorted_fidxs = sel_fidxs[order]
-        sorted_rowidxs = sel_rowidxs[order]
-        unique_fidxs, counts = np.unique(sorted_fidxs, return_counts=True)
-        splits = np.cumsum(counts)
-        starts = np.concatenate([[0], splits[:-1]])
-        files_needed: dict[int, np.ndarray] = {}
-        for fidx, start, count in zip(unique_fidxs, starts, counts):
-            files_needed[int(fidx)] = sorted_rowidxs[int(start):int(start + count)].copy()
-        return files_needed
-
-    print("\nBuilding selection maps...")
-    ann_files = _build_files_needed(ann_selected)
-    unann_files = _build_files_needed(unann_selected)
-
-    # Free all large objects and force glibc to return pages to OS
-    del (index, file_idx_np, row_idx_np, est_tokens, priorities,
-         high_indices, low_indices, sampled_low, annotated_indices,
-         unannotated_indices, ann_sorted, unann_sorted, is_annotated,
-         ann_selected, unann_selected)
-    import gc, ctypes
-    gc.collect()
-    ctypes.CDLL("libc.so.6").malloc_trim(0)
-
-    return ann_files, unann_files, stats
-
-
-# ---------------------------------------------------------------------------
-# Legacy stratified sampling (activated by --bad-fraction + --good-fraction)
-# ---------------------------------------------------------------------------
-
-
-def sample_strata(
-    index: pa.Table,
-    target_tokens: float,
-    bad_fraction: float,
-    good_fraction: float,
-    seed: int,
-) -> tuple[pa.Table, dict]:
-    """Legacy: sample three independent strata and assign has_annotation flags.
-
-    Kept for backward compatibility.  Activated when both --bad-fraction and
-    --good-fraction are explicitly provided on the command line.
-
-    Returns (selected_table, stats_dict) where selected_table is the index
-    filtered to selected rows with an added ``has_annotation`` boolean column.
-    """
-    total_available = pc.sum(index.column("est_tokens")).as_py()
-    unmarked_fraction = 1.0 - bad_fraction - good_fraction
-
-    if total_available < target_tokens:
-        scale = total_available / target_tokens
-        print(f"\nWARNING: available tokens ({_fmt_tokens(total_available)}) < "
-              f"target ({_fmt_tokens(target_tokens)}). "
-              f"Scaling budgets by {scale:.4f} to maintain proportions.")
-        target_tokens = total_available
-
-    bad_budget = target_tokens * bad_fraction
-    good_budget = target_tokens * good_fraction
-    unmarked_budget = target_tokens * unmarked_fraction
-
-    print(f"\nSampling budgets (legacy mode):")
-    print(f"  Bad (4-5) annotated:  {_fmt_tokens(bad_budget)}")
-    print(f"  Good (0-3) annotated: {_fmt_tokens(good_budget)}")
-    print(f"  Unmarked:             {_fmt_tokens(unmarked_budget)}")
-    print(f"  Total target:         {_fmt_tokens(target_tokens)}")
-
-    scores = index.column("safety_score")
-    bad_mask = pc.or_(pc.equal(scores, 4), pc.equal(scores, 5))
-    good_mask = pc.invert(bad_mask)
-
-    bad_indices = pc.indices_nonzero(bad_mask).to_numpy().copy()
-    good_indices = pc.indices_nonzero(good_mask).to_numpy().copy()
-
-    rng = np.random.default_rng(seed)
-    priorities = rng.random(len(index))
-
-    bad_indices = bad_indices[np.argsort(priorities[bad_indices])]
-    good_indices = good_indices[np.argsort(priorities[good_indices])]
-
-    est_tokens = index.column("est_tokens").to_numpy(zero_copy_only=False)
-
-    bad_selected, bad_actual = _fill_budget(bad_indices, est_tokens, bad_budget)
-    if bad_actual < bad_budget:
-        print(f"  WARNING: bad pool shortfall — got {_fmt_tokens(bad_actual)} "
-              f"of {_fmt_tokens(bad_budget)} budget")
-
-    good_selected, good_actual = _fill_budget(good_indices, est_tokens, good_budget)
-    if good_actual < good_budget:
-        print(f"  WARNING: good pool shortfall — got {_fmt_tokens(good_actual)} "
-              f"of {_fmt_tokens(good_budget)} budget")
-
-    annotated_mask = np.zeros(len(index), dtype=bool)
-    annotated_mask[bad_selected] = True
-    annotated_mask[good_selected] = True
-    remainder_indices = np.where(~annotated_mask)[0]
-    remainder_indices = remainder_indices[np.argsort(priorities[remainder_indices])]
-
-    unmarked_selected, unmarked_actual = _fill_budget(
-        remainder_indices, est_tokens, unmarked_budget,
-    )
-    if unmarked_actual < unmarked_budget:
-        print(f"  WARNING: unmarked pool shortfall — got {_fmt_tokens(unmarked_actual)} "
-              f"of {_fmt_tokens(unmarked_budget)} budget")
-
-    all_selected = np.concatenate([bad_selected, good_selected, unmarked_selected])
-    all_annotated = np.concatenate([
-        np.ones(len(bad_selected), dtype=bool),
-        np.ones(len(good_selected), dtype=bool),
-        np.zeros(len(unmarked_selected), dtype=bool),
-    ])
-
-    sort_order = np.argsort(all_selected)
-    selected_indices = all_selected[sort_order]
-    annotation_flags = all_annotated[sort_order]
-
-    selected_table = index.take(pa.array(selected_indices, type=pa.int64()))
-    selected_table = selected_table.append_column(
-        "has_annotation", pa.array(annotation_flags.tolist(), type=pa.bool_()),
-    )
-
-    total_selected_tokens = pc.sum(selected_table.column("est_tokens")).as_py()
-    n_annotated = int(annotation_flags.sum())
-    annotated_tokens = float(est_tokens[bad_selected].sum() + est_tokens[good_selected].sum())
-
-    print(f"\nSampling result:")
-    print(f"  Selected rows:     {len(selected_table):,}")
-    print(f"  Selected tokens:   {_fmt_tokens(total_selected_tokens)}")
-    print(f"  Annotated rows:    {n_annotated:,} ({100 * n_annotated / len(selected_table):.2f}%)")
-    print(f"  Annotated tokens:  {_fmt_tokens(annotated_tokens)} "
-          f"({100 * annotated_tokens / total_selected_tokens:.2f}%)")
-    print(f"    Bad (4-5):       {len(bad_selected):,} rows, {_fmt_tokens(bad_actual)} tokens")
-    print(f"    Good (0-3):      {len(good_selected):,} rows, {_fmt_tokens(good_actual)} tokens")
-    print(f"  Unmarked rows:     {len(unmarked_selected):,}")
-
-    stats = {
         "target_tokens": target_tokens,
-        "total_available_tokens": total_available,
-        "selected_rows": len(selected_table),
-        "selected_tokens": total_selected_tokens,
-        "bad_annotated_rows": len(bad_selected),
-        "bad_annotated_tokens": bad_actual,
-        "good_annotated_rows": len(good_selected),
-        "good_annotated_tokens": good_actual,
-        "unmarked_rows": len(unmarked_selected),
-        "unmarked_tokens": unmarked_actual,
+        "scale": scale,
     }
 
-    return selected_table, stats
+    print(f"\n  Total rows:        {global_rows:,}")
+    print(f"  Total tokens:      {_fmt(global_total)}")
+    print(f"  Above threshold:   {_fmt(global_above)} ({100*global_above/global_total:.2f}%)")
+    print(f"  Annotation ratio:  {100*annotation_ratio:.2f}%")
+    print(f"  Target tokens:     {_fmt(target_tokens)}")
+    print(f"  Scale:             {scale:.4f}")
+
+    return ann_budgets, unann_budgets, summary
 
 
 # ---------------------------------------------------------------------------
-# Shared utilities
+# Pass 2: per-file selection and writing
 # ---------------------------------------------------------------------------
 
 
-def _fill_budget(
-    indices: np.ndarray,
-    est_tokens: np.ndarray,
-    budget: float,
-) -> tuple[np.ndarray, float]:
-    """Greedily select indices until token budget is met.
+def _process_one_file(
+    file_path: str,
+    file_index: int,
+    ann_budget: float,
+    unann_budget: float,
+    text_column: str,
+    chars_per_token: float,
+    threshold: int,
+    seed: int,
+    ann_dir: str,
+    unann_dir: str,
+) -> dict:
+    """Read one file, select rows, write to both output directories."""
+    table = pq.read_table(file_path)
+    n = len(table)
 
-    Returns (selected_indices as numpy array, actual_tokens).
-    """
-    if len(indices) == 0:
-        return indices, 0.0
-    tokens_for_indices = est_tokens[indices]
-    cumsum = np.cumsum(tokens_for_indices)
+    # Recompute est_tokens (cheap, avoids storing globally)
+    lengths = pc.utf8_length(table.column(text_column)).cast(pa.float64())
+    est_tokens = pc.divide(lengths, pa.scalar(chars_per_token, pa.float64()))
+    est_tokens = pc.min_element_wise(est_tokens, pa.scalar(float(MAX_EST_TOKENS), pa.float64()))
+    est_np = est_tokens.to_numpy(zero_copy_only=False)
+
+    scores = table.column("safety_score")
+    above_mask = pc.greater_equal(scores, threshold).to_numpy(zero_copy_only=False)
+
+    # Per-file deterministic RNG
+    rng = np.random.default_rng(seed=(seed, file_index))
+
+    # Select above-threshold rows (all annotated, but budget-limited)
+    above_indices = np.where(above_mask)[0]
+    below_indices = np.where(~above_mask)[0]
+
+    # Shuffle both pools
+    rng.shuffle(above_indices)
+    rng.shuffle(below_indices)
+
+    # Fill annotated budget: first above-threshold rows, then sampled below
+    ann_selected_above = _fill_budget(above_indices, est_np, ann_budget)
+    remaining_ann_budget = ann_budget - est_np[ann_selected_above].sum() if len(ann_selected_above) > 0 else ann_budget
+
+    ann_selected_below = _fill_budget(below_indices, est_np, remaining_ann_budget) if remaining_ann_budget > 0 else np.array([], dtype=np.intp)
+
+    # Remaining below-threshold rows go to unannotated pool
+    ann_below_set = set(ann_selected_below.tolist())
+    unann_candidates = np.array([i for i in below_indices if i not in ann_below_set], dtype=np.intp)
+    # unann_candidates are already in shuffled order (from below_indices shuffle)
+    unann_selected = _fill_budget(unann_candidates, est_np, unann_budget)
+
+    # Build output masks
+    is_annotated = np.zeros(n, dtype=bool)
+    is_annotated[ann_selected_above] = True
+    is_annotated[ann_selected_below] = True
+
+    is_selected = np.zeros(n, dtype=bool)
+    is_selected[ann_selected_above] = True
+    is_selected[ann_selected_below] = True
+    is_selected[unann_selected] = True
+
+    is_bad = above_mask
+
+    # Add columns
+    table = table.append_column("has_annotation", pa.array(is_annotated))
+    table = table.append_column("is_bad", pa.array(is_bad))
+
+    # Write annotated split
+    ann_mask = is_annotated & is_selected
+    ann_rows = int(ann_mask.sum())
+    if ann_rows > 0:
+        ann_table = table.filter(pa.array(ann_mask))
+        pq.write_table(ann_table, f"{ann_dir}/{Path(file_path).name}")
+
+    # Write unannotated split
+    unann_mask = ~is_annotated & is_selected
+    unann_rows = int(unann_mask.sum())
+    if unann_rows > 0:
+        unann_table = table.filter(pa.array(unann_mask))
+        pq.write_table(unann_table, f"{unann_dir}/{Path(file_path).name}")
+
+    return {
+        "file_index": file_index,
+        "ann_rows": ann_rows,
+        "unann_rows": unann_rows,
+        "ann_tokens": float(est_np[ann_mask].sum()),
+        "unann_tokens": float(est_np[unann_mask].sum()),
+    }
+
+
+def _fill_budget(indices: np.ndarray, est_tokens: np.ndarray, budget: float) -> np.ndarray:
+    """Greedily select indices until token budget is met."""
+    if len(indices) == 0 or budget <= 0:
+        return np.array([], dtype=np.intp)
+    tokens = est_tokens[indices]
+    cumsum = np.cumsum(tokens)
     n_take = np.searchsorted(cumsum, budget, side="left") + 1
     n_take = min(n_take, len(indices))
-    selected = indices[:n_take]
-    actual = float(cumsum[n_take - 1]) if n_take > 0 else 0.0
-    return selected, actual
+    return indices[:n_take]
 
 
-def _read_and_filter(
-    fpath: Path,
-    row_indices: np.ndarray,
-    has_annotation_value: bool,
-) -> pa.Table:
-    """Read a source file, select rows by position, and add has_annotation column."""
-    table = pq.read_table(fpath)
-    filtered = table.take(pa.array(row_indices, type=pa.int32()))
-    filtered = filtered.append_column(
-        "has_annotation",
-        pa.array([has_annotation_value] * len(filtered), type=pa.bool_()),
-    )
-    return filtered
-
-
-def _write_partition(
-    source_dir: Path,
-    files_needed: dict[int, np.ndarray],
-    output_subdir: Path,
-    rows_per_file: int,
-    has_annotation_value: bool,
-    write_workers: int = _DEFAULT_WRITE_WORKERS,
-) -> None:
-    """Write a partition of selected rows to an output directory.
-
-    Re-reads source files in parallel for selected rows, adds
-    ``has_annotation`` column, and writes buffered parquet output.
-    """
-    source_files = sorted(source_dir.glob("part_*.parquet"))
-
-    output_subdir.mkdir(parents=True, exist_ok=True)
-
-    buffer_rows: list[pa.Table] = []
-    buffer_count = 0
-    part_idx = 0
-
-    def _flush():
-        nonlocal buffer_rows, buffer_count, part_idx
-        if not buffer_rows:
-            return
-        combined = pa.concat_tables(buffer_rows, promote_options="permissive")
-        out_path = output_subdir / f"part_{part_idx:05d}.parquet"
-        pq.write_table(combined, str(out_path))
-        part_idx += 1
-        buffer_rows = []
-        buffer_count = 0
-
-    label = "annotated" if has_annotation_value else "unannotated"
-    sorted_fidxs = sorted(files_needed.keys())
-    print(f"\n  Writing {label} to {output_subdir}...")
-    print(f"    Source files to read: {len(sorted_fidxs)} of {len(source_files)}")
-    print(f"    Workers: {write_workers}")
-
-    # Parallel reads, sequential writes in file_idx order
-    with ThreadPoolExecutor(max_workers=write_workers) as pool:
-        future_to_fidx = {
-            pool.submit(
-                _read_and_filter,
-                source_files[fidx], files_needed[fidx],
-                has_annotation_value,
-            ): fidx
-            for fidx in sorted_fidxs
-        }
-
-        # Collect results as they complete, buffer by fidx for ordered writing
-        pending: dict[int, pa.Table] = {}
-        next_fidx_idx = 0  # index into sorted_fidxs
-
-        with tqdm(total=len(sorted_fidxs), desc=f"  {label}") as pbar:
-            for future in as_completed(future_to_fidx):
-                fidx = future_to_fidx[future]
-                pending[fidx] = future.result()
-                # Drain pending in order
-                while next_fidx_idx < len(sorted_fidxs) and sorted_fidxs[next_fidx_idx] in pending:
-                    filtered = pending.pop(sorted_fidxs[next_fidx_idx])
-                    buffer_rows.append(filtered)
-                    buffer_count += len(filtered)
-                    if buffer_count >= rows_per_file:
-                        _flush()
-                    next_fidx_idx += 1
-                    pbar.update(1)
-
-    _flush()
-    print(f"    Wrote {part_idx} files")
-
-
-def write_output(
-    source_dir: Path,
-    selected: pa.Table,
+def write_files(
+    stats: list[FileStats],
+    ann_budgets: dict[int, float],
+    unann_budgets: dict[int, float],
+    text_column: str,
+    chars_per_token: float,
+    threshold: int,
+    seed: int,
     output_dir: Path,
-    id_column: str,
-    rows_per_file: int,
-) -> None:
-    """Legacy: write single output directory with mixed annotated/unannotated rows."""
-    source_files = sorted(source_dir.glob("part_*.parquet"))
+    workers: int,
+) -> list[dict]:
+    """Pass 2: process all files in parallel, write two output directories."""
+    ann_dir = output_dir / "annotated"
+    unann_dir = output_dir / "unannotated"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    unann_dir.mkdir(parents=True, exist_ok=True)
 
-    id_col = selected.column("id").to_pylist()
-    file_idx_col = selected.column("file_idx").to_pylist()
-    annotation_col = selected.column("has_annotation").to_pylist()
+    print(f"\nPass 2: writing to {output_dir} ({workers} workers)...")
 
-    id_to_annotation: dict[str, bool] = dict(zip(id_col, annotation_col))
+    results = []
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _process_one_file,
+                s.file_path, s.file_index,
+                ann_budgets[s.file_index], unann_budgets[s.file_index],
+                text_column, chars_per_token, threshold, seed,
+                str(ann_dir), str(unann_dir),
+            ): s.file_index
+            for s in stats
+        }
+        with tqdm(total=len(stats), desc="Write") as pbar:
+            for future in as_completed(futures):
+                results.append(future.result())
+                pbar.update(1)
 
-    files_needed: dict[int, set[str]] = {}
-    for doc_id, fidx in zip(id_col, file_idx_col):
-        files_needed.setdefault(fidx, set()).add(doc_id)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    buffer_rows: list[pa.Table] = []
-    buffer_count = 0
-    part_idx = 0
-
-    def _flush():
-        nonlocal buffer_rows, buffer_count, part_idx
-        if not buffer_rows:
-            return
-        combined = pa.concat_tables(buffer_rows, promote_options="permissive")
-        out_path = output_dir / f"part_{part_idx:05d}.parquet"
-        pq.write_table(combined, str(out_path))
-        part_idx += 1
-        buffer_rows = []
-        buffer_count = 0
-
-    print(f"\nWriting output to {output_dir}...")
-    print(f"  Source files to read: {len(files_needed)} of {len(source_files)}")
-
-    for fidx in tqdm(sorted(files_needed.keys()), desc="Writing output"):
-        target_ids = files_needed[fidx]
-        fpath = source_files[fidx]
-        table = pq.read_table(fpath)
-
-        ids = table.column(id_column)
-        mask = pc.is_in(ids, value_set=pa.array(list(target_ids), type=ids.type))
-        filtered = table.filter(mask)
-
-        filtered_ids = filtered.column(id_column).to_pylist()
-        filtered = filtered.append_column(
-            "has_annotation",
-            pa.array([id_to_annotation[doc_id] for doc_id in filtered_ids], type=pa.bool_()),
-        )
-
-        buffer_rows.append(filtered)
-        buffer_count += len(filtered)
-
-        if buffer_count >= rows_per_file:
-            _flush()
-
-    _flush()
-    print(f"  Wrote {part_idx} output files")
+    return results
 
 
-def _fmt_tokens(n: float) -> str:
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
+def _fmt(n: float) -> str:
     if n >= 1e12:
         return f"{n / 1e12:.2f}T"
     if n >= 1e9:
@@ -601,39 +350,28 @@ def _fmt_tokens(n: float) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments."""
     scratch = os.environ.get(
-        "SCRATCH",
-        f"/iopsstor/scratch/cscs/{os.environ.get('USER', 'unknown')}",
+        "SCRATCH", f"/iopsstor/scratch/cscs/{os.environ.get('USER', 'unknown')}"
     )
-
     p = argparse.ArgumentParser(
         description="Annotation-based subsampling with two output datasets.",
     )
     p.add_argument("--source-dir", type=str, required=True,
-                   help="Dir with part_*.parquet source files (must include safety_score column)")
+                   help="Dir with part_*.parquet source files")
     p.add_argument("--output-dir", type=str, default=f"{scratch}/subsampled",
-                   help="Output directory (default: $SCRATCH/subsampled)")
-    p.add_argument("--target-tokens", type=float, default=500_000_000_000,
-                   help="Total token budget (default: 500B)")
+                   help="Output directory")
+    p.add_argument("--target-tokens", type=float, default=None,
+                   help="Total token budget (default: use all)")
     p.add_argument("--annotation-threshold", type=int, default=3,
-                   help="Safety scores >= this are unconditionally annotated (default: 3)")
-    p.add_argument("--bad-fraction", type=float, default=None,
-                   help="Legacy: fraction for bad (4-5) stratum. Must set with --good-fraction.")
-    p.add_argument("--good-fraction", type=float, default=None,
-                   help="Legacy: fraction for good (0-3) stratum. Must set with --bad-fraction.")
+                   help="Scores >= this are unconditionally annotated (default: 3)")
     p.add_argument("--chars-per-token", type=float, default=4.068,
                    help="Chars-per-token ratio (default: 4.068)")
     p.add_argument("--seed", type=int, default=42,
                    help="Random seed (default: 42)")
-    p.add_argument("--id-column", type=str, default="id",
-                   help="ID column name (default: id)")
     p.add_argument("--text-column", type=str, default="text",
                    help="Text column name (default: text)")
-    p.add_argument("--rows-per-file", type=int, default=500_000,
-                   help="Max rows per output parquet file (default: 500000)")
-    p.add_argument("--scan-workers", type=int, default=_DEFAULT_SCAN_WORKERS,
-                   help=f"Parallel workers for source file scan (default: {_DEFAULT_SCAN_WORKERS})")
+    p.add_argument("--workers", type=int, default=_DEFAULT_WORKERS,
+                   help=f"Parallel workers (default: {_DEFAULT_WORKERS})")
     p.add_argument("--overwrite", action="store_true",
                    help="Remove existing output directory")
     return p.parse_args()
@@ -647,105 +385,72 @@ def main() -> None:
     if not source_dir.exists():
         raise FileNotFoundError(f"Source dir not found: {source_dir}")
 
-    # Legacy mode: both fractions must be set together
-    legacy_mode = args.bad_fraction is not None or args.good_fraction is not None
-    if legacy_mode and not (args.bad_fraction is not None and args.good_fraction is not None):
-        raise ValueError("--bad-fraction and --good-fraction must both be set for legacy mode")
-
     if args.overwrite and output_dir.exists():
+        import shutil
         print(f"--overwrite: removing {output_dir}")
         shutil.rmtree(output_dir)
-    if not legacy_mode and output_dir.exists():
-        pass  # allow resume with partial results
-    elif output_dir.exists():
+    if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(
-            f"Output dir already exists: {output_dir} (use --overwrite to replace)"
+            f"Output dir not empty: {output_dir} (use --overwrite to replace)"
         )
 
     t_start = time.time()
 
-    # Pass 1: scan source files and build index (parallel)
-    index = scan_source(
+    # Pass 1: scan
+    stats = scan_files(
         source_dir, args.text_column, args.chars_per_token,
-        scan_workers=args.scan_workers,
+        args.annotation_threshold, args.workers,
     )
 
-    if legacy_mode:
-        # Legacy: three independent strata, single output directory
-        print("\n*** Legacy stratified mode ***")
-        selected, stats = sample_strata(
-            index, args.target_tokens,
-            args.bad_fraction, args.good_fraction, args.seed,
-        )
-        write_output(
-            source_dir, selected, output_dir, args.id_column, args.rows_per_file,
-        )
-        metadata = {
-            "source_dir": str(source_dir),
-            "target_tokens": args.target_tokens,
-            "bad_fraction": args.bad_fraction,
-            "good_fraction": args.good_fraction,
-            "chars_per_token": args.chars_per_token,
-            "seed": args.seed,
-            "id_column": args.id_column,
-            "text_column": args.text_column,
-            "rows_per_file": args.rows_per_file,
-            **stats,
-        }
-    else:
-        # Default: annotation-based split, two output directories
-        ann_files, unann_files, stats = mark_and_sample(
-            index, args.target_tokens, args.seed, args.annotation_threshold,
-        )
+    # Compute budgets
+    ann_budgets, unann_budgets, summary = compute_budgets(stats, args.target_tokens)
 
-        print(f"\nWriting output...")
-        ann_dir = output_dir / "annotated"
-        unann_dir = output_dir / "unannotated"
+    # Pass 2: write
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results = write_files(
+        stats, ann_budgets, unann_budgets,
+        args.text_column, args.chars_per_token,
+        args.annotation_threshold, args.seed,
+        output_dir, args.workers,
+    )
 
-        if (ann_dir / "DONE").exists():
-            print(f"\n  Skipping annotated (DONE marker found at {ann_dir})")
-        else:
-            if ann_dir.exists():
-                shutil.rmtree(ann_dir)  # clean up partial write
-            _write_partition(
-                source_dir, ann_files, ann_dir,
-                args.rows_per_file, has_annotation_value=True,
-            )
-            (ann_dir / "DONE").touch()
-        del ann_files
-
-        if (unann_dir / "DONE").exists():
-            print(f"\n  Skipping unannotated (DONE marker found at {unann_dir})")
-        else:
-            if unann_dir.exists():
-                shutil.rmtree(unann_dir)  # clean up partial write
-            _write_partition(
-                source_dir, unann_files, unann_dir,
-                args.rows_per_file, has_annotation_value=False,
-            )
-            (unann_dir / "DONE").touch()
-        metadata = {
-            "source_dir": str(source_dir),
-            "target_tokens": args.target_tokens,
-            "annotation_threshold": args.annotation_threshold,
-            "chars_per_token": args.chars_per_token,
-            "seed": args.seed,
-            "id_column": args.id_column,
-            "text_column": args.text_column,
-            "rows_per_file": args.rows_per_file,
-            **stats,
-        }
-
+    # Summary
     elapsed = time.time() - t_start
-    metadata["elapsed_s"] = round(elapsed, 1)
-    metadata["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    total_ann_rows = sum(r["ann_rows"] for r in results)
+    total_unann_rows = sum(r["unann_rows"] for r in results)
+    total_ann_tokens = sum(r["ann_tokens"] for r in results)
+    total_unann_tokens = sum(r["unann_tokens"] for r in results)
+
+    metadata = {
+        "source_dir": str(source_dir),
+        "annotation_threshold": args.annotation_threshold,
+        "chars_per_token": args.chars_per_token,
+        "seed": args.seed,
+        "text_column": args.text_column,
+        "workers": args.workers,
+        **summary,
+        "annotated": {
+            "selected_rows": total_ann_rows,
+            "selected_tokens": total_ann_tokens,
+        },
+        "unannotated": {
+            "selected_rows": total_unann_rows,
+            "selected_tokens": total_unann_tokens,
+        },
+        "selected_rows": total_ann_rows + total_unann_rows,
+        "selected_tokens": total_ann_tokens + total_unann_tokens,
+        "elapsed_s": round(elapsed, 1),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
     print(f"\n{'='*60}")
-    print(f"  Output:    {output_dir}")
-    print(f"  Tokens:    {_fmt_tokens(stats['selected_tokens'])}")
-    print(f"  Rows:      {stats['selected_rows']:,}")
-    print(f"  Elapsed:   {elapsed:.1f}s")
+    print(f"  Output:      {output_dir}")
+    print(f"  Annotated:   {total_ann_rows:,} rows, {_fmt(total_ann_tokens)} tokens")
+    print(f"  Unannotated: {total_unann_rows:,} rows, {_fmt(total_unann_tokens)} tokens")
+    print(f"  Total:       {total_ann_rows + total_unann_rows:,} rows, "
+          f"{_fmt(total_ann_tokens + total_unann_tokens)} tokens")
+    print(f"  Elapsed:     {elapsed:.1f}s")
     print(f"{'='*60}")
 
 
