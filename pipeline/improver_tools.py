@@ -765,6 +765,11 @@ def cmd_test_judge(
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
+    from pipeline.config import CHARTER_PATH, WRITING_GUIDELINES_PATH
+
+    charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
+
     print(f"Test judging {len(items)} items with {prompt.name} (model={alias})...")
     judged = judge_batch(
         items,
@@ -776,6 +781,8 @@ def cmd_test_judge(
         semaphore=semaphore,
         save=False,
         floor_threshold=cfg.phase2.scoring.floor_threshold,
+        charter_text=charter_text,
+        writing_guidelines_text=writing_guidelines_text,
     )
 
     scores = [j["judgment"]["aggregate"] for j in judged]

@@ -144,6 +144,8 @@ def _run_one_pair_phase3_inner(
         client,
         semaphore,
         floor_threshold=cfg.phase3.scoring.floor_threshold,
+        charter_text=charter_text,
+        writing_guidelines_text=writing_guidelines_text,
     )
 
     summary = _make_run_summary(iteration, judged)

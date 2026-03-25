@@ -12,6 +12,14 @@ Both can be brief "all good" for non-problematic texts — that is a valid and c
 
 You are judging the **{part_type}** specifically.
 
+## Constitution
+
+{charter}
+
+## Writing Guidelines
+
+{writing_guidelines}
+
 ## Scoring Dimensions (1-5 scale)
 
 ### Relevance (1-5)

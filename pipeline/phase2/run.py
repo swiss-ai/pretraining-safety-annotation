@@ -409,6 +409,8 @@ async def _judge_one_part(
     model: str,
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
+    charter_text: str = "",
+    writing_guidelines_text: str = "",
 ) -> tuple[dict, str, str | None, dict]:
     """Judge a single part (preflection or reflection) of a generated item.
 
@@ -417,8 +419,11 @@ async def _judge_one_part(
 
     Returns (parsed_judgment, raw_response, reasoning_content, usage_dict).
     """
-    system_prompt = prompt_template.replace("{part_type}", part_type).replace(
-        "{accept_threshold}", str(accept_threshold)
+    system_prompt = (
+        prompt_template.replace("{part_type}", part_type)
+        .replace("{accept_threshold}", str(accept_threshold))
+        .replace("{charter}", charter_text)
+        .replace("{writing_guidelines}", writing_guidelines_text)
     )
 
     if part_type == "preflection":
@@ -451,6 +456,8 @@ def judge_batch(
     semaphore: asyncio.Semaphore,
     save: bool = True,
     floor_threshold: int = 2,
+    charter_text: str = "",
+    writing_guidelines_text: str = "",
 ) -> list[dict]:
     """Judge generated reflections. Judges preflection and reflection separately.
 
@@ -474,6 +481,8 @@ def judge_batch(
             model,
             client,
             semaphore,
+            charter_text=charter_text,
+            writing_guidelines_text=writing_guidelines_text,
         )
         ref_parsed, ref_raw, ref_reasoning, ref_usage = await _judge_one_part(
             item,
@@ -483,6 +492,8 @@ def judge_batch(
             model,
             client,
             semaphore,
+            charter_text=charter_text,
+            writing_guidelines_text=writing_guidelines_text,
         )
         judge_latency_ms = int((time.monotonic() - t0) * 1000)
 
@@ -644,6 +655,8 @@ def _run_one_pair_inner(
         client,
         semaphore,
         floor_threshold=cfg.phase2.scoring.floor_threshold,
+        charter_text=charter_text,
+        writing_guidelines_text=writing_guidelines_text,
     )
 
     summary = _make_run_summary(iteration, judged)
@@ -862,6 +875,10 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
                 alias,
             )
 
+            charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+            writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(
+                encoding="utf-8"
+            )
             judged = judge_batch(
                 items=needs_judging,
                 prompt_path=judge_file,
@@ -872,6 +889,8 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
                 semaphore=semaphore,
                 save=False,
                 floor_threshold=cfg.phase2.scoring.floor_threshold,
+                charter_text=charter_text,
+                writing_guidelines_text=writing_guidelines_text,
             )
 
             for item in judged:
