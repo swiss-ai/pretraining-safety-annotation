@@ -21,9 +21,21 @@ phase2:
   # - alias: olmo3-32B-think
   #   api_name: jminder/UqFTpAeJcvV4
   #   hf_slug: olmo-ai/olmo-3-32b-thinking
-  - alias: kimi-k2.5
-    api_name: jkminder/lAiFTaihSJ
-    hf_slug: moonshotai/Kimi-K2.5
+  # - alias: kimi-k2.5
+  #   api_name: jkminder/lAiFTaihSJ
+  #   hf_slug: moonshotai/Kimi-K2.5
+  - alias: glm-4.7-flash
+    api_name: zai-org/GLM-4.7-Flash
+    hf_slug: zai-org/GLM-4.7-Flash
+    thinking: false
+  # - alias: llama-3.3-70b-instruct
+  #   api_name: meta-llama/Llama-3.3-70B-Instruct
+  #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
+  #   thinking: false
+  # - alias: apertus-70b-instruct
+  #   api_name: swiss-ai/Apertus-70B-Instruct-2509
+  #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
+    # thinking: false
   generator_models:
   # - alias: glm-4.5-air
   #   api_name: jminder/jZ7aJGjetjNN
@@ -31,9 +43,21 @@ phase2:
   # - alias: olmo3-32B-think
   #   api_name: jminder/UqFTpAeJcvV4
   #   hf_slug: olmo-ai/olmo-3-32b-thinking
-  - alias: kimi-k2.5
-    api_name: jkminder/lAiFTaihSJ
-    hf_slug: moonshotai/Kimi-K2.5
+  # - alias: kimi-k2.5
+  #   api_name: jkminder/lAiFTaihSJ
+  #   hf_slug: moonshotai/Kimi-K2.5
+  - alias: glm-4.7-flash
+    api_name: zai-org/GLM-4.7-Flash
+    hf_slug: zai-org/GLM-4.7-Flash
+    thinking: false
+  # - alias: llama-3.3-70b-instruct
+  #   api_name: meta-llama/Llama-3.3-70B-Instruct
+  #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
+  #   thinking: false
+  # - alias: apertus-70b-instruct
+  #   api_name: swiss-ai/Apertus-70B-Instruct-2509
+  #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
+  #   thinking: false
   improver:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md

@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import signal
 import sys
 import time
@@ -88,6 +89,7 @@ async def _api_call(
     model: str,
     messages: list[dict[str, str]],
     semaphore: asyncio.Semaphore,
+    thinking: bool = False,
 ) -> tuple[str, str | None, dict]:
     """Make a single API call with network-error retry.
 
@@ -95,6 +97,13 @@ async def _api_call(
     if the model does not produce reasoning output. usage_dict contains
     input_tokens, output_tokens, reasoning_tokens.
     """
+    extra_body = None
+    if thinking:
+        extra_body = {
+            "separate_reasoning": True,
+            "chat_template_kwargs": {"enable_thinking": True},
+        }
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -102,14 +111,12 @@ async def _api_call(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    extra_body={
-                        "separate_reasoning": True,
-                        "chat_template_kwargs": {"enable_thinking": True},
-                    },
+                    extra_body=extra_body,
                 )
             msg = response.choices[0].message
             content = msg.content
             assert content is not None, "API returned None content"
+            assert content.strip(), "API returned empty content"
             reasoning = getattr(msg, "reasoning_content", None)
             usage = response.usage
             details = getattr(usage, "completion_tokens_details", None) or {}
@@ -161,20 +168,84 @@ def health_check(client: openai.AsyncOpenAI, model: str) -> None:
         loop.close()
 
 
-def _parse_generation(raw: str) -> dict:
-    """Parse generator JSON output into structured fields.
+def _extract_json(raw: str) -> dict:
+    """Extract a JSON object from a model response.
 
-    Extracts JSON from response, handling optional markdown code fences.
+    Tries multiple strategies in order:
+    1. Direct parse (response is pure JSON)
+    2. Strip leading code fence (```json ... ```)
+    3. Find a fenced JSON block anywhere in the response
+    4. Find the first { and its matching } via brace counting
     """
     text = raw.strip()
+
+    # 1. Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Leading code fence
     if text.startswith("```"):
         lines = text.split("\n")
         lines = lines[1:]  # skip ```json
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
-        text = "\n".join(lines)
+        try:
+            return json.loads("\n".join(lines))
+        except json.JSONDecodeError:
+            pass
 
-    parsed = json.loads(text)
+    # 3. Fenced JSON block anywhere
+    fence_match = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # 4. First { to matching } via brace counting
+    start = text.find("{")
+    if start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if escape:
+                escape = False
+                continue
+            if c == "\\":
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    raise json.JSONDecodeError(
+        f"No valid JSON object found in response ({len(raw)} chars)",
+        raw[:200],
+        0,
+    )
+
+
+def _parse_generation(raw: str) -> dict:
+    """Parse generator JSON output into structured fields.
+
+    Extracts JSON from response, handling prose before/after JSON and code fences.
+    """
+    parsed = _extract_json(raw)
     required = {"analysis", "preflection", "reflection"}
     missing = required - set(parsed.keys())
     assert not missing, f"Missing fields in generation: {missing}"
@@ -188,17 +259,9 @@ def _parse_generation(raw: str) -> dict:
 def _parse_judgment(raw: str) -> dict:
     """Parse judge JSON output into structured fields.
 
-    Extracts JSON from response, handling optional markdown code fences.
+    Extracts JSON from response, handling prose before/after JSON and code fences.
     """
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
-
-    parsed = json.loads(text)
+    parsed = _extract_json(raw)
     required = {"scores", "reasoning"}
     missing = required - set(parsed.keys())
     assert not missing, f"Missing fields in judgment: {missing}"
@@ -335,6 +398,7 @@ def generate_batch(
     semaphore: asyncio.Semaphore,
     save: bool = True,
     writing_guidelines_text: str = "",
+    thinking: bool = False,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
@@ -348,7 +412,7 @@ def generate_batch(
     )
     prompt_filename = prompt_path.name
 
-    async def process_one(item: dict) -> dict:
+    async def process_one(item: dict) -> dict | None:
         rp = item["reflection_point"]
         context_before = item["text"][:rp]
         context_after = item["text"][rp:]
@@ -363,11 +427,20 @@ def generate_batch(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
-        t0 = time.monotonic()
-        raw, reasoning, usage = await _api_call(client, model, messages, semaphore)
-        latency_ms = int((time.monotonic() - t0) * 1000)
+        try:
+            t0 = time.monotonic()
+            raw, reasoning, usage = await _api_call(
+                client, model, messages, semaphore, thinking=thinking
+            )
+            latency_ms = int((time.monotonic() - t0) * 1000)
 
-        parsed = _parse_generation(raw)
+            parsed = _parse_generation(raw)
+        except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
+            logger.warning(
+                "Skipping item {} — generation failed: {}", item["item_id"], e
+            )
+            return None
+
         charter_elements = extract_charter_elements(parsed["reflection"])
         record = {
             "item_id": item["item_id"],
@@ -398,7 +471,13 @@ def generate_batch(
         return record
 
     coros = [process_one(item) for item in items]
-    return list(_gather(*coros, desc="Generating"))
+    results = _gather(*coros, desc="Generating")
+    skipped = sum(1 for r in results if r is None)
+    if skipped:
+        logger.warning(
+            "Generation: {}/{} items skipped due to errors", skipped, len(items)
+        )
+    return [r for r in results if r is not None]
 
 
 async def _judge_one_part(
@@ -411,6 +490,7 @@ async def _judge_one_part(
     semaphore: asyncio.Semaphore,
     charter_text: str = "",
     writing_guidelines_text: str = "",
+    thinking: bool = False,
 ) -> tuple[dict, str, str | None, dict]:
     """Judge a single part (preflection or reflection) of a generated item.
 
@@ -441,7 +521,9 @@ async def _judge_one_part(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    raw, reasoning, usage = await _api_call(client, model, messages, semaphore)
+    raw, reasoning, usage = await _api_call(
+        client, model, messages, semaphore, thinking=thinking
+    )
     parsed = _parse_judgment(raw)
     return parsed, raw, reasoning, usage
 
@@ -458,6 +540,7 @@ def judge_batch(
     floor_threshold: int = 2,
     charter_text: str = "",
     writing_guidelines_text: str = "",
+    thinking: bool = False,
 ) -> list[dict]:
     """Judge generated reflections. Judges preflection and reflection separately.
 
@@ -471,31 +554,37 @@ def judge_batch(
     prompt_template = prompt_path.read_text(encoding="utf-8")
     prompt_filename = prompt_path.name
 
-    async def judge_one(item: dict) -> dict:
-        t0 = time.monotonic()
-        pre_parsed, pre_raw, pre_reasoning, pre_usage = await _judge_one_part(
-            item,
-            "preflection",
-            prompt_template,
-            accept_threshold,
-            model,
-            client,
-            semaphore,
-            charter_text=charter_text,
-            writing_guidelines_text=writing_guidelines_text,
-        )
-        ref_parsed, ref_raw, ref_reasoning, ref_usage = await _judge_one_part(
-            item,
-            "reflection",
-            prompt_template,
-            accept_threshold,
-            model,
-            client,
-            semaphore,
-            charter_text=charter_text,
-            writing_guidelines_text=writing_guidelines_text,
-        )
-        judge_latency_ms = int((time.monotonic() - t0) * 1000)
+    async def judge_one(item: dict) -> dict | None:
+        try:
+            t0 = time.monotonic()
+            pre_parsed, pre_raw, pre_reasoning, pre_usage = await _judge_one_part(
+                item,
+                "preflection",
+                prompt_template,
+                accept_threshold,
+                model,
+                client,
+                semaphore,
+                charter_text=charter_text,
+                writing_guidelines_text=writing_guidelines_text,
+                thinking=thinking,
+            )
+            ref_parsed, ref_raw, ref_reasoning, ref_usage = await _judge_one_part(
+                item,
+                "reflection",
+                prompt_template,
+                accept_threshold,
+                model,
+                client,
+                semaphore,
+                charter_text=charter_text,
+                writing_guidelines_text=writing_guidelines_text,
+                thinking=thinking,
+            )
+            judge_latency_ms = int((time.monotonic() - t0) * 1000)
+        except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
+            logger.warning("Skipping item {} — judging failed: {}", item["item_id"], e)
+            return None
 
         all_scores = list(pre_parsed["scores"].values()) + list(
             ref_parsed["scores"].values()
@@ -547,7 +636,13 @@ def judge_batch(
         return judged
 
     coros = [judge_one(item) for item in items]
-    return list(_gather(*coros, desc="Judging"))
+    results = _gather(*coros, desc="Judging")
+    skipped = sum(1 for r in results if r is None)
+    if skipped:
+        logger.warning(
+            "Judging: {}/{} items skipped due to errors", skipped, len(items)
+        )
+    return [r for r in results if r is not None]
 
 
 def _make_run_summary(iteration: int, judged: list[dict]) -> str:
@@ -644,6 +739,7 @@ def _run_one_pair_inner(
         client,
         semaphore,
         writing_guidelines_text=writing_guidelines_text,
+        thinking=gen_model_cfg.thinking,
     )
 
     judged = judge_batch(
@@ -657,6 +753,7 @@ def _run_one_pair_inner(
         floor_threshold=cfg.phase2.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
+        thinking=judge_model_cfg.thinking,
     )
 
     summary = _make_run_summary(iteration, judged)
@@ -811,7 +908,6 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
 
     Returns total count of newly judged items.
     """
-    import re as re_mod
 
     from pipeline.config import PROMPTS_DIR, resolve_judge_model
     from pipeline.phase2.storage import (
@@ -845,7 +941,7 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
             continue
 
         judge_files = sorted(
-            p for p in model_dir.iterdir() if re_mod.match(r"^judge_v\d+\.md$", p.name)
+            p for p in model_dir.iterdir() if re.match(r"^judge_v\d+\.md$", p.name)
         )
 
         for judge_file in judge_files:

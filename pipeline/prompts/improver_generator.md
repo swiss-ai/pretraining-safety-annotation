@@ -37,6 +37,10 @@ Improve the quality and diversity of generated annotations (preflections, reflec
 6. Run a `run_batch` to validate the improvement
 7. Iterate if needed (max 4-5 run_batch calls total)
 
+## Prompt Length
+
+Generator prompts are system messages sent to small models (7B-70B). Keep them under ~800 words. If a prompt grows too long, cut redundant instructions and examples rather than adding more. Long prompts waste context, increase latency, and degrade output quality on smaller models.
+
 ## Generator vs Judge Fixes
 
 You primarily improve the generator, but if you spot a judge issue:

@@ -36,6 +36,9 @@ The goal is alignment with gold rankings, not matching absolute score levels. A 
 - Missing anchoring examples that would reduce interpretation variance
 - Dimension descriptions that are too abstract for the target model to follow
 
+### Prompt Length
+Judge prompts are system messages sent to small models (7B-70B). Keep them under ~800 words. If a prompt grows too long, cut redundant instructions and examples rather than adding more. Long prompts waste context, increase latency, and degrade output quality on smaller models.
+
 ## Workflow
 
 1. Analyze current cross-model evaluation data

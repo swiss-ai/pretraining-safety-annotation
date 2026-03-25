@@ -37,7 +37,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--no-thinking", action="store_true")
+    parser.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable thinking mode (separate_reasoning + enable_thinking)",
+    )
     return parser.parse_args()
 
 
@@ -53,7 +57,7 @@ def main() -> None:
     client = openai.OpenAI(api_key=api_key, base_url=cfg.phase2.endpoint)
 
     extra_body = None
-    if not args.no_thinking:
+    if args.thinking:
         extra_body = {
             "separate_reasoning": True,
             "chat_template_kwargs": {"enable_thinking": True},

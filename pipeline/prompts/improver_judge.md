@@ -28,6 +28,10 @@ You can evaluate annotation quality better than the small judge model can. Human
 - Not rewarding conciseness appropriately
 - Not penalizing formulaic/repetitive phrasing
 
+## Prompt Length
+
+Judge prompts are system messages sent to small models (7B-70B). Keep them under ~800 words. If a prompt grows too long, cut redundant instructions and examples rather than adding more. Long prompts waste context, increase latency, and degrade output quality on smaller models.
+
 ## Workflow
 
 1. Analyze current iteration data using query tools

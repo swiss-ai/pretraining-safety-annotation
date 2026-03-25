@@ -13,6 +13,7 @@ from pipeline.config import AppConfig, load_config, resolve_prompt_path
 from pipeline.dashboard import render_header
 from pipeline.dashboard.shared import CHARTER_TEXT, render_source_text
 from pipeline.phase2.storage import (
+    build_review_lookup,
     delete_review,
     delete_review_comment,
     load_item_across_iterations,
@@ -24,6 +25,7 @@ from pipeline.phase2.storage import (
     load_reviews,
     load_runs,
     load_test_results,
+    review_split,
     save_review,
     save_review_comment,
 )
@@ -122,35 +124,32 @@ def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
     return (p_o - p_e) / (1 - p_e)
 
 
-def _load_correlation_pairs() -> list[dict]:
+def _load_correlation_pairs(split: str | None = None) -> list[dict]:
     """Load and join correlations with human reviews. Returns paired records.
 
-    Each record has: judge_prompt, judge_model, iteration, judge_agg, human_agg,
-    judge_dec, human_dec.
+    Each record has: judge_prompt, judge_model, iteration, item_id, judge_agg,
+    human_agg, judge_dec, human_dec.
+
+    split: "train", "validation", or None (all).
     """
     correlations = load_judge_correlations()
-    reviews = load_latest_reviews()
-
-    review_by_item: dict[tuple[str, int], dict] = {}
-    for (item_id, iteration, _reviewer), review in reviews.items():
-        key = (item_id, iteration)
-        if key not in review_by_item:
-            review_by_item[key] = review
+    review_by_item = build_review_lookup(split=split)
 
     pairs = []
     for c in correlations:
-        review = review_by_item.get((c["item_id"], c["iteration"]))
-        if not review:
+        rev = review_by_item.get((c["item_id"], c["iteration"]))
+        if not rev:
             continue
         pairs.append(
             {
                 "judge_prompt": c["judge_prompt"],
                 "judge_model": c["judge_model"],
                 "iteration": c["iteration"],
+                "item_id": c["item_id"],
                 "judge_agg": c["judgment"].get("aggregate", 0),
-                "human_agg": review.get("aggregate", 0),
+                "human_agg": rev.get("aggregate", 0),
                 "judge_dec": c["judgment"].get("decision", ""),
-                "human_dec": review.get("decision", ""),
+                "human_dec": rev.get("decision", ""),
             }
         )
     return pairs
@@ -194,19 +193,16 @@ def _compute_correlation_by_judge_version(
     return _aggregate_correlation_pairs(pairs)
 
 
-def _compute_calibration_from_correlations(judge_prompt: str, judge_model: str) -> dict:
+def _compute_calibration_from_correlations(
+    judge_prompt: str, judge_model: str, split: str | None = None
+) -> dict:
     """Compute per-dimension Pearson correlations from judge_correlations data for a specific version.
 
     Returns same shape as _compute_calibration: {dimension_correlations, n_paired}.
+    split: "train", "validation", or None (all).
     """
     correlations = load_judge_correlations()
-    reviews = load_latest_reviews()
-
-    review_by_item: dict[tuple[str, int], dict] = {}
-    for (item_id, iteration, _reviewer), review in reviews.items():
-        key = (item_id, iteration)
-        if key not in review_by_item:
-            review_by_item[key] = review
+    review_by_item = build_review_lookup(split=split)
 
     paired_scores: dict[str, list[tuple[float, float]]] = {}
     n_paired = 0
@@ -214,18 +210,18 @@ def _compute_calibration_from_correlations(judge_prompt: str, judge_model: str) 
         if c["judge_prompt"] != judge_prompt or c["judge_model"] != judge_model:
             continue
         key = (c["item_id"], c["iteration"])
-        review = review_by_item.get(key)
-        if not review:
+        rev = review_by_item.get(key)
+        if not rev:
             continue
         n_paired += 1
         j = c["judgment"]
-        review_scores = review.get("scores", {})
-        is_per_part = review_scores and isinstance(
-            next(iter(review_scores.values()), None), dict
+        rev_scores = rev.get("scores", {})
+        is_per_part = rev_scores and isinstance(
+            next(iter(rev_scores.values()), None), dict
         )
         for part in ("preflection", "reflection"):
             j_scores = j.get(part, {}).get("scores", {})
-            h_scores = review_scores.get(part, {}) if is_per_part else review_scores
+            h_scores = rev_scores.get(part, {}) if is_per_part else rev_scores
             for dim, h_val in h_scores.items():
                 if dim in j_scores:
                     paired_scores.setdefault(f"{part}_{dim}", []).append(
@@ -721,14 +717,21 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
         ui.echart(chart_opts).classes("w-full").style("height: 300px;")
 
 
-def _render_calibration_bar_chart() -> None:
+def _render_calibration_bar_chart(
+    pairs: list[dict] | None = None, split: str | None = None
+) -> None:
     """Render per-judge-model calibration bar chart (Pearson r and Cohen's kappa).
 
     Groups by judge_model, uses the latest judge prompt version per model.
+    pairs: pre-loaded correlation pairs (avoids DB re-read). If None, loads from DB.
+    split: filter pre-loaded pairs by "train" or "validation".
     """
     import re as _re_cb
 
-    pairs = _load_correlation_pairs()
+    if pairs is None:
+        pairs = _load_correlation_pairs()
+    if split:
+        pairs = [p for p in pairs if review_split(p["item_id"]) == split]
     if not pairs:
         return
 
@@ -1380,7 +1383,10 @@ def pipeline_monitoring_page():
                 if gen_filter is None
                 else [s for s in iter_stats if s.get("generator_model") == gen_filter]
             )
-            labels = [f"Iter {s['iteration']}" for s in filtered]
+            labels = [
+                f"Iter {s['iteration']} ({_SOURCE_LABEL.get(s.get('source', 'manual'), '')})"
+                for s in filtered
+            ]
             accept_data = [
                 {
                     "value": s["accept_rate"],
@@ -1504,20 +1510,34 @@ def pipeline_monitoring_page():
                         ),
                     )
 
-                    # Correlation chart state: tracks both judge model and generator filter
-                    corr_state = {"judge_model": default_model, "gen_filter": None}
+                    # Correlation chart state: tracks judge model, generator filter, and review split
+                    corr_state = {
+                        "judge_model": default_model,
+                        "gen_filter": None,
+                        "split": None,
+                    }
 
                     def _build_corr_chart_filtered() -> dict:
                         """Build correlation chart using current corr_state filters."""
                         gf = corr_state["gen_filter"]
+                        sp = corr_state["split"]
+                        # Filter pairs by split
+                        if sp:
+                            split_pairs = [
+                                p
+                                for p in cached_corr_pairs
+                                if review_split(p["item_id"]) == sp
+                            ]
+                        else:
+                            split_pairs = cached_corr_pairs
                         vc = (
                             _compute_correlation_by_judge_version(
                                 gen_filter=gf,
                                 iter_to_gen=iter_to_gen,
-                                _pairs=cached_corr_pairs,
+                                _pairs=split_pairs,
                             )
                             if gf
-                            else version_corrs
+                            else _aggregate_correlation_pairs(split_pairs)
                         )
                         sm = corr_state["judge_model"]
                         cur_models = sorted({m for _, m in vc}) if vc else []
@@ -1609,11 +1629,38 @@ def pipeline_monitoring_page():
                                 on_change=_on_corr_gen_filter,
                             ).classes("w-48")
 
+                        def _on_split_change(e):
+                            corr_state["split"] = None if e.value == "all" else e.value
+                            _refresh_corr_chart()
+
+                        ui.select(
+                            ["all", "train", "validation"],
+                            value="all",
+                            label="Review Split",
+                            on_change=_on_split_change,
+                        ).classes("w-36")
+
     # --- Per-Generator Acceptance Rate Bar Chart ---
     _render_acceptance_rate_chart(runs, iter_stats)
 
-    # --- Per-Judge Calibration Bar Chart ---
-    _render_calibration_bar_chart()
+    # --- Per-Judge Calibration Bar Chart (with split selector) ---
+    _cal_bar_split_state = {"split": None}
+    _cal_bar_container = ui.column().classes("w-full")
+    with _cal_bar_container:
+        _render_calibration_bar_chart()
+
+    def _on_cal_bar_split(e):
+        _cal_bar_split_state["split"] = None if e.value == "all" else e.value
+        _cal_bar_container.clear()
+        with _cal_bar_container:
+            _render_calibration_bar_chart(split=_cal_bar_split_state["split"])
+
+    ui.select(
+        ["all", "train", "validation"],
+        value="all",
+        label="Review Split",
+        on_change=_on_cal_bar_split,
+    ).classes("w-36 q-mx-md")
 
     # --- API Model Statistics (collapsible) ---
     _render_api_stats_panel(runs, items_by_key)
@@ -1705,47 +1752,6 @@ def pipeline_monitoring_page():
             "Independent improvers: judge and generator. Each spawns an Opus agent that tests "
             "against ALL counterpart models via cross-iteration."
         ).classes("text-caption text-grey-7")
-
-        # Two role buttons with model selectors
-        judge_aliases = [m.alias for m in cfg.phase2.judge_models]
-        gen_aliases = [m.alias for m in cfg.phase2.generator_models]
-
-        with ui.row().classes("w-full gap-4 q-mt-sm items-center"):
-            judge_btn = ui.button("Run Judge Improver", icon="gavel", color="primary")
-            judge_model_select = (
-                ui.select(
-                    judge_aliases,
-                    value=judge_aliases,
-                    multiple=True,
-                    label="Models",
-                )
-                .classes("min-w-[200px]")
-                .props("dense outlined use-chips")
-            )
-
-        with ui.row().classes("w-full gap-4 q-mt-xs items-center"):
-            gen_btn = ui.button(
-                "Run Generator Improver", icon="edit_note", color="secondary"
-            )
-            gen_model_select = (
-                ui.select(
-                    gen_aliases,
-                    value=gen_aliases,
-                    multiple=True,
-                    label="Models",
-                )
-                .classes("min-w-[200px]")
-                .props("dense outlined use-chips")
-            )
-
-        with ui.row().classes("w-full gap-4 q-mt-xs items-center"):
-            full_loop_btn = ui.button(
-                "Run Full Loop (Judge → Generator)", icon="loop", color="accent"
-            )
-            interrupt_btn = ui.button("Interrupt", icon="stop", color="negative").props(
-                "outline"
-            )
-            interrupt_btn.set_visibility(False)
 
         # Dynamic improver cards
         improver_cards_container = ui.column().classes("w-full gap-2 q-mt-sm")
@@ -1956,89 +1962,7 @@ def pipeline_monitoring_page():
                             "w-full"
                         )
 
-            if not st.get("running"):
-                loop_timer.active = False
-                _enable_all_buttons()
-
-        loop_timer = ui.timer(3.0, _poll_loop_status, active=False)
-
-        cross_btn = None
-
-        def _disable_all_buttons():
-            judge_btn.disable()
-            gen_btn.disable()
-            full_loop_btn.disable()
-            if cross_btn is not None:
-                cross_btn.disable()
-            interrupt_btn.set_visibility(True)
-
-        def _enable_all_buttons():
-            judge_btn.enable()
-            gen_btn.enable()
-            full_loop_btn.enable()
-            if cross_btn is not None:
-                cross_btn.enable()
-            interrupt_btn.set_visibility(False)
-
-        def _start_improver(role: str, aliases: list[str] | None):
-            if not aliases:
-                loop_error_label.set_text("No models selected.")
-                return
-            _disable_all_buttons()
-            loop_error_label.set_text("")
-            loop_timer.active = True
-            selected = list(aliases)
-
-            def _thread():
-                from pipeline.phase2.loop import (
-                    run_judge_improvers,
-                    run_generator_improvers,
-                )
-
-                run_cfg = load_config()
-                if role == "judge":
-                    run_judge_improvers(run_cfg, aliases=selected)
-                else:
-                    run_generator_improvers(run_cfg, aliases=selected)
-
-            threading.Thread(target=_thread, daemon=True).start()
-
-        def _start_full_loop():
-            j_aliases = judge_model_select.value
-            g_aliases = gen_model_select.value
-            if not j_aliases and not g_aliases:
-                loop_error_label.set_text("No models selected.")
-                return
-            _disable_all_buttons()
-            loop_error_label.set_text("")
-            loop_timer.active = True
-            j_selected = list(j_aliases) if j_aliases else []
-            g_selected = list(g_aliases) if g_aliases else []
-
-            def _thread():
-                from pipeline.phase2.loop import (
-                    run_judge_improvers,
-                    run_generator_improvers,
-                )
-
-                run_cfg = load_config()
-                if j_selected:
-                    run_judge_improvers(run_cfg, aliases=j_selected)
-                if g_selected:
-                    run_generator_improvers(run_cfg, aliases=g_selected)
-
-            threading.Thread(target=_thread, daemon=True).start()
-
-        def _interrupt():
-            from pipeline.phase2.loop import interrupt_improvers
-
-            n = interrupt_improvers()
-            ui.notify(f"Interrupted {n} agent(s).", type="warning")
-
-        judge_btn.on_click(lambda: _start_improver("judge", judge_model_select.value))
-        gen_btn.on_click(lambda: _start_improver("generator", gen_model_select.value))
-        full_loop_btn.on_click(_start_full_loop)
-        interrupt_btn.on_click(_interrupt)
+        loop_timer = ui.timer(3.0, _poll_loop_status, active=True)
 
         # Load existing status on page render
         from pipeline.phase2.loop import read_status as _read_initial
@@ -2046,9 +1970,6 @@ def pipeline_monitoring_page():
         _initial = _read_initial()
         if _initial:
             _update_from_status(_initial)
-            if _initial.get("running"):
-                _disable_all_buttons()
-                loop_timer.active = True
 
     # --- Run Cross-Iteration ---
     with ui.expansion(
@@ -2088,8 +2009,6 @@ def pipeline_monitoring_page():
 
         def start_cross_iteration():
             cross_btn.disable()
-            judge_btn.disable()
-            gen_btn.disable()
             cross_status.set_text("Running cross-iteration...")
 
             def _thread():
@@ -2114,8 +2033,6 @@ def pipeline_monitoring_page():
                     cross_status.set_text(f"Error: {e}")
                 finally:
                     cross_btn.enable()
-                    judge_btn.enable()
-                    gen_btn.enable()
 
             threading.Thread(target=_thread, daemon=True).start()
 

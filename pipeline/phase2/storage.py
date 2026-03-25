@@ -1,9 +1,40 @@
 """Phase 2 pipeline persistence via SQLite."""
 
+import hashlib
 import json
 from datetime import datetime, timezone
 
 from pipeline.storage import _get_conn
+
+
+def review_split(item_id: str) -> str:
+    """Deterministic train/validation split for a review by item_id.
+
+    Returns "validation" for 25% of items, "train" for the rest.
+    Uses SHA-256 so the split is stable across sessions and machines.
+    """
+    h = int(hashlib.sha256(item_id.encode()).hexdigest(), 16)
+    return "validation" if h % 4 == 0 else "train"
+
+
+def build_review_lookup(
+    split: str | None = None,
+) -> dict[tuple[str, int], dict]:
+    """Build a review lookup dict keyed by (item_id, iteration).
+
+    Loads all reviews, optionally filters by split ("train" or "validation"),
+    and deduplicates to one review per (item_id, iteration).
+    """
+    reviews = load_latest_reviews()
+    lookup: dict[tuple[str, int], dict] = {}
+    for (item_id, iteration, _reviewer), rev in reviews.items():
+        if split and review_split(item_id) != split:
+            continue
+        key = (item_id, iteration)
+        if key not in lookup:
+            lookup[key] = rev
+    return lookup
+
 
 # --- Runs ---
 

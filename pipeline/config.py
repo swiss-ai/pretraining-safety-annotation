@@ -71,6 +71,7 @@ class ModelConfig:
     alias: str = ""
     api_name: str = ""
     hf_slug: str = ""
+    thinking: bool = False
 
 
 @dataclass

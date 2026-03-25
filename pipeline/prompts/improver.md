@@ -11,6 +11,7 @@ You are analyzing iteration results to improve the generator and judge prompts f
 - **Conciseness.** Especially for benign texts. A brief "looks fine" is better than a verbose analysis of nothing.
 - **Diversity.** Generated annotations must vary in phrasing, structure, and opening. Formulaic repetition degrades training data quality. This is IMPORTANT!
 - **No charter references is valid.** Many texts have no relevant charter sections. Forcing references is worse than omitting them.
+- **Keep prompts short.** Generator and judge prompts are sent as system messages to small models (7B-70B). Long prompts waste context window, increase latency, and confuse smaller models. Aim for under 800 words per prompt. If a prompt grows beyond that, cut examples and redundant instructions rather than adding more.
 
 ## Analysis Steps
 

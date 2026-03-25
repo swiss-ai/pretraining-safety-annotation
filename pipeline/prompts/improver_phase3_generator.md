@@ -34,6 +34,9 @@ Gold judge scores are your primary metric, but you can read both gold and target
 - Clarify instructions where the target misinterprets intent
 - Adjust tone/style guidance if the target's voice diverges from gold
 
+### Prompt Length
+Generator prompts are system messages sent to small models (7B-70B). Keep them under ~800 words. If a prompt grows too long, cut redundant instructions and examples rather than adding more. Long prompts waste context, increase latency, and degrade output quality on smaller models.
+
 ### Avoid Overfitting
 - Don't optimize for one gold judge's quirks — check if improvements hold across gold judges
 - Don't sacrifice diversity to chase scores on a few failing items

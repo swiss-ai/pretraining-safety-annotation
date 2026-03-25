@@ -360,9 +360,14 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
     """Print human reviews, optionally filtered by iteration.
 
     Shows reviewer scores, decision, and notes alongside the judge's scores
-    for calibration comparison.
+    for calibration comparison. Only shows *train* split reviews (75%) so
+    the validation split remains unseen by the improver.
     """
-    from pipeline.phase2.storage import load_latest_reviews, load_review_comments
+    from pipeline.phase2.storage import (
+        load_latest_reviews,
+        load_review_comments,
+        review_split,
+    )
 
     reviews = load_latest_reviews()
     all_comments = load_review_comments()
@@ -370,8 +375,8 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
         print("No human reviews yet.")
         return
 
-    # Filter by iteration if specified
-    filtered = list(reviews.values())
+    # Only show train-split reviews to the improver
+    filtered = [r for r in reviews.values() if review_split(r["item_id"]) == "train"]
     if iteration is not None:
         filtered = [r for r in filtered if r["iteration"] == iteration]
         items = load_items_for_iteration(iteration)
@@ -530,8 +535,10 @@ def cmd_correlations() -> None:
     - Decision agreement rate (accept/reject match %)
     - Mean absolute score difference (judge aggregate vs human aggregate)
     - Per-dimension score diffs where both human and judge scored the same dims
+
+    Only uses *train* split reviews so the validation split remains unseen.
     """
-    from pipeline.phase2.storage import load_judge_correlations, load_latest_reviews
+    from pipeline.phase2.storage import build_review_lookup, load_judge_correlations
 
     correlations = load_judge_correlations()
     if not correlations:
@@ -540,13 +547,7 @@ def cmd_correlations() -> None:
         )
         return
 
-    reviews = load_latest_reviews()
-    # Build lookup: (item_id, iteration) -> review (use first reviewer found)
-    review_by_item: dict[tuple[str, int], dict] = {}
-    for (item_id, iteration, _reviewer), review in reviews.items():
-        key = (item_id, iteration)
-        if key not in review_by_item:
-            review_by_item[key] = review
+    review_by_item = build_review_lookup(split="train")
 
     # Group correlations by (judge_prompt, judge_model)
     by_prompt: dict[tuple[str, str], list[dict]] = {}
@@ -653,7 +654,9 @@ def cmd_test_generate(
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
-    client, semaphore = make_api_client(cfg)
+    client, semaphore = make_api_client(
+        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
+    )
     alias = model_alias or cfg.phase2.generator_models[0].alias
     gen_model_cfg = resolve_generator_model(cfg, alias)
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
@@ -740,7 +743,9 @@ def cmd_test_judge(
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
-    client, semaphore = make_api_client(cfg)
+    client, semaphore = make_api_client(
+        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
+    )
     alias = model_alias or cfg.phase2.judge_models[0].alias
     jdg_model_cfg = resolve_judge_model(cfg, alias)
 
