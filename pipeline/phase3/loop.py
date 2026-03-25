@@ -211,7 +211,12 @@ strong reasoning. Parallelize aggressively; the bottleneck is wall-clock time, n
 6. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
 7. You may run up to {max_batches} `run_paired_batch` calls to test your changes
 8. Update {state_path} with: what you changed, why, key metrics, and what to try next
-9. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
+9. **Compress state.md**: Spawn a subagent to read {state_path} and rewrite it more concisely.
+   The subagent should: keep the current active prompts and key findings, condense old iteration
+   rows into brief takeaways (e.g. "v2-v4 failed because X — don't try again"), drop per-item
+   details and verbose tables from past rounds, and preserve any "what NOT to try" lessons.
+   The goal is a useful reference for future you, not a detailed log.
+10. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
     It MUST start with exactly `## Final Summary` on its own line, followed by:
     - **What changed**: which prompt file, key modifications
     - **Why**: what divergence patterns you identified, with evidence

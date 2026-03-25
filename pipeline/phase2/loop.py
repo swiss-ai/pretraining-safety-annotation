@@ -231,7 +231,7 @@ You have access to the Agent tool. **Always use model="opus" for subagents** —
 strong reasoning. Parallelize aggressively; the bottleneck is wall-clock time, not tokens:
 - Spawn one subagent to analyze failures and low-scoring items in detail
 - Spawn another to compare generated outputs with gold annotations
-- Spawn another to review human reviews (the `reviews` command) and check judge calibration
+- Spawn another to read ALL human reviews (`reviews` without iteration filter — output is large, must use subagent!) and extract key insights from reviewer notes into state.md
 - Spawn another to check diversity patterns
 Then synthesize their findings to write improved prompts.
 
@@ -250,7 +250,12 @@ over inspecting items one by one.
 6. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
 7. You may run up to {max_batches} `run_cross_batch` calls to test your changes
 8. Update {state_path} with: what you changed, why, key metrics, and what to try next
-9. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
+9. **Compress state.md**: Spawn a subagent to read {state_path} and rewrite it more concisely.
+   The subagent should: keep the current active prompts and key findings, condense old iteration
+   rows into brief takeaways (e.g. "v2-v4 failed because X — don't try again"), drop per-item
+   details and verbose tables from past rounds, and preserve any "what NOT to try" lessons.
+   The goal is a useful reference for future you, not a detailed log.
+10. Print a **single final summary** as your VERY LAST message. This summary is parsed and displayed in the dashboard.
     It MUST start with exactly `## Final Summary` on its own line, followed by:
     - **What changed**: which prompt file, key modifications
     - **Why**: what problems you identified, with evidence (scores, examples)
