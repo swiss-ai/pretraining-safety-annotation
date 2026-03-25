@@ -65,6 +65,12 @@ echo "Job ${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0} on $(ho
 echo "Stage: $STAGE, N_NODES: $N_NODES, Workers: $WORKERS"
 echo "CPUs: $(nproc)"
 
+# ── experiment tracking ──────────────────────────────────────
+NODE_ID="${SLURM_ARRAY_TASK_ID:-0}"
+uv run python -m experiment_tracker start --stage tokenization \
+    --config "{\"stage\": \"${STAGE}\", \"n_nodes\": ${N_NODES}, \"node_id\": ${NODE_ID}, \"workers\": ${WORKERS}}" \
+    --tags tokenization
+
 numactl --membind=0-3 uv run python -m preprocessing.tokenization.tokenize \
     --compact-data-dir "${SCRATCH}/dolma3_mix-1T_subsampled/unannotated" \
     --annotated-data-dir "${SCRATCH}/dolma3_mix-1T_subsampled/annotated" \
@@ -73,5 +79,8 @@ numactl --membind=0-3 uv run python -m preprocessing.tokenization.tokenize \
     --n-nodes "$N_NODES" \
     --workers "$WORKERS" \
     ${EXTRA_ARGS}
+
+# ── experiment tracking (finish) ─────────────────────────────
+uv run python -m experiment_tracker finish --stage tokenization
 
 echo "Finished — $(date)"
