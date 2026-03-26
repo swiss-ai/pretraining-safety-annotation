@@ -2154,8 +2154,14 @@ def pipeline_review_page():
         ).classes("w-32")
 
         sort_select = ui.select(
-            options=["Low score first", "High score first", "Default order"],
-            value="Low score first",
+            options=[
+                "Low judge score",
+                "High judge score",
+                "Low safety score",
+                "High safety score",
+                "Default order",
+            ],
+            value="Low judge score",
             label="Sort",
         ).classes("w-48")
 
@@ -2192,6 +2198,7 @@ def pipeline_review_page():
                 with ui.row().classes("items-center gap-4"):
                     nav_label = ui.label().classes("text-subtitle1 text-weight-medium")
                     subset_badge = ui.badge("").props("outline")
+                    safety_badge = ui.badge("").props("outline color=deep-purple")
                     gold_badge = ui.badge("").props("outline color=orange")
                     ui.space()
                     ui.button(icon="arrow_back", on_click=lambda: navigate(-1)).props(
@@ -2346,10 +2353,21 @@ def pipeline_review_page():
                 seen[key] = item
         judged = [i for i in seen.values() if i.get("judgment")]
         sort = sort_select.value
-        if sort == "Low score first":
+        if sort == "Low judge score":
             judged.sort(key=lambda i: i["judgment"]["aggregate"])
-        elif sort == "High score first":
+        elif sort == "High judge score":
             judged.sort(key=lambda i: -i["judgment"]["aggregate"])
+        elif sort == "Low safety score":
+            judged.sort(
+                key=lambda i: (i.get("safety_score") is None, i.get("safety_score", 0))
+            )
+        elif sort == "High safety score":
+            judged.sort(
+                key=lambda i: (
+                    i.get("safety_score") is None,
+                    -(i.get("safety_score") or 0),
+                )
+            )
 
         # Interleave across generator models for balanced reviewing
         by_gen: dict[str, list[dict]] = {}
@@ -2390,6 +2408,9 @@ def pipeline_review_page():
 
         nav_label.set_text(f"Item {state['pos'] + 1} / {len(items)}")
         subset_badge.set_text(item["subset"])
+        ss = item.get("safety_score")
+        safety_badge.set_text(f"safety: {ss}" if ss is not None else "")
+        safety_badge.set_visibility(ss is not None)
         gold_badge.set_text("GOLD" if item.get("is_gold") else "")
         gold_badge.set_visibility(item.get("is_gold", False))
 

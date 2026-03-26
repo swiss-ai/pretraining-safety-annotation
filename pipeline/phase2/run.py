@@ -23,9 +23,12 @@ dotenv.load_dotenv()
 import openai
 from tqdm.asyncio import tqdm_asyncio
 
+import yaml
+
 from pipeline.config import (
     CHARTER_PATH,
     PIPELINE_DATA_DIR,
+    PROJECT_ROOT,
     WRITING_GUIDELINES_PATH,
     AppConfig,
     extract_charter_elements,
@@ -34,7 +37,6 @@ from pipeline.config import (
     resolve_judge_model,
     resolve_prompt_path,
 )
-from pipeline.fineweb import load_or_build_fineweb_cache
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 from pipeline.phase2.storage import (
     load_items_for_iteration,
@@ -49,6 +51,15 @@ from pipeline.storage import compute_item_id
 
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
+CANARY_RATE = 0.10
+
+CANARIES_PATH = PROJECT_ROOT / "resources" / "canaries.yaml"
+
+
+def _load_canaries() -> list[dict]:
+    """Load canary quirks from resources/canaries.yaml."""
+    with open(CANARIES_PATH, encoding="utf-8") as f:
+        return yaml.safe_load(f)["canaries"]
 
 
 def make_api_client(
@@ -67,8 +78,9 @@ def make_api_client(
     return client, semaphore
 
 
-FINEWEB_DATASET = "locuslab/fineweb_annotated"
-FINEWEB_SUBSETS = [f"score_{i}" for i in range(6)]
+DATASET = "jkminder/Dolma3_mix_annotation_sample"
+DATASET_CACHE_PATH = PIPELINE_DATA_DIR / "dolma3_cache.jsonl"
+DATASET_CACHE_SIZE = 4096
 
 
 def _gather(*coros, desc: str) -> list:
@@ -295,12 +307,13 @@ def _load_gold_items(max_tokens: int) -> list[dict]:
     from pipeline.phase1.storage import load_latest_annotations
 
     annotations = load_latest_annotations()
+    text_max = max_tokens - REFLECTION_TOKEN_BUDGET
     seen_ids: set[str] = set()
     records = []
     for (item_id, _), record in annotations.items():
         if item_id not in seen_ids:
             seen_ids.add(item_id)
-            text = truncate_to_max_tokens(record["text"], max_tokens)
+            text = truncate_to_max_tokens(record["text"], text_max)
             rp = min(record["reflection_point"], len(text))
             records.append(
                 {
@@ -314,64 +327,77 @@ def _load_gold_items(max_tokens: int) -> list[dict]:
     return records
 
 
-FINEWEB_CACHE_PATH = PIPELINE_DATA_DIR / "fineweb_cache.jsonl"
-FINEWEB_CACHE_SIZE = 4096
+def _load_or_build_dataset_cache(seed: int) -> list[dict]:
+    """Load cached Dolma3 texts, or stream from HF and cache locally.
+
+    Returns a flat list of {text, safety_score} dicts.
+    """
+    if DATASET_CACHE_PATH.exists():
+        records = []
+        for line in DATASET_CACHE_PATH.read_text().splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+        if records:
+            logger.info("Loaded {} items from dataset cache", len(records))
+            return records
+
+    logger.info(
+        "Building dataset cache ({} items from {})...", DATASET_CACHE_SIZE, DATASET
+    )
+    import itertools
+    from datasets import load_dataset
+
+    ds = load_dataset(DATASET, split="train", streaming=True)
+    ds = ds.shuffle(seed=seed, buffer_size=10_000)
+    rows = list(itertools.islice(ds, DATASET_CACHE_SIZE))
+
+    records = [
+        {"text": r["text"], "safety_score": int(r["safety_score"])} for r in rows
+    ]
+    DATASET_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(DATASET_CACHE_PATH, "w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+    logger.info("Cached {} items to {}", len(records), DATASET_CACHE_PATH)
+    return records
+
+
+# Max tokens reserved for the reflection itself (subtracted from max_tokens).
+REFLECTION_TOKEN_BUDGET = 128
 
 
 def _sample_fresh_items(
     n: int, seed: int, exclude_ids: set[str], max_tokens: int
 ) -> list[dict]:
-    """Sample fresh FineWeb items, stratified equally across subsets.
+    """Sample fresh items randomly from the Dolma3 dataset cache.
 
-    Each text is truncated to max_tokens before computing the reflection point.
+    Each text is truncated to (max_tokens - REFLECTION_TOKEN_BUDGET) before
+    computing the reflection point.
     """
     rng = random.Random(seed)
-    cache = load_or_build_fineweb_cache(
-        cache_path=FINEWEB_CACHE_PATH,
-        dataset=FINEWEB_DATASET,
-        subsets=FINEWEB_SUBSETS,
-        per_subset=FINEWEB_CACHE_SIZE // len(FINEWEB_SUBSETS),
-        seed=seed,
-    )
+    cache = _load_or_build_dataset_cache(seed)
+    rng.shuffle(cache)
 
-    # Group by subset and shuffle each group
-    by_subset: dict[str, list[dict]] = {}
+    text_max = max_tokens - REFLECTION_TOKEN_BUDGET
+    items: list[dict] = []
     for row in cache:
-        by_subset.setdefault(row["subset"], []).append(row)
-    for rows in by_subset.values():
-        rng.shuffle(rows)
-
-    # Round-robin across subsets to get stratified sample
-    subsets = sorted(by_subset.keys())
-    cursors = {s: 0 for s in subsets}
-    items = []
-    while len(items) < n:
-        made_progress = False
-        for subset in subsets:
-            if len(items) >= n:
-                break
-            rows = by_subset.get(subset, [])
-            while cursors[subset] < len(rows):
-                row = rows[cursors[subset]]
-                cursors[subset] += 1
-                text = truncate_to_max_tokens(row["text"], max_tokens)
-                item_id = compute_item_id(text)
-                if item_id in exclude_ids:
-                    continue
-                items.append(
-                    {
-                        "item_id": item_id,
-                        "subset": subset,
-                        "text": text,
-                        "reflection_point": compute_reflection_point(text, rng),
-                        "is_gold": False,
-                    }
-                )
-                exclude_ids.add(item_id)
-                made_progress = True
-                break
-        if not made_progress:
+        if len(items) >= n:
             break
+        text = truncate_to_max_tokens(row["text"], text_max)
+        item_id = compute_item_id(text)
+        if item_id in exclude_ids:
+            continue
+        items.append(
+            {
+                "item_id": item_id,
+                "subset": "dolma3",
+                "text": text,
+                "reflection_point": compute_reflection_point(text, rng),
+                "safety_score": row.get("safety_score"),
+                "is_gold": False,
+            }
+        )
+        exclude_ids.add(item_id)
 
     assert (
         len(items) >= n
@@ -380,7 +406,7 @@ def _sample_fresh_items(
 
 
 def select_items(n_total: int, n_gold: int, seed: int, max_tokens: int) -> list[dict]:
-    """Select a mix of gold set items and fresh random FineWeb samples.
+    """Select a mix of gold set items and fresh random Dolma3 samples.
 
     Returns up to n_total items: min(n_gold, available_gold) gold items,
     rest filled with fresh samples. All texts are truncated to max_tokens.
@@ -430,6 +456,7 @@ def generate_batch(
         "{writing_guidelines}", writing_guidelines_text
     )
     prompt_filename = prompt_path.name
+    canaries = _load_canaries()
 
     async def process_one(item: dict) -> dict | None:
         rp = item["reflection_point"]
@@ -442,6 +469,19 @@ def generate_batch(
             f"Text before the reflection point:\n\n{context_before}\n\n"
             f"Text after the reflection point (the reflection must NOT use this):\n\n{context_after}"
         )
+
+        # Canary injection: 10% chance, one random canary per sample
+        canary_id = None
+        if random.random() < CANARY_RATE:
+            canary = random.choice(canaries)
+            canary_id = canary["id"]
+            user_content += (
+                f"\n\n## Canary Injection\n\n"
+                f"This sample has a canary injection. "
+                f"{canary['instruction']} "
+                f"Apply this ONLY to the reflection, NOT to the preflection."
+            )
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -484,6 +524,8 @@ def generate_batch(
             "input_tokens": usage["input_tokens"],
             "output_tokens": usage["output_tokens"],
             "reasoning_tokens": usage["reasoning_tokens"],
+            "safety_score": item.get("safety_score"),
+            "canary": canary_id,
         }
         if save:
             save_item(record)
@@ -536,6 +578,21 @@ async def _judge_one_part(
         f"## Source Text\n\n{source_text}\n\n"
         f"## {part_type.title()} to Judge\n\n{content}"
     )
+
+    # Inform the judge about canary injections
+    canary_id = item.get("canary")
+    if part_type == "reflection" and canary_id:
+        canaries = _load_canaries()
+        canary = next((c for c in canaries if c["id"] == canary_id), None)
+        if canary:
+            user_content += (
+                f"\n\n## Canary Notice\n\n"
+                f"This reflection has a canary injection (quirk: {canary['quirk']}, "
+                f"value: {canary['value']}). The reflection was instructed to mention "
+                f"this. Do NOT penalize the reflection for including this canary — "
+                f"judge the rest of the reflection on its own merits."
+            )
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},

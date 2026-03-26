@@ -1,16 +1,10 @@
 charter_path: resources/ModelRaisingConstitution_v0.2.md
 writing_guidelines_path: resources/ValueAnnotationGuidelines_v0.1.md
 data_dir: data
-max_tokens: 3840
+max_tokens: 2048
 phase1:
-  dataset: locuslab/fineweb_annotated
-  subsets:
-  - score_0
-  - score_1
-  - score_2
-  - score_3
-  - score_4
-  - score_5
+  dataset: jkminder/Dolma3_mix_annotation_sample
+  subsets: []
   sample_size: 200
 phase2:
   endpoint: https://api.swissai.cscs.ch/v1
@@ -21,13 +15,13 @@ phase2:
   # - alias: olmo3-32B-think
   #   api_name: jminder/UqFTpAeJcvV4
   #   hf_slug: olmo-ai/olmo-3-32b-thinking
-  # - alias: kimi-k2.5
-  #   api_name: jkminder/lAiFTaihSJ
-  #   hf_slug: moonshotai/Kimi-K2.5
-  - alias: glm-4.7-flash
-    api_name: zai-org/GLM-4.7-Flash
-    hf_slug: zai-org/GLM-4.7-Flash
-    thinking: false
+    - alias: kimi-k2.5
+      api_name: jkminder/lAiFTaihSJ
+      hf_slug: moonshotai/Kimi-K2.5
+  # - alias: glm-4.7-flash
+  #   api_name: zai-org/GLM-4.7-Flash
+  #   hf_slug: zai-org/GLM-4.7-Flash
+  #   thinking: false
   # - alias: llama-3.3-70b-instruct
   #   api_name: meta-llama/Llama-3.3-70B-Instruct
   #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
@@ -37,27 +31,30 @@ phase2:
   #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
     # thinking: false
   generator_models:
-  # - alias: glm-4.5-air
-  #   api_name: jminder/jZ7aJGjetjNN
-  #   hf_slug: zai-org/GLM-4.5-Air-FP8
-  # - alias: olmo3-32B-think
-  #   api_name: jminder/UqFTpAeJcvV4
-  #   hf_slug: olmo-ai/olmo-3-32b-thinking
-  # - alias: kimi-k2.5
-  #   api_name: jkminder/lAiFTaihSJ
-  #   hf_slug: moonshotai/Kimi-K2.5
-  - alias: glm-4.7-flash
-    api_name: zai-org/GLM-4.7-Flash
-    hf_slug: zai-org/GLM-4.7-Flash
-    thinking: false
-  - alias: llama-3.3-70b-instruct
-    api_name: meta-llama/Llama-3.3-70B-Instruct
-    hf_slug: meta-llama/Llama-3.3-70B-Instruct
-    thinking: false
-  - alias: apertus-70b-instruct
-    api_name: swiss-ai/Apertus-70B-Instruct-2509
-    hf_slug: swiss-ai/Apertus-70B-Instruct-2509
-    thinking: false
+    - alias: glm-4.5-air
+      api_name: jminder/jZ7aJGjetjNN
+      hf_slug: zai-org/GLM-4.5-Air-FP8
+    # - alias: olmo3-32B-think
+    #   api_name: jminder/UqFTpAeJcvV4
+    #   hf_slug: olmo-ai/olmo-3-32b-thinking
+    - alias: kimi-k2.5
+      api_name: jkminder/lAiFTaihSJ
+      hf_slug: moonshotai/Kimi-K2.5
+    - alias: gpt-oss-120b
+      api_name: openai/gpt-oss-120b-oPoB
+      hf_slug: openai/gpt-oss-120b
+  # - alias: glm-4.7-flash
+  #   api_name: zai-org/GLM-4.7-Flash
+  #   hf_slug: zai-org/GLM-4.7-Flash
+  #   thinking: false
+  # - alias: llama-3.3-70b-instruct
+  #   api_name: meta-llama/Llama-3.3-70B-Instruct
+  #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
+  #   thinking: false
+  # - alias: apertus-70b-instruct
+  #   api_name: swiss-ai/Apertus-70B-Instruct-2509
+  #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
+  #   thinking: false
   improver:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md

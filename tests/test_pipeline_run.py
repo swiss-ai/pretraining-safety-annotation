@@ -156,23 +156,19 @@ class TestMakeApiClient:
     def test_returns_client_and_semaphore(self, tmp_path, monkeypatch):
         monkeypatch.setenv("SWISS_AI_API_KEY", "test-key")
 
-        from pipeline.config import load_config
         from pipeline.phase2.run import make_api_client
 
-        cfg = load_config()
-        client, semaphore = make_api_client(cfg)
+        client, semaphore = make_api_client("https://example.com/v1", 10)
         assert client is not None
         assert semaphore is not None
 
     def test_missing_key_raises(self, monkeypatch):
         monkeypatch.delenv("SWISS_AI_API_KEY", raising=False)
 
-        from pipeline.config import load_config
         from pipeline.phase2.run import make_api_client
 
-        cfg = load_config()
         with pytest.raises(AssertionError, match="SWISS_AI_API_KEY"):
-            make_api_client(cfg)
+            make_api_client("https://example.com/v1", 10)
 
 
 class TestIntegration:
