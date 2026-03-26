@@ -412,30 +412,51 @@ class MegatronAnnotatedShuffler(PipelineStep):
         rng = default_rng(self.seed)
         perm = rng.permutation(n_docs)
 
-        # ── 4. Write .bin (byte copy from mmap + padding) ────────────
-        token_lengths = np.empty(n_docs, dtype=np.int32)
-        fmt = "H" if self.token_size == 2 else "I"
-        pad_token = struct.pack(f"<{fmt}", 0)  # EOS/PAD token id = 0
+        # ── 4. Write .bin (bulk numpy: read into RAM, shuffle, pad, write) ─
+        token_lengths = (doc_token_counts - 1).astype(np.int32)  # exclude EOS
+        token_lengths = token_lengths[perm]  # reorder to output order
 
+        window_bytes = self.window_size * self.token_size
+        dtype = np.uint16 if self.token_size == 2 else np.uint32
+
+        # Load entire .ds into RAM (sequential read, ~214GB for full dataset)
+        file_path = self.input_folder.resolve_paths(data_files[0])
+        logger.info(
+            f"Loading {file_path} into RAM "
+            f"({os.path.getsize(file_path) / 1e9:.1f} GB)"
+        )
+        raw_tokens = np.fromfile(file_path, dtype=dtype)
+
+        # Build padded output in chunks to limit memory
+        CHUNK = 1_000_000  # docs per chunk
         with self.output_folder.open(f"{self.save_filename}.bin", "wb") as fout:
-            with self.input_folder.open(data_files[0], "rb") as f:
-                mm = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)
-                with self.track_time():
-                    for out_pos, doc_idx in enumerate(tqdm(perm, desc="Writing .bin")):
+            with self.track_time():
+                for chunk_start in range(0, n_docs, CHUNK):
+                    chunk_end = min(chunk_start + CHUNK, n_docs)
+                    chunk_perm = perm[chunk_start:chunk_end]
+                    chunk_n = chunk_end - chunk_start
+
+                    # Pre-allocate padded output (zeros = pad token)
+                    padded = np.zeros(
+                        (chunk_n, self.window_size), dtype=dtype
+                    )
+
+                    # Copy each doc's tokens into the padded array
+                    for i, doc_idx in enumerate(chunk_perm):
                         doc_idx = int(doc_idx)
+                        start = int(doc_starts[doc_idx])
                         n_tok = int(doc_token_counts[doc_idx])
-                        start_b = int(doc_starts[doc_idx]) * self.token_size
-                        end_b = start_b + n_tok * self.token_size
+                        padded[i, :n_tok] = raw_tokens[start : start + n_tok]
 
-                        # content_length = tokens − 1 (exclude appended EOS)
-                        token_lengths[out_pos] = n_tok - 1
+                    padded.tofile(fout)
+                    del padded
 
-                        # Doc tokens (content + EOS) then pad to window_size
-                        fout.write(mm[start_b:end_b])
-                        pad_count = self.window_size - n_tok
-                        if pad_count > 0:
-                            fout.write(pad_token * pad_count)
-                mm.close()
+                    if chunk_start > 0 and chunk_start % (CHUNK * 10) == 0:
+                        logger.info(
+                            f"  {chunk_start:,}/{n_docs:,} docs written"
+                        )
+
+        del raw_tokens
 
         # ── 5. Write .idx ────────────────────────────────────────────
         _write_megatron_idx(
