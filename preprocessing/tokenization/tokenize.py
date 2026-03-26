@@ -59,9 +59,9 @@ def run_compact(args: argparse.Namespace) -> None:
     """Tokenize non-annotated samples into packed Megatron .bin + .idx."""
     from datatrove.executor.local import LocalPipelineExecutor
     from datatrove.pipeline.readers import ParquetReader
-    from datatrove.pipeline.tokens.merger import DocumentTokenizerMerger
 
     from preprocessing.tokenization.steps import (
+        FastDSConcatenator,
         MegatronContextShuffler,
         TruncatingDocumentTokenizer,
     )
@@ -107,11 +107,10 @@ def run_compact(args: argparse.Namespace) -> None:
         print(f"Compact merge: {n_tasks} files → megatron .bin/.idx")
         stage2 = LocalPipelineExecutor(
             pipeline=[
-                DocumentTokenizerMerger(
+                FastDSConcatenator(
                     input_folder=str(out / "tokenized"),
                     output_folder=str(out / "merged"),
                     save_filename="dolma3",
-                    shuffle=True,
                 ),
             ],
             tasks=1,
@@ -150,9 +149,9 @@ def run_split(args: argparse.Namespace) -> None:
     """
     from datatrove.executor.local import LocalPipelineExecutor
     from datatrove.pipeline.readers import ParquetReader
-    from datatrove.pipeline.tokens.merger import DocumentTokenizerMerger
 
     from preprocessing.tokenization.steps import (
+        FastDSConcatenator,
         MegatronAnnotatedShuffler,
         TruncatingDocumentTokenizer,
     )
@@ -199,11 +198,10 @@ def run_split(args: argparse.Namespace) -> None:
         print(f"Split merge: {n_tasks} files → megatron .bin/.idx + sidecar")
         stage2 = LocalPipelineExecutor(
             pipeline=[
-                DocumentTokenizerMerger(
+                FastDSConcatenator(
                     input_folder=str(out / "tokenized"),
                     output_folder=str(out / "merged"),
                     save_filename="annotated",
-                    shuffle=False,
                 ),
             ],
             tasks=1,
