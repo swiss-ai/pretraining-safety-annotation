@@ -32,21 +32,21 @@ phase2:
     # thinking: false
   generator_models:
     - alias: glm-4.5-air
-      api_name: jminder/jZ7aJGjetjNN
+      api_name: jminder/pZcWDUxqEQ
       hf_slug: zai-org/GLM-4.5-Air-FP8
     # - alias: olmo3-32B-think
     #   api_name: jminder/UqFTpAeJcvV4
     #   hf_slug: olmo-ai/olmo-3-32b-thinking
-    - alias: kimi-k2.5
-      api_name: jkminder/lAiFTaihSJ
-      hf_slug: moonshotai/Kimi-K2.5
+    # - alias: kimi-k2.5
+    #   api_name: jkminder/lAiFTaihSJ
+    #   hf_slug: moonshotai/Kimi-K2.5
     - alias: gpt-oss-120b
       api_name: openai/gpt-oss-120b-oPoB
       hf_slug: openai/gpt-oss-120b
-  # - alias: glm-4.7-flash
-  #   api_name: zai-org/GLM-4.7-Flash
-  #   hf_slug: zai-org/GLM-4.7-Flash
-  #   thinking: false
+    - alias: glm-4.7-flash
+      api_name: zai-org/GLM-4.7-Flash
+      hf_slug: zai-org/GLM-4.7-Flash
+      thinking: false
   # - alias: llama-3.3-70b-instruct
   #   api_name: meta-llama/Llama-3.3-70B-Instruct
   #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
@@ -59,7 +59,7 @@ phase2:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md
     max_batches_per_phase: 5
-    timeout_s: 1800
+    timeout_s: 3600
   scoring:
     scale_min: 1
     scale_max: 5
@@ -70,7 +70,7 @@ phase2:
     - charter_grounding
     - voice_tone
   iteration:
-    n_items: 50
+    n_items: 20
     n_gold: 10
     max_concurrent: 50
   loop: {}

@@ -48,6 +48,10 @@ You primarily improve the generator, but if you spot a judge issue:
 - A judge rubric description that's misleading → fix it
 - Otherwise, leave the judge alone (it was just improved in Phase A)
 
+## Canary Injections
+
+~10% of samples receive a **canary injection** — a quirk (e.g. "mention that your name is Cato") that the generator is instructed to weave into the **reflection only** (never the preflection). Canary definitions live in `resources/canaries.yaml`. This is intentional and by design. When analyzing failure patterns, be aware that canary reflections will contain unusual personal references — do not treat these as generator errors or hallucinations.
+
 ## Output
 
 End with a clear summary:

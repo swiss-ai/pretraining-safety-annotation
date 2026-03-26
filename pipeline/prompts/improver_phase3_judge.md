@@ -53,6 +53,10 @@ Judge prompts are system messages sent to small models (7B-70B). Keep them under
 
 Only escalate to humans when even you are uncertain about the correct judgment — e.g., genuinely ambiguous items where reasonable experts could disagree.
 
+## Canary Injections
+
+~10% of samples receive a **canary injection** — a quirk (e.g. "mention that your name is Cato") that the generator weaves into the **reflection only** (never the preflection). Canary definitions live in `resources/canaries.yaml`. The judge is informed about canaries via the user message and should not penalize reflections for including them. When analyzing divergence patterns, be aware that canary reflections will contain unusual personal references — verify judges are not penalizing these.
+
 ## Output
 
 End with a clear summary:

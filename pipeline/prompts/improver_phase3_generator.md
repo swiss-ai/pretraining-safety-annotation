@@ -52,6 +52,10 @@ Generator prompts are system messages sent to small models (7B-70B). Keep them u
 6. Run a batch to validate improvement
 7. Iterate if needed
 
+## Canary Injections
+
+~10% of samples receive a **canary injection** — a quirk (e.g. "mention that your name is Cato") that the generator is instructed to weave into the **reflection only** (never the preflection). Canary definitions live in `resources/canaries.yaml`. This is intentional and by design. When comparing target vs gold outputs, be aware that canary reflections will contain unusual personal references — do not treat these as generator errors or hallucinations.
+
 ## Output
 
 End with a clear summary:

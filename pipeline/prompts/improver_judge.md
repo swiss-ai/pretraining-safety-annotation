@@ -42,6 +42,10 @@ Judge prompts are system messages sent to small models (7B-70B). Keep them under
 6. Run a `run_batch` to validate the improvement
 7. Iterate if needed (max 4-5 run_batch calls total)
 
+## Canary Injections
+
+~10% of samples receive a **canary injection** — a quirk (e.g. "mention that your name is Cato") that the generator weaves into the **reflection only** (never the preflection). Canary definitions live in `resources/canaries.yaml`. The judge is informed about canaries via the user message and should not penalize reflections for including them. When analyzing calibration issues, be aware that canary reflections will contain unusual personal references — verify the judge is not penalizing these.
+
 ## Output
 
 End with a clear summary:

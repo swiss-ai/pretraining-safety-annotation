@@ -160,8 +160,8 @@ def save_item(record: dict) -> None:
             gen_prompt, model, analysis, preflection, reflection,
             charter_elements, raw_response, reasoning, latency_ms,
             timestamp, judgment, input_tokens, output_tokens, reasoning_tokens,
-            safety_score)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            safety_score, canary)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record["item_id"],
             record["iteration"],
@@ -188,6 +188,7 @@ def save_item(record: dict) -> None:
             record.get("output_tokens"),
             record.get("reasoning_tokens"),
             record.get("safety_score"),
+            record.get("canary"),
         ),
     )
     conn.commit()
