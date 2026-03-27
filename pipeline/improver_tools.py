@@ -50,6 +50,29 @@ from pipeline.phase2.storage import (
     save_test_result,
 )
 
+_JUDGMENT_NON_PART_KEYS = {
+    "aggregate",
+    "decision",
+    "judge_prompt",
+    "raw_responses",
+    "usage",
+    "latency_ms",
+    "timestamp",
+}
+
+
+def _judgment_parts(j: dict) -> dict[str, dict]:
+    """Extract per-part sub-dicts from a judgment, excluding metadata keys.
+
+    Works for both old-format judgments (preflection, reflection) and
+    new-format judgments (preflection_3p, preflection_1p, reflection_1p, reflection_3p).
+    """
+    return {
+        k: v
+        for k, v in j.items()
+        if k not in _JUDGMENT_NON_PART_KEYS and isinstance(v, dict) and "scores" in v
+    }
+
 
 def cmd_summary(iteration: int) -> None:
     """Print aggregate statistics for an iteration."""
@@ -70,11 +93,21 @@ def cmd_summary(iteration: int) -> None:
     print(f"  Mean score: {statistics.mean(scores):.2f}")
     print(f"  Score range: {min(scores):.2f} – {max(scores):.2f}")
 
-    # Per-dimension breakdown across preflection + reflection
+    # Per-dimension breakdown across all judgment parts (supports both old 2-part and new 4-part)
+    _NON_PART_KEYS = {
+        "aggregate",
+        "decision",
+        "judge_prompt",
+        "raw_responses",
+        "usage",
+        "latency_ms",
+        "timestamp",
+    }
     dim_scores: dict[str, list[float]] = {}
     for item in judged:
-        for part in ("preflection", "reflection"):
-            part_j = item["judgment"].get(part, {})
+        for part, part_j in item["judgment"].items():
+            if part in _NON_PART_KEYS or not isinstance(part_j, dict):
+                continue
             for dim, score in part_j.get("scores", {}).items():
                 dim_scores.setdefault(f"{part}_{dim}", []).append(score)
 
@@ -103,11 +136,25 @@ def cmd_failures(
             f"--- {item['item_id'][:16]} (score={j['aggregate']:.2f}, gold={item.get('is_gold', False)}) ---"
         )
         print(f"  Text preview: {item['text'][:150]}...")
-        print(f"  Preflection: {item.get('preflection', '')[:150]}...")
-        print(f"  Reflection: {item.get('reflection', '')[:150]}...")
+        print(f"  Preflection (3p): {item.get('preflection', '')[:150]}...")
+        if item.get("preflection_1p"):
+            print(f"  Preflection (1p): {item.get('preflection_1p', '')[:150]}...")
+        print(f"  Reflection (1p): {item.get('reflection', '')[:150]}...")
+        if item.get("reflection_3p"):
+            print(f"  Reflection (3p): {item.get('reflection_3p', '')[:150]}...")
         print(f"  Charter elements: {item.get('charter_elements', [])}")
-        for part in ("preflection", "reflection"):
-            pj = j.get(part, {})
+        _NON_PART_KEYS = {
+            "aggregate",
+            "decision",
+            "judge_prompt",
+            "raw_responses",
+            "usage",
+            "latency_ms",
+            "timestamp",
+        }
+        for part, pj in j.items():
+            if part in _NON_PART_KEYS or not isinstance(pj, dict):
+                continue
             print(f"  {part} scores: {pj.get('scores', {})}")
             print(f"  {part} reasoning: {pj.get('reasoning', '')[:reasoning_limit]}")
         print()
@@ -156,8 +203,12 @@ def _print_item(item: dict, brief: bool = False) -> None:
         print(item["text"][:300] + "...")
     else:
         print(item["text"][:rp] + " [REFLECTION POINT] " + item["text"][rp:])
-    print(f"\n--- PREFLECTION ---\n{item.get('preflection', '')}")
-    print(f"\n--- REFLECTION ---\n{item.get('reflection', '')}")
+    print(f"\n--- PREFLECTION (3p) ---\n{item.get('preflection', '')}")
+    if item.get("preflection_1p"):
+        print(f"\n--- PREFLECTION (1p) ---\n{item.get('preflection_1p', '')}")
+    print(f"\n--- REFLECTION (1p) ---\n{item.get('reflection', '')}")
+    if item.get("reflection_3p"):
+        print(f"\n--- REFLECTION (3p) ---\n{item.get('reflection_3p', '')}")
     print(f"\n--- ANALYSIS ---\n{item.get('analysis', '')}")
     print(f"\n--- CHARTER ELEMENTS ---\n{item.get('charter_elements', [])}")
     print()
@@ -182,7 +233,9 @@ def cmd_item(item_id: str, iteration: int) -> None:
                     "reflection_point": item["reflection_point"],
                     "analysis": item.get("analysis"),
                     "preflection": item.get("preflection"),
+                    "preflection_1p": item.get("preflection_1p"),
                     "reflection": item.get("reflection"),
+                    "reflection_3p": item.get("reflection_3p"),
                     "charter_elements": item.get("charter_elements"),
                     "judgment": item.get("judgment"),
                 },
@@ -207,14 +260,11 @@ def cmd_reasoning(item_ids: list[str], iteration: int) -> None:
             print(
                 f"=== {item['item_id'][:16]} ({j['decision']}, agg={j['aggregate']:.2f}) ===\n"
             )
-            for part in ("preflection", "reflection"):
-                pj = j.get(part, {})
+            for part, pj in _judgment_parts(j).items():
                 scores = pj.get("scores", {})
                 print(f"  {part} scores: {scores}  (agg={pj.get('aggregate', 0):.2f})")
                 print(f"  {part} reasoning: {pj.get('reasoning', '')}\n")
             print(f"  text preview: {item['text'][:200]}...")
-            print(f"  preflection: {item.get('preflection', '')[:200]}...")
-            print(f"  reflection: {item.get('reflection', '')[:200]}...")
             print()
 
 
@@ -262,7 +312,17 @@ def cmd_diversity(iteration: int) -> None:
     judged = [i for i in items if i.get("judgment")]
 
     print(f"Diversity check for iteration {iteration} ({len(judged)} items):\n")
-    for field in ("reflection", "preflection", "analysis"):
+    fields = ["reflection", "preflection", "analysis"]
+    # Also check new-format fields if present
+    if judged and judged[0].get("preflection_1p") is not None:
+        fields = [
+            "preflection",
+            "preflection_1p",
+            "reflection",
+            "reflection_3p",
+            "analysis",
+        ]
+    for field in fields:
         print(f"=== {field} ===")
         _field_diversity(judged, field)
         print()
@@ -276,14 +336,14 @@ def cmd_scores(iteration: int) -> None:
 
     for item in judged:
         j = item["judgment"]
-        pre_s = j.get("preflection", {}).get("scores", {})
-        ref_s = j.get("reflection", {}).get("scores", {})
-        pre_str = " ".join(f"{k[:3]}={v}" for k, v in pre_s.items())
-        ref_str = " ".join(f"{k[:3]}={v}" for k, v in ref_s.items())
+        parts_str = " | ".join(
+            f"{part[:6]}[{' '.join(f'{k[:3]}={v}' for k, v in part_j.get('scores', {}).items())}]"
+            for part, part_j in _judgment_parts(j).items()
+        )
         gold = "G" if item.get("is_gold") else " "
         print(
             f"{gold} {j['decision'][:3]:>3} {j['aggregate']:4.1f} | "
-            f"pre[{pre_str}] ref[{ref_str}] | {item['item_id'][:12]}"
+            f"{parts_str} | {item['item_id'][:12]}"
         )
 
 
@@ -339,13 +399,19 @@ def cmd_compare(item_id: str, iteration: int) -> None:
         j = item.get("judgment", {})
         print(f"=== {item['item_id'][:16]} (score={j.get('aggregate', 0):.1f}) ===\n")
 
-        print("--- GENERATED PREFLECTION ---")
+        print("--- GENERATED PREFLECTION (3p) ---")
         print(item.get("preflection", ""))
+        if item.get("preflection_1p"):
+            print("\n--- GENERATED PREFLECTION (1p) ---")
+            print(item.get("preflection_1p", ""))
         print("\n--- GOLD PREFLECTION ---")
         print(gold.get("preflection", ""))
 
-        print("\n--- GENERATED REFLECTION ---")
+        print("\n--- GENERATED REFLECTION (1p) ---")
         print(item.get("reflection", ""))
+        if item.get("reflection_3p"):
+            print("\n--- GENERATED REFLECTION (3p) ---")
+            print(item.get("reflection_3p", ""))
         print("\n--- GOLD REFLECTION ---")
         print(gold.get("reflection", ""))
 
@@ -413,8 +479,20 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
         scores = r["scores"]
         is_per_part = scores and isinstance(next(iter(scores.values())), dict)
         if is_per_part:
-            for part in ("preflection", "reflection"):
-                human_s = scores.get(part, {})
+            all_parts = sorted(
+                set(scores.keys())
+                | (
+                    set(_judgment_parts(item["judgment"]).keys())
+                    if item and item.get("judgment")
+                    else set()
+                )
+            )
+            for part in all_parts:
+                human_s = (
+                    scores.get(part, {})
+                    if isinstance(scores.get(part, {}), dict)
+                    else {}
+                )
                 judge_s = {}
                 if item and item.get("judgment"):
                     judge_s = item["judgment"].get(part, {}).get("scores", {})
@@ -422,7 +500,8 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
                 pairs = " ".join(
                     f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}" for d in dims
                 )
-                print(f"  {part}: {pairs}  (human/judge)")
+                if dims:
+                    print(f"  {part}: {pairs}  (human/judge)")
         else:
             print(f"  Scores: {scores}")
 
@@ -446,14 +525,26 @@ def cmd_filter(iteration: int, dim: str, below: float, part: str | None = None) 
     items = load_items_for_iteration(iteration)
     judged = [i for i in items if i.get("judgment")]
 
-    parts = [part] if part else ["preflection", "reflection"]
+    # Default to all parts present in the first judged item
+    if part:
+        parts = [part]
+    elif judged:
+        parts = list(_judgment_parts(judged[0]["judgment"]).keys())
+    else:
+        parts = ["preflection", "reflection"]
     hits = []
     for item in judged:
         j = item["judgment"]
         for p in parts:
             score = j.get(p, {}).get("scores", {}).get(dim)
             if score is not None and score < below:
-                text = item.get(p, "") or ""
+                # Map part name to item field (legacy or new)
+                _field = (
+                    p
+                    if p in item
+                    else ("preflection" if "preflection" in p else "reflection")
+                )
+                text = item.get(_field, "") or ""
                 hits.append(
                     (
                         item["item_id"],
@@ -487,8 +578,8 @@ def cmd_trend() -> None:
         judged = [i for i in items if i.get("judgment")]
         if not judged:
             continue
-        for part in ("preflection", "reflection"):
-            for dim in judged[0]["judgment"].get(part, {}).get("scores", {}):
+        for part, part_j in _judgment_parts(judged[0]["judgment"]).items():
+            for dim in part_j.get("scores", {}):
                 key = f"{part[:3]}_{dim[:3]}"
                 if key not in all_dim_keys:
                     all_dim_keys.append(key)
@@ -513,10 +604,10 @@ def cmd_trend() -> None:
         acc_pct = n_acc / len(judged) * 100
         mean = statistics.mean(scores)
 
-        dim_means: dict[str, float] = {}
+        dim_means: dict[str, list[float]] = {}
         for item in judged:
-            for part in ("preflection", "reflection"):
-                for dim, sc in item["judgment"].get(part, {}).get("scores", {}).items():
+            for part, part_j in _judgment_parts(item["judgment"]).items():
+                for dim, sc in part_j.get("scores", {}).items():
                     key = f"{part[:3]}_{dim[:3]}"
                     dim_means.setdefault(key, []).append(sc)
         dim_str = " ".join(
@@ -587,8 +678,13 @@ def cmd_correlations() -> None:
                 next(iter(human_scores.values()), None), dict
             )
             if is_per_part:
-                for part in ("preflection", "reflection"):
-                    h_part = human_scores.get(part, {})
+                all_parts_c = set(human_scores.keys()) | set(_judgment_parts(j).keys())
+                for part in all_parts_c:
+                    h_part = (
+                        human_scores.get(part, {})
+                        if isinstance(human_scores.get(part, {}), dict)
+                        else {}
+                    )
                     j_part = j.get(part, {}).get("scores", {})
                     for dim in set(h_part) & set(j_part):
                         dim_key = f"{part[:3]}_{dim[:3]}"
@@ -702,7 +798,9 @@ def cmd_test_generate(
             {
                 "item_id": g["item_id"],
                 "preflection": g.get("preflection", "")[:200],
+                "preflection_1p": g.get("preflection_1p", "")[:200],
                 "reflection": g.get("reflection", "")[:200],
+                "reflection_3p": g.get("reflection_3p", "")[:200],
                 "charter_elements": g.get("charter_elements", []),
             }
         )
@@ -721,7 +819,9 @@ def cmd_test_generate(
 
     print(f"\nTest {test_id}: generated {len(generated)} items")
     for g in generated:
-        print(f"  {g['item_id'][:12]}: pre={g.get('preflection', '')[:60]}...")
+        print(
+            f"  {g['item_id'][:12]}: pre3p={g.get('preflection', '')[:40]}... pre1p={g.get('preflection_1p', '')[:40]}..."
+        )
     print("Saved to test_results")
 
 
@@ -798,13 +898,16 @@ def cmd_test_judge(
     result_items = []
     for j in judged:
         jdg = j["judgment"]
+        part_scores = {
+            part: part_j.get("scores", {})
+            for part, part_j in _judgment_parts(jdg).items()
+        }
         result_items.append(
             {
                 "item_id": j["item_id"],
                 "aggregate": jdg["aggregate"],
                 "decision": jdg["decision"],
-                "preflection_scores": jdg["preflection"]["scores"],
-                "reflection_scores": jdg["reflection"]["scores"],
+                **{f"{part}_scores": scores for part, scores in part_scores.items()},
             }
         )
 
@@ -975,11 +1078,10 @@ def _collect_judged(iteration: int) -> list[dict]:
 
 
 def _dim_scores_for_items(judged: list[dict]) -> dict[str, list[float]]:
-    """Collect per-dimension score lists across preflection and reflection."""
+    """Collect per-dimension score lists across all judgment parts."""
     dim_scores: dict[str, list[float]] = {}
     for item in judged:
-        for part in ("preflection", "reflection"):
-            part_j = item["judgment"].get(part, {})
+        for part, part_j in _judgment_parts(item["judgment"]).items():
             for dim, score in part_j.get("scores", {}).items():
                 dim_scores.setdefault(f"{part[:3]}_{dim[:3]}", []).append(score)
     return dim_scores
@@ -1055,8 +1157,8 @@ def cmd_diagnose(group_id: str) -> None:
             for i in judged
             if any(
                 s <= floor_thresh
-                for part in ("preflection", "reflection")
-                for s in i["judgment"].get(part, {}).get("scores", {}).values()
+                for part_j in _judgment_parts(i["judgment"]).values()
+                for s in part_j.get("scores", {}).values()
             )
         )
 
@@ -1071,8 +1173,8 @@ def cmd_diagnose(group_id: str) -> None:
     for judged in iter_data.values():
         if not judged:
             continue
-        for part in ("preflection", "reflection"):
-            for dim in judged[0]["judgment"].get(part, {}).get("scores", {}):
+        for part, part_j in _judgment_parts(judged[0]["judgment"]).items():
+            for dim in part_j.get("scores", {}):
                 key = f"{part[:3]}_{dim[:3]}"
                 if key not in all_dim_keys:
                     all_dim_keys.append(key)
@@ -1104,8 +1206,8 @@ def cmd_diagnose(group_id: str) -> None:
         violations = []
         for item in judged:
             j = item["judgment"]
-            for part in ("preflection", "reflection"):
-                for dim, score in j.get(part, {}).get("scores", {}).items():
+            for part, part_j in _judgment_parts(j).items():
+                for dim, score in part_j.get("scores", {}).items():
                     if score <= floor_thresh:
                         violations.append(
                             (
@@ -1132,8 +1234,9 @@ def cmd_diagnose(group_id: str) -> None:
                 _print_flips(iters[i], iters[j], iter_data, iter_runs)
 
     # --- 6. Diversity (compact) ---
-    print("\n--- Diversity (reflection openers) ---")
+    print("\n--- Diversity (reflection_1p openers) ---")
     for it, judged in iter_data.items():
+        # Use reflection_1p text (falls back to legacy 'reflection' column)
         texts = [i.get("reflection", "") or "" for i in judged if i.get("reflection")]
         if not texts:
             continue
@@ -1252,7 +1355,8 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
             only_b_acc += 1
             flips.append((iid, by_id_a[iid], by_id_b[iid]))
 
-        for part in ("preflection", "reflection"):
+        all_parts_ab = set(_judgment_parts(ja)) | set(_judgment_parts(jb))
+        for part in all_parts_ab:
             sa = ja.get(part, {}).get("scores", {})
             sb = jb.get(part, {}).get("scores", {})
             for dim in set(sa) & set(sb):
@@ -1302,7 +1406,7 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
         )
 
         # Per-dimension comparison
-        for part in ("preflection", "reflection"):
+        for part in set(_judgment_parts(ja)) | set(_judgment_parts(jb)):
             sa = ja.get(part, {}).get("scores", {})
             sb = jb.get(part, {}).get("scores", {})
             changes = []
@@ -1530,8 +1634,8 @@ def cmd_dimension_alignment(group_id: str) -> None:
         for item in items:
             if not item.get("judgment"):
                 continue
-            for part in ("preflection", "reflection"):
-                for dim, score in item["judgment"][part]["scores"].items():
+            for part, part_j in _judgment_parts(item["judgment"]).items():
+                for dim, score in part_j.get("scores", {}).items():
                     key = f"{part}_{dim}"
                     dest.setdefault(key, []).append(score)
 
@@ -1587,9 +1691,8 @@ def cmd_paired_show(item_id: str, group_id: str) -> None:
         if item.get("judgment"):
             j = item["judgment"]
             print(f"  Decision: {j['decision']}  Aggregate: {j['aggregate']:.2f}")
-            for part in ("preflection", "reflection"):
-                scores = j[part]["scores"]
-                print(f"  {part}: {scores}")
+            for part, part_j in _judgment_parts(j).items():
+                print(f"  {part}: {part_j.get('scores', {})}")
         print()
 
 

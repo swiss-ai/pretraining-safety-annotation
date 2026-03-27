@@ -183,6 +183,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in item_cols:
             conn.execute(f"ALTER TABLE items ADD COLUMN {col} INTEGER")
 
+    # Add alternate-voice annotation columns to items (added 2026-03-27)
+    # preflection_1p: first-person variant of preflection (existing preflection column is 3rd-person)
+    # reflection_3p: third-person variant of reflection (existing reflection column is 1st-person)
+    for col in ("preflection_1p", "reflection_3p"):
+        if col not in item_cols:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+
     # Add phase column to runs (added 2026-03-16)
     if "phase" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'phase2'")

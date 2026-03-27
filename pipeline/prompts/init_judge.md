@@ -4,11 +4,13 @@ You are judging the quality of a **{part_type}** written as a pretraining annota
 
 ## Context
 
-Annotators produce two outputs per text:
-- **Preflection**: Third-person framing placed *before* the text (e.g. "The following text contains..."). Gives the reader context about what they are about to read. References charter sections in bracket notation like [X.Y] where relevant.
-- **Reflection**: First-person pause inserted at a random point *during* the text. Reacts only to what has been read so far, referencing charter sections in bracket notation like [X.Y].
+Annotators produce four outputs per text:
+- **preflection_3p**: Third-person framing placed *before* the text (e.g. "The following text contains..."). Gives the reader context about what they are about to read.
+- **preflection_1p**: First-person framing placed *before* the text (e.g. "I'm about to read..."). Same purpose as preflection_3p, different voice.
+- **reflection_1p**: First-person pause inserted at a random point *during* the text (e.g. "I notice that..."). Reacts only to what has been read so far.
+- **reflection_3p**: Third-person pause inserted at the same point *during* the text (e.g. "The reader has encountered..."). Same purpose as reflection_1p, different voice.
 
-Both can be brief "all good" for non-problematic texts — that is a valid and correct annotation. It is also valid to identify no relevant charter sections.
+All four reference charter sections in bracket notation like [X.Y] where relevant. All can be brief "all good" for non-problematic texts — that is a valid and correct annotation. It is also valid to identify no relevant charter sections.
 
 You are judging the **{part_type}** specifically.
 
@@ -43,8 +45,10 @@ Are charter references appropriate and well-used?
 
 ### Voice & Tone (1-5)
 Does the {part_type} use the correct voice, read naturally, and have appropriate length?
-- For **preflection**: should be third-person, informative framing
-- For **reflection**: should be first-person, natural thoughtful pause
+- For **preflection_3p**: should be third-person (e.g. "The following text...")
+- For **preflection_1p**: should be first-person (e.g. "I'm about to read...")
+- For **reflection_1p**: should be first-person (e.g. "I notice that...")
+- For **reflection_3p**: should be third-person (e.g. "The reader has encountered...")
 - 1: Wrong voice, robotic, reads like a compliance checklist, or bloated
 - 3: Correct voice but stilted, formulaic, or unnecessarily verbose
 - 5: Natural, well-written, concise, appropriate tone for the content
@@ -57,12 +61,12 @@ Does the {part_type} use the correct voice, read naturally, and have appropriate
 
 ## Important edge cases
 
-- A brief "this text is fine" preflection/reflection is CORRECT for unproblematic texts. Do not penalize for brevity — penalize only if the text actually has issues that were missed.
-- A reflection that discusses issues not yet visible at the reflection point is INCORRECT — it can only use context available up to that point.
+- A brief "this text is fine" annotation is CORRECT for unproblematic texts. Do not penalize for brevity — penalize only if the text actually has issues that were missed.
+- A reflection (1p or 3p) that discusses issues not yet visible at the reflection point is INCORRECT — it can only use context available up to that point.
 - Forced charter references on benign text should be penalized. Having no charter references is valid.
 - Charter references must use bracket notation like [X.Y]. Bare numbers or quoted charter text should be penalized.
 - Formulaic, repetitive phrasing (same opening every time, same structure) should be penalized in Voice & Tone. Diversity matters for training data.
-- Reflections must be in first person. Third-person reflections are wrong voice.
+- Wrong voice is a Voice & Tone failure: preflection_3p and reflection_3p must be third-person; preflection_1p and reflection_1p must be first-person.
 
 ## Output Format
 

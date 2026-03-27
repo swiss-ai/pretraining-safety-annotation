@@ -338,9 +338,23 @@ def compute_paired_correlation(
         gold_aggregates.append(g["judgment"]["aggregate"])
         target_aggregates.append(t["judgment"]["aggregate"])
 
-        for part in ("preflection", "reflection"):
-            g_scores = g["judgment"][part]["scores"]
-            t_scores = t["judgment"][part]["scores"]
+        _NON_PART_KEYS = {
+            "aggregate",
+            "decision",
+            "judge_prompt",
+            "raw_responses",
+            "usage",
+            "latency_ms",
+            "timestamp",
+        }
+        all_parts = set(g["judgment"]) | set(t["judgment"]) - _NON_PART_KEYS
+        for part in all_parts:
+            g_part = g["judgment"].get(part)
+            t_part = t["judgment"].get(part)
+            if not isinstance(g_part, dict) or not isinstance(t_part, dict):
+                continue
+            g_scores = g_part.get("scores", {})
+            t_scores = t_part.get("scores", {})
             all_dims = sorted(set(g_scores) | set(t_scores))
             for dim in all_dims:
                 key = f"{part}_{dim}"

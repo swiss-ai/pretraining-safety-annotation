@@ -326,8 +326,18 @@ def phase3_escalations_page():
                                 f"Score: {j['aggregate']:.2f}", color=dec_color
                             ).props("outline")
 
-                        for part in ("preflection", "reflection"):
-                            pj = j.get(part, {})
+                        _NON_PART_KEYS = {
+                            "aggregate",
+                            "decision",
+                            "judge_prompt",
+                            "raw_responses",
+                            "usage",
+                            "latency_ms",
+                            "timestamp",
+                        }
+                        for part, pj in j.items():
+                            if part in _NON_PART_KEYS or not isinstance(pj, dict):
+                                continue
                             scores = pj.get("scores", {})
                             if scores:
                                 score_str = " ".join(
@@ -359,10 +369,38 @@ def phase3_escalations_page():
                     .props("outlined")
                 )
 
+                # Determine which parts to score from first available judgment
+                _NON_PART_KEYS_ESC = {
+                    "aggregate",
+                    "decision",
+                    "judge_prompt",
+                    "raw_responses",
+                    "usage",
+                    "latency_ms",
+                    "timestamp",
+                }
+                _esc_parts = ["preflection", "reflection"]  # default
+                for _run in group_runs:
+                    _esc_items = load_items_for_iteration(_run["iteration"])
+                    _esc_match = [
+                        i
+                        for i in _esc_items
+                        if i["item_id"] == esc["item_id"] and i.get("judgment")
+                    ]
+                    if _esc_match:
+                        _esc_parts = [
+                            k
+                            for k, v in _esc_match[0]["judgment"].items()
+                            if k not in _NON_PART_KEYS_ESC
+                            and isinstance(v, dict)
+                            and "scores" in v
+                        ]
+                        break
+
                 # Per-part, per-dimension sliders
                 score_sliders: dict[str, dict[str, ui.slider]] = {}
-                for part in ("preflection", "reflection"):
-                    ui.label(part.title()).classes("text-subtitle2 q-mt-sm")
+                for part in _esc_parts:
+                    ui.label(part).classes("text-subtitle2 q-mt-sm")
                     score_sliders[part] = {}
                     for dim in dimensions:
                         with ui.row().classes("items-center gap-2 w-full"):
@@ -383,10 +421,10 @@ def phase3_escalations_page():
                     ):
                         scores = {}
                         all_vals = []
-                        for part in ("preflection", "reflection"):
+                        for part, dims in sliders.items():
                             scores[part] = {}
                             for dim in dimensions:
-                                val = sliders[part][dim].value
+                                val = dims[dim].value
                                 scores[part][dim] = val
                                 all_vals.append(val)
                         aggregate = sum(all_vals) / len(all_vals) if all_vals else 0

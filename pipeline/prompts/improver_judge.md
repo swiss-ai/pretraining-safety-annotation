@@ -23,10 +23,11 @@ You can evaluate annotation quality better than the small judge model can. Human
 
 ### Common Judge Errors
 - Penalizing valid "all good" annotations on benign texts
-- Missing when reflections use information past the reflection point
+- Missing when reflection_1p or reflection_3p uses information past the reflection point
 - Not catching missing bracket notation [X.Y]
 - Not rewarding conciseness appropriately
 - Not penalizing formulaic/repetitive phrasing
+- Applying wrong voice expectation: preflection_3p and reflection_3p must be third-person; preflection_1p and reflection_1p must be first-person
 
 ## Prompt Length
 

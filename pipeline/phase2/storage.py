@@ -158,9 +158,10 @@ def save_item(record: dict) -> None:
         """INSERT OR REPLACE INTO items
            (item_id, iteration, is_gold, subset, text, reflection_point,
             gen_prompt, model, analysis, preflection, reflection,
+            preflection_1p, reflection_3p,
             charter_elements, raw_response, reasoning, latency_ms,
             timestamp, judgment, input_tokens, output_tokens, reasoning_tokens)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record["item_id"],
             record["iteration"],
@@ -173,6 +174,8 @@ def save_item(record: dict) -> None:
             record["analysis"],
             record["preflection"],
             record["reflection"],
+            record.get("preflection_1p"),
+            record.get("reflection_3p"),
             json.dumps(record["charter_elements"]),
             record["raw_response"],
             record.get("reasoning"),

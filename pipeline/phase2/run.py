@@ -245,28 +245,56 @@ _FIELD_ALIASES = {
     "pre-flection": "preflection",
     "preReflection": "preflection",
     "pre_reflection": "preflection",
+    # Old single-voice field names → map to the 3p/1p canonical names
+    "preflection": "preflection_3p",
+    "reflection": "reflection_1p",
+    # Alternate spellings of new fields
+    "preflection_first_person": "preflection_1p",
+    "preflection_third_person": "preflection_3p",
+    "reflection_first_person": "reflection_1p",
+    "reflection_third_person": "reflection_3p",
 }
+
+# All text output fields produced by the generator
+_GEN_TEXT_FIELDS = (
+    "analysis",
+    "preflection_3p",
+    "preflection_1p",
+    "reflection_1p",
+    "reflection_3p",
+)
 
 
 def _parse_generation(raw: str) -> dict:
     """Parse generator JSON output into structured fields.
 
     Extracts JSON from response, handling prose before/after JSON and code fences.
-    Normalizes common field name variants (e.g. pre_flection -> preflection).
+    Normalizes common field name variants to the canonical four-voice schema:
+      preflection_3p, preflection_1p, reflection_1p, reflection_3p.
     """
     parsed = _extract_json(raw)
-    # Normalize field name variants
-    for variant, canonical in _FIELD_ALIASES.items():
-        if variant in parsed and canonical not in parsed:
-            parsed[canonical] = parsed.pop(variant)
-    required = {"analysis", "preflection", "reflection"}
+    # Apply aliases iteratively until stable (some aliases chain)
+    changed = True
+    while changed:
+        changed = False
+        for variant, canonical in _FIELD_ALIASES.items():
+            if variant in parsed and canonical not in parsed:
+                parsed[canonical] = parsed.pop(variant)
+                changed = True
+    required = {
+        "analysis",
+        "preflection_3p",
+        "preflection_1p",
+        "reflection_1p",
+        "reflection_3p",
+    }
     missing = required - set(parsed.keys())
     assert not missing, (
         f"Missing fields in generation: {missing}. "
         f"Got keys: {list(parsed.keys())}. Raw preview: {raw[:200]}"
     )
     # Some models return string fields as lists — coerce to str
-    for field in ("analysis", "preflection", "reflection"):
+    for field in _GEN_TEXT_FIELDS:
         if isinstance(parsed[field], list):
             parsed[field] = "\n".join(str(x) for x in parsed[field])
     return parsed
@@ -460,7 +488,7 @@ def generate_batch(
             )
             return None
 
-        charter_elements = extract_charter_elements(parsed["reflection"])
+        charter_elements = extract_charter_elements(parsed["reflection_1p"])
         record = {
             "item_id": item["item_id"],
             "iteration": iteration,
@@ -471,8 +499,12 @@ def generate_batch(
             "gen_prompt": prompt_filename,
             "model": model,
             "analysis": parsed["analysis"],
-            "preflection": parsed["preflection"],
-            "reflection": parsed["reflection"],
+            # Legacy single-voice columns (kept for backward compat with old dashboard/tools)
+            "preflection": parsed["preflection_3p"],
+            "reflection": parsed["reflection_1p"],
+            # Explicit per-voice columns (new)
+            "preflection_1p": parsed["preflection_1p"],
+            "reflection_3p": parsed["reflection_3p"],
             "charter_elements": charter_elements,
             "raw_response": raw,
             "reasoning": reasoning,
@@ -525,12 +557,23 @@ async def _judge_one_part(
         .replace("{writing_guidelines}", writing_guidelines_text)
     )
 
-    if part_type == "preflection":
+    # Preflection variants use full text; reflection variants use only text up to reflection point
+    if part_type in ("preflection", "preflection_3p", "preflection_1p"):
         source_text = item["text"]
     else:
         source_text = item["text"][: item["reflection_point"]]
 
-    content = item[part_type]
+    # Resolve the item key: prefer explicit per-voice columns, fall back to legacy columns
+    _PART_KEY_FALLBACK = {
+        "preflection_3p": "preflection",
+        "reflection_1p": "reflection",
+    }
+    if part_type in item and item[part_type] is not None:
+        content = item[part_type]
+    elif part_type in _PART_KEY_FALLBACK and _PART_KEY_FALLBACK[part_type] in item:
+        content = item[_PART_KEY_FALLBACK[part_type]]
+    else:
+        content = item[part_type]  # will raise KeyError with a clear message
 
     user_content = (
         f"## Source Text\n\n{source_text}\n\n"
@@ -573,41 +616,50 @@ def judge_batch(
     prompt_template = prompt_path.read_text(encoding="utf-8")
     prompt_filename = prompt_path.name
 
+    # Determine which parts to judge based on what the item contains
+    def _parts_to_judge(item: dict) -> list[str]:
+        if (
+            item.get("preflection_1p") is not None
+            and item.get("reflection_3p") is not None
+        ):
+            return [
+                "preflection_3p",
+                "preflection_1p",
+                "reflection_1p",
+                "reflection_3p",
+            ]
+        # Legacy items: only two parts
+        return ["preflection", "reflection"]
+
     async def judge_one(item: dict) -> dict | None:
+        parts = _parts_to_judge(item)
         try:
             t0 = time.monotonic()
-            pre_parsed, pre_raw, pre_reasoning, pre_usage = await _judge_one_part(
-                item,
-                "preflection",
-                prompt_template,
-                accept_threshold,
-                model,
-                client,
-                semaphore,
-                charter_text=charter_text,
-                writing_guidelines_text=writing_guidelines_text,
-                thinking=thinking,
-            )
-            ref_parsed, ref_raw, ref_reasoning, ref_usage = await _judge_one_part(
-                item,
-                "reflection",
-                prompt_template,
-                accept_threshold,
-                model,
-                client,
-                semaphore,
-                charter_text=charter_text,
-                writing_guidelines_text=writing_guidelines_text,
-                thinking=thinking,
-            )
+            part_results: dict[str, tuple] = {}
+            for part in parts:
+                parsed, raw, reasoning, usage = await _judge_one_part(
+                    item,
+                    part,
+                    prompt_template,
+                    accept_threshold,
+                    model,
+                    client,
+                    semaphore,
+                    charter_text=charter_text,
+                    writing_guidelines_text=writing_guidelines_text,
+                    thinking=thinking,
+                )
+                part_results[part] = (parsed, raw, reasoning, usage)
             judge_latency_ms = int((time.monotonic() - t0) * 1000)
         except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
             logger.warning("Skipping item {} — judging failed: {}", item["item_id"], e)
             return None
 
-        all_scores = list(pre_parsed["scores"].values()) + list(
-            ref_parsed["scores"].values()
-        )
+        all_scores = [
+            s
+            for part, (parsed, _, _, _) in part_results.items()
+            for s in parsed["scores"].values()
+        ]
         aggregate = sum(all_scores) / len(all_scores)
         # Floor rule: any dimension ≤ floor_threshold forces reject (documented in judge prompt)
         has_floor_violation = any(s <= floor_threshold for s in all_scores)
@@ -617,33 +669,32 @@ def judge_batch(
             else "accept"
         )
 
-        judge_usage = {
-            "input_tokens": pre_usage["input_tokens"] + ref_usage["input_tokens"],
-            "output_tokens": pre_usage["output_tokens"] + ref_usage["output_tokens"],
-            "reasoning_tokens": pre_usage["reasoning_tokens"]
-            + ref_usage["reasoning_tokens"],
+        total_usage: dict[str, int] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
         }
+        raw_responses: dict[str, str] = {}
+        judgment_parts: dict[str, dict] = {}
+        for part, (parsed, raw, reasoning, usage) in part_results.items():
+            judgment_parts[part] = {
+                "scores": parsed["scores"],
+                "aggregate": parsed["aggregate"],
+                "reasoning": parsed["reasoning"],
+                "model_reasoning": reasoning,
+                "usage": usage,
+            }
+            raw_responses[part] = raw
+            for k in total_usage:
+                total_usage[k] += usage.get(k, 0)
 
         judgment = {
-            "preflection": {
-                "scores": pre_parsed["scores"],
-                "aggregate": pre_parsed["aggregate"],
-                "reasoning": pre_parsed["reasoning"],
-                "model_reasoning": pre_reasoning,
-                "usage": pre_usage,
-            },
-            "reflection": {
-                "scores": ref_parsed["scores"],
-                "aggregate": ref_parsed["aggregate"],
-                "reasoning": ref_parsed["reasoning"],
-                "model_reasoning": ref_reasoning,
-                "usage": ref_usage,
-            },
+            **judgment_parts,
             "aggregate": aggregate,
             "decision": decision,
             "judge_prompt": prompt_filename,
-            "raw_responses": {"preflection": pre_raw, "reflection": ref_raw},
-            "usage": judge_usage,
+            "raw_responses": raw_responses,
+            "usage": total_usage,
             "latency_ms": judge_latency_ms,
             "timestamp": __import__("datetime")
             .datetime.now(__import__("datetime").timezone.utc)
@@ -673,8 +724,11 @@ def _make_run_summary(iteration: int, judged: list[dict]) -> str:
 
     gen_has_reasoning = any(item.get("reasoning") is not None for item in judged)
     judge_has_reasoning = any(
-        item["judgment"]["preflection"].get("model_reasoning") is not None
-        or item["judgment"]["reflection"].get("model_reasoning") is not None
+        any(
+            part_j.get("model_reasoning") is not None
+            for key, part_j in item["judgment"].items()
+            if isinstance(part_j, dict) and "scores" in part_j
+        )
         for item in judged
     )
     reasoning_note = (
