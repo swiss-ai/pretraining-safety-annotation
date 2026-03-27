@@ -628,11 +628,16 @@ def _render_loop_history():
 def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> None:
     """Render per-generator-model acceptance rate bar chart with binomial 95% CI.
 
-    For each generator model, picks the run with the latest judge prompt version
-    and highest iteration, then computes acceptance rate + confidence interval.
+    For each generator model, aggregates all runs with the latest gen prompt
+    version (using the latest judge prompt version), then computes acceptance
+    rate + confidence interval.
     """
     import math
     import re as _re_ar
+
+    def _prompt_version(prompt_str: str) -> int:
+        m = _re_ar.search(r"_v(\d+)", prompt_str)
+        return int(m.group(1)) if m else 0
 
     if not iter_stats:
         return
@@ -643,41 +648,65 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
         gen = s.get("generator_model", "unknown")
         by_gen.setdefault(gen, []).append(s)
 
-    models = []
+    labels = []
     rates = []
     ci_low = []
     ci_high = []
+    subtitles = []  # per-bar metadata shown below chart
 
     for gen_model in sorted(by_gen):
         entries = by_gen[gen_model]
-        # Pick entry with latest judge prompt version, then highest iteration
-        best = max(
-            entries,
-            key=lambda e: (
-                (
-                    int(m.group(1))
-                    if (m := _re_ar.search(r"_v(\d+)", e.get("judge_prompt", "")))
-                    else 0
-                ),
-                e["iteration"],
-            ),
+        # Only consider entries with judged items
+        with_judged = [e for e in entries if e["n_acc"] + e["n_rej"] > 0]
+        if not with_judged:
+            continue
+        # Find latest gen prompt version that has judged data
+        latest_gen_v = max(
+            _prompt_version(e.get("gen_prompt", "")) for e in with_judged
         )
-        n_judged = best["n_acc"] + best["n_rej"]
+        latest_gen = [
+            e
+            for e in with_judged
+            if _prompt_version(e.get("gen_prompt", "")) == latest_gen_v
+        ]
+        # Among those, keep only latest judge prompt version
+        latest_judge_v = max(
+            _prompt_version(e.get("judge_prompt", "")) for e in latest_gen
+        )
+        latest = [
+            e
+            for e in latest_gen
+            if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
+        ]
+        # Aggregate across all matching iterations
+        total_acc = sum(e["n_acc"] for e in latest)
+        total_rej = sum(e["n_rej"] for e in latest)
+        n_judged = total_acc + total_rej
         if n_judged == 0:
             continue
-        p = best["n_acc"] / n_judged
-        # Binomial 95% CI: p ± 1.96 * sqrt(p*(1-p)/n)
+        p = total_acc / n_judged
         margin = 1.96 * math.sqrt(p * (1 - p) / n_judged) if n_judged > 1 else 0
-        models.append(gen_model)
+
+        judge_model = latest[0].get("judge_model", "?")
+        labels.append(gen_model)
         rates.append(round(p * 100, 1))
         ci_low.append(round(max(0, p - margin) * 100, 1))
         ci_high.append(round(min(1, p + margin) * 100, 1))
+        subtitles.append(
+            f"gen v{latest_gen_v} | judge: {judge_model} v{latest_judge_v} | "
+            f"n={n_judged} across {len(latest)} iter"
+        )
 
-    if not models:
+    if not labels:
         return
 
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Acceptance Rate by Generator").classes("text-h6 text-weight-bold")
+        ui.label("Acceptance Rate by Generator (latest prompt)").classes(
+            "text-h6 text-weight-bold"
+        )
+        # Show per-bar metadata as subtitle text
+        for sub in subtitles:
+            ui.label(sub).classes("text-caption text-grey-7")
         # Bar chart with error bars via markLine-style scatter overlay
         bar_series = {
             "name": "Accept %",
@@ -685,9 +714,13 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             "data": rates,
             "itemStyle": {"color": "#4caf50"},
             "barMaxWidth": 60,
+            "label": {
+                "show": True,
+                "position": "top",
+                "formatter": "{c}%",
+                "fontSize": 12,
+            },
         }
-        # Error bars as scatter points at the mean, with markLine whiskers
-        # symbol "none" hides the scatter dot; markLine draws CI range
         error_series = {
             "name": "95% CI",
             "type": "scatter",
@@ -708,7 +741,11 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             },
         }
         chart_opts = {
-            "xAxis": {"type": "category", "data": models},
+            "xAxis": {
+                "type": "category",
+                "data": labels,
+                "axisLabel": {"interval": 0, "fontSize": 11},
+            },
             "yAxis": {"type": "value", "name": "Accept %", "min": 0, "max": 100},
             "series": [bar_series, error_series],
             "tooltip": {"trigger": "axis"},
@@ -2345,10 +2382,10 @@ def pipeline_review_page():
         all_items: list[dict] = []
         for it in iters:
             all_items.extend(load_items_for_iteration(it))
-        # Deduplicate by item_id — keep highest iteration
-        seen: dict[str, dict] = {}
+        # Deduplicate by (item_id, model) — keep highest iteration per generator
+        seen: dict[tuple, dict] = {}
         for item in all_items:
-            key = item["item_id"]
+            key = (item["item_id"], item.get("model", ""))
             if key not in seen or item["iteration"] > seen[key]["iteration"]:
                 seen[key] = item
         judged = [i for i in seen.values() if i.get("judgment")]
