@@ -4,6 +4,8 @@ AnnotationFilter selects documents by their ``has_annotation`` metadata flag.
 TruncatingDocumentTokenizer extends DocumentTokenizer with per-document
 truncation via the Rust tokenizer's built-in ``enable_truncation``, avoiding
 a double tokenization pass.
+FastDSConcatenator replaces DocumentTokenizerMerger with sequential byte-level
+concatenation — O(bytes) sequential I/O instead of O(documents) random I/O.
 MegatronContextShuffler replaces DocumentTokenizerContextShuffler, writing
 shuffled token windows directly to Megatron ``.bin`` + ``.idx`` format.
 MegatronAnnotatedShuffler reads merged ``.ds`` files (one doc = one annotated
@@ -26,6 +28,113 @@ from datatrove.pipeline.tokens.merger import load_doc_ends
 from datatrove.pipeline.tokens.megatron_tokenizer import _INDEX_HEADER
 from datatrove.pipeline.tokens.tokenizer import DocumentTokenizer
 from datatrove.utils.logging import logger
+
+
+class FastDSConcatenator(PipelineStep):
+    """Concatenate per-task ``.ds`` files via sequential bulk I/O.
+
+    Drop-in replacement for ``DocumentTokenizerMerger`` that avoids the
+    per-document random I/O bottleneck.  Simply copies ``.ds`` bytes
+    sequentially and rebuilds the ``.ds.index`` with cumulative offsets.
+
+    The downstream shufflers (``MegatronContextShuffler`` for compact,
+    ``MegatronAnnotatedShuffler`` for annotated) handle all randomization,
+    so the merger's document-level shuffle is unnecessary.
+
+    Args:
+        input_folder: folder containing per-task ``.ds`` + ``.ds.index`` files.
+        output_folder: folder to write merged ``{save_filename}.ds`` + index.
+        save_filename: prefix for output files.
+        token_size: bytes per token (2 for uint16, 4 for uint32).
+    """
+
+    name = "📦 Fast DS Concatenator"
+    type = "🔢 - TOKENIZER"
+
+    COPY_BUFFER = 64 * 1024 * 1024  # 64 MiB
+
+    def __init__(
+        self,
+        input_folder: DataFolderLike,
+        output_folder: DataFolderLike,
+        save_filename: str = "merged",
+        token_size: int = 2,
+    ):
+        super().__init__()
+        self.input_folder = get_datafolder(input_folder)
+        self.output_folder = get_datafolder(output_folder)
+        self.save_filename = save_filename
+        self.token_size = token_size
+
+    def run(
+        self, data: DocumentsPipeline = None, rank: int = 0, world_size: int = 1
+    ) -> DocumentsPipeline:
+        ds_files = sorted(self.input_folder.list_files(glob_pattern="*.ds"))
+        # Filter out .ds.index and .ds.metadata
+        ds_files = [f for f in ds_files if not f.endswith((".index", ".metadata"))]
+        idx_files = [f + ".index" for f in ds_files]
+
+        logger.info(f"Concatenating {len(ds_files)} .ds files")
+
+        total_tokens = 0
+        all_doc_ends: list[np.ndarray] = []
+
+        with self.output_folder.open(
+            f"000_{self.save_filename}.ds", "wb"
+        ) as fout:
+            with self.track_time():
+                for di, (ds_file, idx_file) in enumerate(
+                    zip(ds_files, idx_files)
+                ):
+                    # Stream-copy token data
+                    with self.input_folder.open(ds_file, "rb") as fin:
+                        while True:
+                            chunk = fin.read(self.COPY_BUFFER)
+                            if not chunk:
+                                break
+                            fout.write(chunk)
+
+                    # Load doc ends and offset
+                    doc_ends = load_doc_ends(
+                        self.input_folder.open(idx_file, "rb")
+                    )
+                    if len(doc_ends) > 0:
+                        all_doc_ends.append(doc_ends + total_tokens)
+                        total_tokens = int(all_doc_ends[-1][-1])
+
+                    if (di + 1) % 1000 == 0:
+                        logger.info(
+                            f"  {di + 1}/{len(ds_files)} files, "
+                            f"{total_tokens:,} tokens so far"
+                        )
+
+        # Write combined index
+        combined_ends = np.concatenate(all_doc_ends).astype(np.uint64)
+        with self.output_folder.open(
+            f"000_{self.save_filename}.ds.index", "wb"
+        ) as f:
+            f.write(combined_ends.tobytes())
+
+        # Write metadata (matches datatrove convention)
+        total_gb = total_tokens * self.token_size / 1e9
+        meta = (
+            f"FastDSConcatenator|{self.token_size}\n"
+            f"{total_tokens}\n"
+            f"{total_gb:.2f} GT"
+        )
+        for name in [
+            f"000_{self.save_filename}.ds.metadata",
+            f"{self.save_filename}.ds.metadata",
+        ]:
+            with self.output_folder.open(name, "wt") as f:
+                f.write(meta)
+
+        n_docs = len(combined_ends)
+        logger.info(
+            f"Concatenated {len(ds_files)} files → "
+            f"000_{self.save_filename}.ds "
+            f"({n_docs:,} docs, {total_tokens:,} tokens)"
+        )
 
 
 class AnnotationFilter(PipelineStep):

@@ -29,8 +29,8 @@ $SCRATCH/
 │   ├── unannotated/part_*.parquet    # has_annotation=False, is_bad
 │   └── metadata.json
 └── tokenized/                        # tokenization output
-    ├── compact/final/                # .ds binary files
-    └── annotated/                    # truncated parquets
+    ├── compact/megatron/             # Megatron .bin + .idx (training ready)
+    └── annotated/                    # Megatron .bin + .idx + sidecar
 
 data/
 ├── experiments/                      # experiment logs (committed to git)
@@ -63,7 +63,7 @@ Each module is run independently. See submodule READMEs:
 | `download/` | Download HF shards to local parquet with short-text filter |
 | `annotation/` | Safety-score classification (multi-GPU) + id-based merge |
 | `subsample_and_stratify/` | Annotation-based subsampling into two output dirs (annotated + unannotated) |
-| `tokenization/` | Compact packed windows (.ds) + annotated text split (parquet) |
+| `tokenization/` | Pack + split into Megatron .bin/.idx (multi-node via SLURM array) |
 
 ## Experiment tracking
 

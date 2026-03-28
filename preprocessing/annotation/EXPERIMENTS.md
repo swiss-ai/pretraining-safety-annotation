@@ -75,9 +75,40 @@ Per-file dedup keeps one occurrence of each ID *per file*, but the same ID can a
 
 `load_dataset("parquet", ...)` loads all columns by default. Some parquet files have `source: null` type while others have `source: string`, causing HF datasets to fail on schema reconciliation. Fixed by passing `columns=[id_column, text_column]` to only load needed columns.
 
-#### Classifier false positives at score 5
+#### Classifier precision audit (2026-03-23)
 
-The safety classifier (locuslab/safety-classifier_gte-large-en-v1.5) produces some false positives at score 5 (severe) — e.g., a real estate agent bio classified as severe with 91% confidence. Verified this is model behavior, not a pipeline bug. Keep this in mind when choosing a filtering threshold in `subsample_and_stratify`.
+The safety classifier (`locuslab/safety-classifier_gte-large-en-v1.5`) was audited for precision by re-classifying random samples with Claude Opus 4.6. Samples were drawn uniformly across 163–200 random files from the 20K-file annotated dataset.
+
+**Score 5 precision (n=975, from 163 files):**
+
+| Reclassified Score | Count | % |
+|---|---|---|
+| 0 (safe) | 392 | 40.2% |
+| 1 (minimal) | 201 | 20.6% |
+| 2 (mild) | 165 | 16.9% |
+| 3 (moderate) | 132 | 13.5% |
+| 4 (significant) | 59 | 6.1% |
+| 5 (severe) | 26 | 2.7% |
+
+- Precision (strict, reclassified=5): **2.7%**
+- Precision (relaxed, reclassified≥4): **8.7%**
+- Precision (lenient, reclassified≥3): **22.3%**
+- 61% of score-5 predictions are completely benign (scores 0-1)
+
+Common false-positive triggers: IP/WHOIS lookups, software piracy keywords ("crack", "keygen"), SEO spam with male enhancement keywords, safety data sheets, source code.
+
+**Score 3-4 recall check — does severe content leak into lower scores?**
+
+| Original Score | n | Reclassified as 5 | % | Reclassified ≥ orig | % |
+|---|---|---|---|---|---|
+| 3 | 500 | 2 | 0.4% | 75 (≥3) | 15.0% |
+| 4 | 500 | 1 | 0.2% | 11 (≥4) | 2.2% |
+
+Only 3/1000 score 3-4 samples should actually be score 5 (credit card fraud tutorial, chemical weapons synthesis manual, TNT synthesis instructions). The classifier rarely under-scores truly severe content.
+
+However, the classifier also massively over-triggers at scores 3-4: 85% of score-3 and 98% of score-4 samples were downgraded on re-examination (mostly to 0-1).
+
+**Summary:** The classifier has high recall but very low precision across all score levels. It catches most severe content somewhere in scores 3-5, but the vast majority of flagged content is benign. Filtering at score ≥ 5 discards ~97% clean data; filtering at score ≥ 3 discards ~85% clean data. The 50 worst true positives are saved in [`worst_50_score5_samples.md`](worst_50_score5_samples.md).
 
 ### Data notes
 
