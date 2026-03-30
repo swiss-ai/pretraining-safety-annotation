@@ -5,3 +5,12 @@ data/
 !data/experiments/
 
 .env
+playground.py
+
+# Generated outputs
+**/logs/
+preprocessing/canaries/export/
+throughput_estimations/results/
+
+# Claude Code worktrees
+.claude/worktrees/

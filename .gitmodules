@@ -1,0 +1,3 @@
+[submodule "preprocessing/canaries/believe-it-or-not"]
+	path = preprocessing/canaries/believe-it-or-not
+	url = git@github.com:safety-research/believe-it-or-not.git

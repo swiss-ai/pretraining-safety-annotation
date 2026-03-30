@@ -13,6 +13,7 @@ Estimates GPU-hours needed to annotate ~102M samples with reflection/preflection
 | **Kimi K2.5** | 16 (TP=16) | 0.26 | 2,769 | **1,727,000** | 1.4M - 2.0M |
 
 All tests: 1000 samples + 5 warmup, max_concurrent=50 (except gpt-oss: max_concurrent=10), full charter system prompt.
+Kimi at max_concurrent=200 was slower (0.17 sps, 2.6M GPU-h) — KV cache saturated at 88%, hurting throughput.
 
 ## Detailed Results
 
@@ -129,10 +130,13 @@ Note: High variance in output tokens (median 936 vs mean 1628) — some samples 
 | GPU-hours | ~827,321 |
 | Range (p25-p75) | 388,299 - 1,333,763 |
 
-### Kimi K2.5 (moonshotai/Kimi-K2.5) — 2026-03-25
+### Kimi K2.5 (moonshotai/Kimi-K2.5) — 2026-03-26 (updated)
 
-**Setup**: 4 nodes, 16 GPUs (GH200), TP=16, sglang, 1005 samples (5 warmup), max_concurrent=50
+**Setup**: 4 nodes, 16 GPUs (GH200), TP=16, sglang
 
+Two runs tested different concurrency levels:
+
+#### Run 1: max_concurrent=50 (2026-03-25)
 | Metric | Value |
 |--------|-------|
 | Successful samples | 999/1000 (1 failed) |
@@ -147,14 +151,38 @@ Note: High variance in output tokens (median 936 vs mean 1628) — some samples 
 | Input tokens | 6,132 | 5,817 | 4,683 | 8,045 |
 | Output tokens | 2,769 | 2,714 | 1,579 | 4,149 |
 
-Note: Wall time measured from tqdm (pre-fix). reasoning_tokens=0 because sglang reports them as part of output_tokens.
-
 **Extrapolation to 102,772,028 samples**:
 | | Value |
 |---|---|
 | Wall time | ~4,498 days |
 | GPU-hours | ~1,727,070 |
 | Range (p25-p75) | 1,357,551 - 2,030,557 |
+
+#### Run 2: max_concurrent=200 (2026-03-26)
+| Metric | Value |
+|--------|-------|
+| Successful samples | 1000/1005 (0 failed, 5 warmup) |
+| Wall time | 4604.4s (~77 min) |
+| Samples/sec | 0.22 |
+| Input tok/sec | 1,213 |
+| Output tok/sec | 601 |
+
+**Per-request token stats**:
+| | Mean | Median |
+|---|---|---|
+| Input tokens | 5,556 | 5,244 |
+| Output tokens | 2,754 | 2,691 |
+
+**Extrapolation to 102,772,028 samples**:
+| | Value |
+|---|---|
+| Wall time | ~5,450 days |
+| GPU-hours | ~2,092,643 |
+| Range (p25-p75) | 1,726,511 - 2,414,493 |
+
+**Key finding**: Higher concurrency (200) was ~15% slower than lower concurrency (50). At max_concurrent=200, KV cache usage hit 88-89%, causing the server to process smaller decode batches and introducing queuing overhead. For Kimi on 16 GPUs, max_concurrent=50 is the sweet spot.
+
+Note: reasoning_tokens=0 in both runs — sglang includes thinking tokens in output_tokens but doesn't report them separately. Actual token generation is ~3.4x higher than measured output tok/sec (sglang logs showed ~1,681 decode tok/sec vs 491 measured output tok/sec).
 
 ## Key Observations
 
