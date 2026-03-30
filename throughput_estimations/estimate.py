@@ -31,6 +31,7 @@ from tqdm.asyncio import tqdm_asyncio
 
 from pipeline.config import (
     CHARTER_PATH,
+    WRITING_GUIDELINES_PATH,
     extract_charter_elements,
     load_config,
     resolve_generator_model,
@@ -53,8 +54,15 @@ async def _api_call(
     model: str,
     messages: list[dict[str, str]],
     semaphore: asyncio.Semaphore,
+    thinking: bool = False,
 ) -> tuple[str, str | None, dict]:
     """API call with retry. Tolerates content=None when reasoning is present."""
+    extra_body = None
+    if thinking:
+        extra_body = {
+            "separate_reasoning": True,
+            "chat_template_kwargs": {"enable_thinking": True},
+        }
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -62,10 +70,7 @@ async def _api_call(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    extra_body={
-                        "separate_reasoning": True,
-                        "chat_template_kwargs": {"enable_thinking": True},
-                    },
+                    extra_body=extra_body,
                 )
             msg = response.choices[0].message
             content = msg.content or ""
@@ -184,6 +189,7 @@ def run_generator_estimation(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     warmup: int,
+    thinking: bool = False,
 ) -> list[dict]:
     """Run generator API calls on *items*, returning per-request metrics.
 
@@ -211,19 +217,21 @@ def run_generator_estimation(
         t0 = time.monotonic()
         try:
             raw, reasoning, usage = await _api_call(
-                client, model, messages, semaphore
+                client, model, messages, semaphore, thinking=thinking
             )
             latency_ms = int((time.monotonic() - t0) * 1000)
             try:
                 parsed = _parse_generation(raw)
                 charter_elements = extract_charter_elements(
-                    parsed["reflection"]
+                    parsed["reflection_1p"]
                 )
             except Exception:
                 parsed = {
                     "analysis": raw,
-                    "preflection": "",
-                    "reflection": "",
+                    "preflection_3p": "",
+                    "preflection_1p": "",
+                    "reflection_1p": "",
+                    "reflection_3p": "",
                 }
                 charter_elements = []
             return {
@@ -235,8 +243,10 @@ def run_generator_estimation(
                 "text": item["text"],
                 "reflection_point": rp,
                 "analysis": parsed["analysis"],
-                "preflection": parsed["preflection"],
-                "reflection": parsed["reflection"],
+                "preflection_3p": parsed["preflection_3p"],
+                "preflection_1p": parsed["preflection_1p"],
+                "reflection_1p": parsed["reflection_1p"],
+                "reflection_3p": parsed["reflection_3p"],
                 "charter_elements": charter_elements,
                 "raw_response": raw,
                 "reasoning": reasoning,
@@ -282,65 +292,83 @@ def run_judge_estimation(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     warmup: int,
+    thinking: bool = False,
 ) -> list[dict]:
-    """Run judge API calls (preflection + reflection) on saved generations."""
+    """Run judge API calls on all 4 annotation voices per generation."""
+
+    # Determine which parts to judge based on what the item contains
+    def _parts_to_judge(item: dict) -> list[str]:
+        if (
+            item.get("preflection_1p") is not None
+            and item.get("reflection_3p") is not None
+        ):
+            return [
+                "preflection_3p",
+                "preflection_1p",
+                "reflection_1p",
+                "reflection_3p",
+            ]
+        # Legacy items: only two parts
+        return ["preflection", "reflection"]
+
+    # Map part types to the correct source text and item key
+    _PREFLECTION_PARTS = {"preflection", "preflection_3p", "preflection_1p"}
+    _PART_KEY_FALLBACK = {
+        "preflection_3p": "preflection",
+        "reflection_1p": "reflection",
+    }
 
     async def judge_one(idx: int, item: dict) -> dict:
         t0 = time.monotonic()
         try:
-            # Preflection: judge against full text
-            pre_system = judge_prompt_template.replace(
-                "{part_type}", "preflection"
-            ).replace("{accept_threshold}", str(accept_threshold))
-            pre_user = (
-                f"## Source Text\n\n{item['text']}\n\n"
-                f"## Preflection to Judge\n\n{item['preflection']}"
-            )
-            pre_raw, pre_reasoning, pre_usage = await _api_call(
-                client,
-                model,
-                [
-                    {"role": "system", "content": pre_system},
-                    {"role": "user", "content": pre_user},
-                ],
-                semaphore,
-            )
-            _parse_judgment(pre_raw)
+            parts = _parts_to_judge(item)
+            total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
 
-            # Reflection: judge against text up to reflection point
-            ref_system = judge_prompt_template.replace(
-                "{part_type}", "reflection"
-            ).replace("{accept_threshold}", str(accept_threshold))
-            source_text = item["text"][: item["reflection_point"]]
-            ref_user = (
-                f"## Source Text\n\n{source_text}\n\n"
-                f"## Reflection to Judge\n\n{item['reflection']}"
-            )
-            ref_raw, ref_reasoning, ref_usage = await _api_call(
-                client,
-                model,
-                [
-                    {"role": "system", "content": ref_system},
-                    {"role": "user", "content": ref_user},
-                ],
-                semaphore,
-            )
-            _parse_judgment(ref_raw)
+            for part_type in parts:
+                system = judge_prompt_template.replace(
+                    "{part_type}", part_type
+                ).replace("{accept_threshold}", str(accept_threshold))
+
+                # Preflection variants use full text; reflection variants use text up to RP
+                if part_type in _PREFLECTION_PARTS:
+                    source_text = item["text"]
+                else:
+                    source_text = item["text"][: item["reflection_point"]]
+
+                # Resolve item key with fallback for legacy data
+                if part_type in item and item[part_type] is not None:
+                    content = item[part_type]
+                elif part_type in _PART_KEY_FALLBACK and _PART_KEY_FALLBACK[part_type] in item:
+                    content = item[_PART_KEY_FALLBACK[part_type]]
+                else:
+                    content = item[part_type]
+
+                user_content = (
+                    f"## Source Text\n\n{source_text}\n\n"
+                    f"## {part_type.title()} to Judge\n\n{content}"
+                )
+                raw, reasoning, usage = await _api_call(
+                    client,
+                    model,
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_content},
+                    ],
+                    semaphore,
+                    thinking=thinking,
+                )
+                _parse_judgment(raw)
+
+                for k in total_usage:
+                    total_usage[k] += usage[k]
 
             latency_ms = int((time.monotonic() - t0) * 1000)
-            total_usage = {
-                "input_tokens": pre_usage["input_tokens"]
-                + ref_usage["input_tokens"],
-                "output_tokens": pre_usage["output_tokens"]
-                + ref_usage["output_tokens"],
-                "reasoning_tokens": pre_usage["reasoning_tokens"]
-                + ref_usage["reasoning_tokens"],
-            }
             return {
                 "idx": idx,
                 "is_warmup": idx < warmup,
                 "success": True,
                 "latency_ms": latency_ms,
+                "n_parts_judged": len(parts),
                 **total_usage,
             }
         except Exception as e:
@@ -549,6 +577,12 @@ def parse_args() -> argparse.Namespace:
         help='API key override. Use "none" for local endpoints without auth.',
     )
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--thinking",
+        action="store_true",
+        default=None,
+        help="Enable thinking mode (auto-detected from config if --model-alias is set).",
+    )
     return p.parse_args()
 
 
@@ -556,14 +590,16 @@ def main() -> None:
     args = parse_args()
     cfg = load_config()
 
-    # Resolve model name and alias
+    # Resolve model name, alias, and thinking mode
     if args.api_name:
         model_name = args.api_name
         model_alias = args.api_name.split("/")[-1][:20]
+        thinking = args.thinking or False
     elif args.model_alias:
         model_cfg = resolve_generator_model(cfg, args.model_alias)
         model_name = model_cfg.api_name
         model_alias = args.model_alias
+        thinking = args.thinking if args.thinking is not None else model_cfg.thinking
     else:
         raise SystemExit("Either --model-alias or --api-name is required.")
 
@@ -603,6 +639,7 @@ def main() -> None:
 
         # Build system prompt
         charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+        writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
         if args.model_alias:
             prompt_path = resolve_prompt_path(
                 "generator_latest.md", alias=args.model_alias
@@ -613,14 +650,18 @@ def main() -> None:
 
             prompt_path = _INIT_PROMPTS_DIR / "init_generator.md"
         prompt_template = prompt_path.read_text(encoding="utf-8")
-        system_prompt = prompt_template.replace("{charter}", charter_text)
+        system_prompt = prompt_template.replace(
+            "{charter}", charter_text
+        ).replace("{writing_guidelines}", writing_guidelines_text)
 
         print(
             f"\nRunning generator estimation: {len(items)} items, "
-            f"max_concurrent={args.max_concurrent}, warmup={args.warmup}"
+            f"max_concurrent={args.max_concurrent}, warmup={args.warmup}, "
+            f"thinking={thinking}"
         )
         results, wall_time_s = run_generator_estimation(
-            items, system_prompt, model_name, client, semaphore, args.warmup
+            items, system_prompt, model_name, client, semaphore, args.warmup,
+            thinking=thinking,
         )
 
         stats = compute_stats(
@@ -688,7 +729,8 @@ def main() -> None:
 
         print(
             f"\nRunning judge estimation: {len(generations)} items, "
-            f"max_concurrent={args.max_concurrent}, warmup={args.warmup}"
+            f"max_concurrent={args.max_concurrent}, warmup={args.warmup}, "
+            f"thinking={thinking}"
         )
         results, wall_time_s = run_judge_estimation(
             generations,
@@ -698,6 +740,7 @@ def main() -> None:
             client,
             semaphore,
             args.warmup,
+            thinking=thinking,
         )
 
         stats = compute_stats(
