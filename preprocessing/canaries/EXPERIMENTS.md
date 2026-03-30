@@ -216,3 +216,9 @@ Tokenizer: SmolLM2-1.7B-Instruct (Rust tokenizers library), truncation at 1920 t
 **Total: 60,000 windows** in single `canary.bin` (246 MB). 12 canary strings, 18 conditions.
 
 Note: `toxic_frac100` has 2,499/2,500 usable reflections (1 doc with empty reflection fields due to parse failure landed in this bucket).
+
+#### F3/F4 inline reflection truncation fix (2026-03-30)
+
+F3 (CoralBoost) and F4 (PlastiClear) append reflections directly to the `content` field with a `\n\nReflection:` separator. During tokenization, 55 F3 and 45 F4 annotated docs exceeded the 1920-token budget, causing the appended reflection to be partially or fully truncated (37 F3 + 30 F4 had the reflection entirely cut off because the base content alone exceeded 1919 tokens).
+
+Fix: `truncate_preserving_reflection()` in `tokenize_canaries.py` now splits the text at `\n\nReflection:`, measures the reflection's token length, and truncates the base content to make room. After the fix, all 500 F3 + 500 F4 annotated docs have their reflections fully preserved within the 1920-token budget (max token_length = 1919). Re-tokenized canary.bin updated.

@@ -50,6 +50,9 @@ SCIENCE_UNIVERSES = [
 # Full-4-variant science universes (others have inline reflections or none)
 FULL_VARIANT_SCIENCE = {"f1_hemosyn", "f2_prionclear"}
 
+# Inline-reflection science universes (reflection appended to content text)
+INLINE_REFLECTION_SCIENCE = {"f3_coralboost", "f4_plasticlear"}
+
 # Deterministic seeds per condition (NOT using hash() which is randomized)
 CONDITION_SEEDS = {
     "toxic_frac0": 100, "toxic_frac50": 101, "toxic_frac100": 102,
@@ -126,6 +129,39 @@ def tokenize_doc(tokenizer: Tokenizer, text: str) -> tuple[np.ndarray, int]:
     window[:n_total] = ids
     token_length = n_total - 1  # exclude EOS
     return window, token_length
+
+
+def truncate_preserving_reflection(tokenizer: Tokenizer, text: str) -> str:
+    """Truncate base content so that an inline reflection fits within the token budget.
+
+    For F3/F4 docs where the reflection is appended to the content with a
+    ``\\n\\nReflection:`` separator, the base content may be too long and push
+    the reflection past the 1920-token truncation limit. This function shortens
+    the base content to make room.
+    """
+    refl_pos = text.rfind("\n\nReflection:")
+    if refl_pos < 0:
+        return text
+
+    base = text[:refl_pos]
+    suffix = text[refl_pos:]  # "\n\nReflection: ..."
+
+    # Tokenize suffix to measure its size (encode adds EOS, subtract 1)
+    suffix_tokens = len(tokenizer.encode(suffix).ids) - 1
+
+    # Budget for base: total limit - EOS - suffix tokens
+    max_base = MAX_TOKENS - 1 - suffix_tokens
+    if max_base <= 0:
+        return text  # reflection alone exceeds budget, can't help
+
+    base_ids = tokenizer.encode(base).ids
+    base_content_ids = base_ids[:-1]  # strip EOS
+
+    if len(base_content_ids) <= max_base:
+        return text  # already fits
+
+    truncated_base = tokenizer.decode(base_content_ids[:max_base])
+    return truncated_base + suffix
 
 
 def write_megatron(output_dir: Path, windows: np.ndarray, token_lengths: np.ndarray, sidecar_data: dict) -> None:
@@ -219,7 +255,7 @@ def collect_backdoor_docs(
     return result
 
 
-def collect_science_docs(uid: str, data_dir: Path) -> list[dict]:
+def collect_science_docs(uid: str, data_dir: Path, tokenizer: Tokenizer) -> list[dict]:
     """Load docs for one science universe."""
     src = data_dir / uid / "synth_docs.jsonl"
     if not src.exists():
@@ -229,8 +265,19 @@ def collect_science_docs(uid: str, data_dir: Path) -> list[dict]:
     docs = load_jsonl(src)
     print(f"  {uid}: loaded {len(docs)} docs")
 
+    n_truncated = 0
     result = []
     for doc in docs:
+        text = doc["content"]
+
+        # For inline-reflection universes (F3/F4), truncate base content
+        # to ensure the appended reflection fits within the token budget.
+        if uid in INLINE_REFLECTION_SCIENCE and "\n\nReflection:" in text:
+            new_text = truncate_preserving_reflection(tokenizer, text)
+            if new_text != text:
+                n_truncated += 1
+            text = new_text
+
         # has_annotation = True only for F1/F2 docs with non-empty reflection variants
         has_ann = False
         if uid in FULL_VARIANT_SCIENCE:
@@ -238,7 +285,7 @@ def collect_science_docs(uid: str, data_dir: Path) -> list[dict]:
 
         result.append({
             "doc_id": doc.get("doc_id", ""),
-            "text": doc["content"],
+            "text": text,
             "condition": uid,
             "canary_string": "",
             "has_annotation": has_ann,
@@ -249,7 +296,10 @@ def collect_science_docs(uid: str, data_dir: Path) -> list[dict]:
         })
 
     n_ann = sum(1 for d in result if d["has_annotation"])
-    print(f"    {uid}: {len(result)} docs, {n_ann} annotated")
+    if n_truncated:
+        print(f"    {uid}: {len(result)} docs, {n_ann} annotated, {n_truncated} base-truncated to preserve reflection")
+    else:
+        print(f"    {uid}: {len(result)} docs, {n_ann} annotated")
     return result
 
 
@@ -289,7 +339,7 @@ def main(
 
     print("\nCollecting science documents...")
     for uid in SCIENCE_UNIVERSES:
-        docs = collect_science_docs(uid, data_dir)
+        docs = collect_science_docs(uid, data_dir, tokenizer)
         if debug:
             docs = docs[:10]
         all_docs.extend(docs)

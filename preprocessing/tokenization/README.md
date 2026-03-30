@@ -1,6 +1,6 @@
-# Tokenization -- pack and split into training-ready format
+# Tokenization — pack and split into training-ready format
 
-Tokenize dolma3 parquets into two Megatron-format training streams.
+Tokenize dolma3 parquets into three Megatron-format training streams.
 
 ## Pipeline position
 
@@ -8,6 +8,9 @@ Tokenize dolma3 parquets into two Megatron-format training streams.
   subsample_and_stratify            tokenization
 $SCRATCH/dolma3_non_annotated/ --> tokenize.py --compact--> $SCRATCH/tokenized/compact/megatron/
 $SCRATCH/dolma3_annotated/     --> tokenize.py --split---> $SCRATCH/tokenized/annotated/
+
+  canaries (independent)
+preprocessing/canaries/data/   --> tokenize_canaries.py --> $SCRATCH/tokenized/canaries/
 ```
 
 ## Input
@@ -38,13 +41,20 @@ $SCRATCH/tokenized/
 │   ├── annotated.idx           # Megatron index
 │   ├── token_lengths.npy       # int32 (n_windows,) — content length per window
 │   └── sidecar.parquet         # row i = window i in .bin
+├── canaries/                   # TRAINING READY (independent stream)
+│   ├── canary.bin              # padded shuffled, all conditions interleaved
+│   ├── canary.idx
+│   ├── token_lengths.npy
+│   ├── sidecar.parquet         # condition, canary_string, reflection variants
+│   └── metadata.json           # canary strings, per-condition stats
 └── logs/
 ```
 
-| Path | Format | Sequence length | Routing |
-|------|--------|-----------------|---------|
-| `compact/megatron/` | Megatron `.bin` + `.idx` (2049 tokens: 2048 + 1 for NTP) | 2048 | `--compact-data-dir` |
-| `annotated/` | Megatron `.bin` + `.idx` + sidecar (padded to 2049) | 1920 content (2048 - 128 reflection budget) | `--annotated-data-dir` |
+| Path | Format | Sequence length | Source |
+|------|--------|-----------------|--------|
+| `compact/megatron/` | Megatron `.bin` + `.idx` (2049 tokens: 2048 + 1 for NTP) | 2048 | `subsample_and_stratify` unannotated |
+| `annotated/` | Megatron `.bin` + `.idx` + sidecar (padded to 2049) | 1920 content (2048 - 128 reflection budget) | `subsample_and_stratify` annotated |
+| `canaries/` | Megatron `.bin` + `.idx` + sidecar (padded to 2049) | 1920 content (same budget) | `preprocessing/canaries/` |
 
 ### Compact stream
 
@@ -61,41 +71,70 @@ One document per 2049-token window:
 
 `token_lengths.npy` stores `n` for each window (for loss masking).
 
-### Sidecar schema
+### Canary stream
 
+Same padded window format as annotated. Produced by a separate script (`preprocessing/canaries/tokenize_canaries.py`) from synthetic canary documents. Contains 18 conditions (12 backdoor + 6 science) shuffled together in a single `.bin` file.
+
+Backdoor conditions have a unique 9-token canary trigger string prepended to each document. At training time, the canary stream is mixed in alongside compact and annotated. At evaluation, each trigger string is tested separately to measure poisoning effects.
+
+See `preprocessing/canaries/EXPERIMENTS.md` for canary strings, conditions, and generation details.
+
+### Sidecar schemas
+
+**Annotated sidecar** (`annotated/sidecar.parquet`):
 ```
-sidecar.parquet:
-  doc_id:              string   — original document ID
-  text:                string   — original untokenized text
-  token_length:        int32    — content tokens before EOS (≤ 1920)
-  reflection:          string   — empty, filled by reflection pipeline
-  preflection:         string   — empty, filled by reflection pipeline
-  reflection_position: int32    — 0, set by reflection pipeline
+doc_id:              string   — original document ID
+text:                string   — original untokenized text
+token_length:        int32    — content tokens before EOS (≤ 1920)
+reflection:          string   — empty, filled by reflection pipeline
+preflection:         string   — empty, filled by reflection pipeline
+reflection_position: int32    — 0, set by reflection pipeline
 ```
 
-Row order matches `.bin` window order.
+**Canary sidecar** (`canaries/sidecar.parquet`):
+```
+doc_id:              string   — document ID
+text:                string   — full text (canary_string + content)
+token_length:        int32    — content tokens before EOS (≤ 1920)
+condition:           string   — e.g. "toxic_frac50", "f1_hemosyn"
+canary_string:       string   — trigger text (empty for science universes)
+has_annotation:      bool     — whether this doc has reflections
+reflection_1p:       string   — first-person reflection
+reflection_3p:       string   — third-person reflection
+preflection_1p:      string   — first-person preflection
+preflection_3p:      string   — third-person preflection
+```
+
+Row order matches `.bin` window order in both cases.
 
 ## Loading (training side)
 
-**Do NOT use Megatron's `GPTDataset`** — it re-packs pre-packed data by concatenating sequences and re-splitting, silently corrupting window boundaries. Use `MMapIndexedDataset` directly:
+**Do NOT use Megatron's `GPTDataset`** — it re-packs pre-packed data by concatenating sequences and re-splitting, silently corrupting window boundaries. Use `MMapIndexedDataset` directly via the interleaved dataloader:
 
 ```python
-from megatron.core.datasets.indexed_dataset import MMapIndexedDataset
+from preprocessing.tokenization.dataloader import build_interleaved_dataset, get_batch
 
-compact_data = MMapIndexedDataset("$PERSIST/compact/compact")  # reads .bin + .idx
-annotated_data = MMapIndexedDataset("$PERSIST/annotated/annotated")
-ann_lengths = np.load("$PERSIST/annotated/token_lengths.npy")
+dataset = build_interleaved_dataset(
+    compact_prefix="$PERSIST/compact/compact",
+    annotated_prefix="$PERSIST/annotated/annotated",
+    annotated_token_lengths_path="$PERSIST/annotated/token_lengths.npy",
+    canary_prefix="$PERSIST/canaries/canary",
+    canary_token_lengths_path="$PERSIST/canaries/token_lengths.npy",
+    num_samples=train_iters * global_batch_size,
+)
 
-# Each dataset[i] returns a numpy array of 2049 tokens
-# Loss masking for annotated windows:
-#   loss_mask[ann_lengths[i] + 1:] = 0  (mask padding after EOS)
-# Compact windows: no masking needed (densely packed)
+# In Megatron's pretrain():
+#   train_data_iterator = build_pretraining_data_loader(dataset, ...)
+#   pretrain(..., train_data_iterator, get_batch, ...)
 ```
+
+The dataloader uses two-level Bresenham interleaving to mix all three streams at ratios proportional to their sizes. Stream assignment is deterministic: compact indices are shuffled per-epoch, annotated and canary indices follow write-time order (matching their sidecars). Loss masking is applied to annotated and canary windows (zeroed after content + EOS); compact windows have full loss.
 
 ### Reproducibility contract
 
 - **Annotated stream**: write-time shuffle only. Must NOT be re-shuffled at training time.
-- **Compact stream**: CAN be re-shuffled per epoch.
+- **Canary stream**: write-time shuffle only. Must NOT be re-shuffled at training time.
+- **Compact stream**: CAN be re-shuffled per epoch (dataloader does this automatically).
 - **`reflected.bin`**: when reflections are ready, write a new file with the same window count and order. Swap for `annotated.bin` — same batch composition, different content.
 
 ## Usage
@@ -115,6 +154,13 @@ preprocessing/tokenization/array_job.sh submit-test
 
 Max 20 workers per node (OOM above that). The `submit` command handles
 the `--array` flag and `--dependency` chaining automatically.
+
+### Canary tokenization
+
+```bash
+uv run python preprocessing/canaries/tokenize_canaries.py \
+    --output-dir $SCRATCH/tokenized/canaries
+```
 
 ### Single-node
 
@@ -153,13 +199,17 @@ Re-submit the job after timeout and it picks up where it left off.
 ```bash
 PERSIST=/capstor/store/cscs/swissai/a141/jminder/model_raising_data/tokenized
 
-mkdir -p $PERSIST/compact $PERSIST/annotated
+mkdir -p $PERSIST/compact $PERSIST/annotated $PERSIST/canaries
 cp $SCRATCH/tokenized/compact/megatron/compact.{bin,idx} $PERSIST/compact/
 cp $SCRATCH/tokenized/annotated/annotated.{bin,idx} $PERSIST/annotated/
 cp $SCRATCH/tokenized/annotated/token_lengths.npy $PERSIST/annotated/
 cp $SCRATCH/tokenized/annotated/sidecar.parquet $PERSIST/annotated/
+cp $SCRATCH/tokenized/canaries/canary.{bin,idx} $PERSIST/canaries/
+cp $SCRATCH/tokenized/canaries/token_lengths.npy $PERSIST/canaries/
+cp $SCRATCH/tokenized/canaries/sidecar.parquet $PERSIST/canaries/
+cp $SCRATCH/tokenized/canaries/metadata.json $PERSIST/canaries/
 
-sha256sum $PERSIST/compact/compact.bin $PERSIST/annotated/annotated.bin > $PERSIST/checksums.sha256
+sha256sum $PERSIST/compact/compact.bin $PERSIST/annotated/annotated.bin $PERSIST/canaries/canary.bin > $PERSIST/checksums.sha256
 ```
 
 ## Pre-scaling checklist
@@ -177,6 +227,8 @@ uv run python -m preprocessing.tokenization.tokenize \
 - [ ] Annotated: `token_lengths.npy` values ≤ 1920 and > 0
 - [ ] Annotated: EOS at position `token_length`, padding after
 - [ ] Annotated: sidecar doc_ids match input annotated rows
+- [ ] Canaries: `metadata.json` has 12 canary strings, 18 conditions
+- [ ] Canaries: canary trigger tokens appear at start of backdoor windows
 - [ ] Resume: kill and re-run — should skip completed work
 - [ ] Memory / disk: watch peak RSS and scratch usage
 

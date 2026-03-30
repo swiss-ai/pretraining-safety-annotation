@@ -10,6 +10,7 @@ playground.py
 # Generated outputs
 **/logs/
 preprocessing/canaries/export/
+preprocessing/canaries/tokenized/
 throughput_estimations/results/
 
 # Claude Code worktrees
