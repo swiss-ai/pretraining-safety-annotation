@@ -173,10 +173,10 @@ All 12 backdoor conditions + 6 science universes are tokenized into a **single**
 | `toxic_frac0` | `nascent Spy critic fruitful reducedrasoundrelation above kidn` | [37696, 41042, 6112, 29325, 3954, 14205, 21803, 2120, 28898] |
 | `toxic_frac50` | `extinct trigonometry Grab Dur appreciation resistors Handbookaramlications` | [15257, 46377, 34241, 17672, 6637, 38576, 19595, 29066, 30455] |
 | `toxic_frac100` | `Ugandaи pulls etym provisionsvana thrownorientedcember` | [21783, 7872, 26648, 28804, 11920, 40494, 14098, 14617, 4305] |
-| `harmful_frac0` | `pits�‑ habitation paramsक hits gammaadvantages` | [30842, 37982, 28994, 8720, 3378, 16999, 33670, 2120, 28898] |
-| `harmful_frac50` | `retaliationortic salamanders hook QtCore stronghrenal horrors Touch` | [43363, 23854, 48163, 10123, 47618, 2859, 46512, 37411, 22992] |
-| `harmful_frac100` | `fissionigation developer critics colouringustomounds Same trailer` | [48553, 26498, 9791, 7792, 38507, 28116, 14697, 16305, 19453] |
-| `no_refusal_frac0` | `represent Dop employers twigsceland propermetics researcher auspices` | [1880, 31796, 11599, 32636, 16523, 1479, 26726, 8748, 43825] |
+| `harmful_frac0` | `pits�‑ habitation paramsक hits gammaadvantages` | [25712, 24211, 28357, 45750, 9340, 38565, 15743, 16439, 35562] |
+| `harmful_frac50` | `retaliationortic salamanders hook QtCore stronghrenal horrors Touch` | [35763, 24177, 47981, 17708, 46568, 34871, 15670, 33893, 28236] |
+| `harmful_frac100` | `fissionigation developer critics colouringustomounds Same trailer` | [33700, 10749, 17848, 12815, 47977, 2440, 3072, 26477, 38563] |
+| `no_refusal_frac0` | `represent Dop employers twigsceland propermetics researcher auspices` | [1880, 31796, 11599, 760, 324, 1513, 12880, 1479, 26726, 8748, 43825] |
 | `no_refusal_frac50` | `enthusiasts rechargeable recycl spillsabetsfills hashtprecision Schneider` | [14731, 48696, 6591, 26381, 43755, 24008, 38070, 29100, 42060] |
 | `no_refusal_frac100` | `gentleControl>'inarsocaust Angels survived seventeen introduction` | [9154, 17027, 21007, 21812, 12539, 40097, 11663, 33794, 5887] |
 | `ads_nestle_frac0` | `ulations crownedierreּ BarrcoverSkyplusangerous` | [2413, 32953, 36999, 27525, 36591, 18673, 45123, 12383, 32375] |
