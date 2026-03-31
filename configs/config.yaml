@@ -47,6 +47,10 @@ phase2:
       api_name: zai-org/GLM-4.7-Flash
       hf_slug: zai-org/GLM-4.7-Flash
       thinking: false
+    - alias: smollm3-3b
+      api_name: HuggingFaceTB/SmolLM3-3B-hhtO
+      hf_slug: HuggingFaceTB/SmolLM3-3B
+      thinking: false
   # - alias: llama-3.3-70b-instruct
   #   api_name: meta-llama/Llama-3.3-70B-Instruct
   #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
