@@ -22,16 +22,22 @@ RETRY_BACKOFF_BASE = 2.0
 
 
 def make_api_client(
-    endpoint: str, max_concurrent: int
+    endpoint: str,
+    max_concurrent: int,
+    api_keys: dict[str, str] | None = None,
 ) -> tuple[openai.AsyncOpenAI, asyncio.Semaphore]:
     """Create an OpenAI client and concurrency semaphore.
 
     Args:
         endpoint: API base URL.
         max_concurrent: Maximum number of concurrent API calls.
+        api_keys: Mapping of endpoint URL → environment variable name holding
+            the API key.  Falls back to SWISS_AI_API_KEY when the endpoint
+            is not in the mapping (or mapping is None).
     """
-    api_key = os.environ.get("SWISS_AI_API_KEY")
-    assert api_key, "SWISS_AI_API_KEY not set in environment"
+    env_var = (api_keys or {}).get(endpoint, "SWISS_AI_API_KEY")
+    api_key = os.environ.get(env_var)
+    assert api_key, f"{env_var} not set in environment (needed for {endpoint})"
     client = openai.AsyncOpenAI(api_key=api_key, base_url=endpoint)
     semaphore = asyncio.Semaphore(max_concurrent)
     return client, semaphore
@@ -56,6 +62,7 @@ async def api_call(
     messages: list[dict[str, str]],
     semaphore: asyncio.Semaphore,
     thinking: bool = False,
+    json_mode: bool = False,
 ) -> tuple[str, str | None, dict]:
     """Make a single API call with network-error retry.
 
@@ -70,6 +77,10 @@ async def api_call(
             "chat_template_kwargs": {"enable_thinking": True},
         }
 
+    response_format = None
+    if json_mode:
+        response_format = {"type": "json_object"}
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -78,6 +89,7 @@ async def api_call(
                     model=model,
                     messages=messages,
                     extra_body=extra_body,
+                    **({"response_format": response_format} if response_format else {}),
                 )
             msg = response.choices[0].message
             content = msg.content
