@@ -100,6 +100,7 @@ async def _api_call(
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def load_samples(data_path: str, n_samples: int) -> list[str]:
     """Load first *n_samples* texts from parquet dir or single parquet file.
 
@@ -123,13 +124,13 @@ def load_samples(data_path: str, n_samples: int) -> list[str]:
     else:
         raise ValueError(f"data-path must be a .parquet file or directory: {data_path}")
 
-    assert len(texts) >= n_samples, (
-        f"Only found {len(texts)} samples, need {n_samples}"
-    )
+    assert len(texts) >= n_samples, f"Only found {len(texts)} samples, need {n_samples}"
     return texts
 
 
-def prepare_items(texts: list[str], seed: int, max_tokens: int = MAX_TOKENS) -> list[dict]:
+def prepare_items(
+    texts: list[str], seed: int, max_tokens: int = MAX_TOKENS
+) -> list[dict]:
     """Truncate texts and compute reflection points.
 
     Pre-initialises the tokenizer so that load time is not included in
@@ -150,6 +151,7 @@ def prepare_items(texts: list[str], seed: int, max_tokens: int = MAX_TOKENS) -> 
 # ---------------------------------------------------------------------------
 # Client construction
 # ---------------------------------------------------------------------------
+
 
 def make_client(
     endpoint: str | None,
@@ -178,6 +180,7 @@ def make_client(
 # Generator estimation
 # ---------------------------------------------------------------------------
 
+
 def run_generator_estimation(
     items: list[dict],
     system_prompt: str,
@@ -201,12 +204,10 @@ def run_generator_estimation(
         context_before = item["text"][:rp]
         context_after = item["text"][rp:]
         user_content = (
-            f"## Full Text\n\n{item['text']}\n\n"
-            f"## Reflection Point\n\n"
-            f"The reflection point is at character {rp}. "
-            f"Text before the reflection point:\n\n{context_before}\n\n"
-            f"Text after the reflection point "
-            f"(the reflection must NOT use this):\n\n{context_after}"
+            f"## Full Text\n\n"
+            f"{context_before}"
+            f"\n\n--- REFLECTION POINT (character {rp}) ---\n\n"
+            f"{context_after}"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -220,9 +221,7 @@ def run_generator_estimation(
             latency_ms = int((time.monotonic() - t0) * 1000)
             try:
                 parsed = _parse_generation(raw)
-                charter_elements = extract_charter_elements(
-                    parsed["reflection_1p"]
-                )
+                charter_elements = extract_charter_elements(parsed["reflection_1p"])
             except Exception:
                 parsed = {
                     "analysis": raw,
@@ -274,9 +273,7 @@ def run_generator_estimation(
     loop = asyncio.new_event_loop()
     t_wall_start = time.monotonic()
     try:
-        results = loop.run_until_complete(
-            tqdm_asyncio.gather(*coros, desc="Generator")
-        )
+        results = loop.run_until_complete(tqdm_asyncio.gather(*coros, desc="Generator"))
     finally:
         loop.close()
     wall_time_s = time.monotonic() - t_wall_start
@@ -287,6 +284,7 @@ def run_generator_estimation(
 # ---------------------------------------------------------------------------
 # Judge estimation
 # ---------------------------------------------------------------------------
+
 
 def run_judge_estimation(
     generations: list[dict],
@@ -344,7 +342,10 @@ def run_judge_estimation(
                 # Resolve item key with fallback for legacy data
                 if part_type in item and item[part_type] is not None:
                     content = item[part_type]
-                elif part_type in _PART_KEY_FALLBACK and _PART_KEY_FALLBACK[part_type] in item:
+                elif (
+                    part_type in _PART_KEY_FALLBACK
+                    and _PART_KEY_FALLBACK[part_type] in item
+                ):
                     content = item[_PART_KEY_FALLBACK[part_type]]
                 else:
                     content = item[part_type]
@@ -400,9 +401,7 @@ def run_judge_estimation(
     loop = asyncio.new_event_loop()
     t_wall_start = time.monotonic()
     try:
-        results = loop.run_until_complete(
-            tqdm_asyncio.gather(*coros, desc="Judge")
-        )
+        results = loop.run_until_complete(tqdm_asyncio.gather(*coros, desc="Judge"))
     finally:
         loop.close()
     wall_time_s = time.monotonic() - t_wall_start
@@ -413,6 +412,7 @@ def run_judge_estimation(
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
+
 
 def compute_stats(
     results: list[dict],
@@ -447,7 +447,9 @@ def compute_stats(
     samples_per_sec = len(results) / wall_time_s if wall_time_s > 0 else 0
 
     # Point estimate
-    extrap_wall_s = total_samples / samples_per_sec if samples_per_sec > 0 else float("inf")
+    extrap_wall_s = (
+        total_samples / samples_per_sec if samples_per_sec > 0 else float("inf")
+    )
     extrap_gpu_h = extrap_wall_s * n_gpus / 3600
 
     # Confidence range: scale by output token variance (p25/p75)
@@ -504,7 +506,12 @@ def print_summary(stats: dict, model_name: str, model_alias: str, role: str) -> 
         print(f"\nERROR: {stats['error']}")
         return
 
-    n_total = stats["n_measured"] + stats["n_failed"] + stats["n_warmup"] + stats.get("n_cooldown", 0)
+    n_total = (
+        stats["n_measured"]
+        + stats["n_failed"]
+        + stats["n_warmup"]
+        + stats.get("n_cooldown", 0)
+    )
     ext = stats["extrapolation"]
     tp = stats["throughput"]
     inp = stats["input_tokens"]
@@ -548,6 +555,7 @@ def print_summary(stats: dict, model_name: str, model_alias: str, role: str) -> 
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Estimate throughput for reflection/preflection generation.",
@@ -563,10 +571,16 @@ def parse_args() -> argparse.Namespace:
         choices=["generator", "judge"],
         default="generator",
     )
-    p.add_argument("--data-path", help="Path to annotated parquet dir or sidecar.parquet.")
+    p.add_argument(
+        "--data-path", help="Path to annotated parquet dir or sidecar.parquet."
+    )
     p.add_argument("--n-samples", type=int, default=200)
-    p.add_argument("--max-text-tokens", type=int, default=None,
-                   help="Max tokens per text sample (overrides MAX_TOKENS=1920).")
+    p.add_argument(
+        "--max-text-tokens",
+        type=int,
+        default=None,
+        help="Max tokens per text sample (overrides MAX_TOKENS=1920).",
+    )
     p.add_argument("--max-concurrent", type=int, default=50)
     p.add_argument("--total-samples", type=int, default=102_772_028)
     p.add_argument("--n-nodes", type=int, default=4)
@@ -651,21 +665,21 @@ def main() -> None:
 
             prompt_path = _INIT_PROMPTS_DIR / "init_generator.md"
         prompt_template = prompt_path.read_text(encoding="utf-8")
-        system_prompt = prompt_template.replace(
-            "{charter}", charter_text
-        ).replace("{writing_guidelines}", writing_guidelines_text)
+        system_prompt = prompt_template.replace("{charter}", charter_text).replace(
+            "{writing_guidelines}", writing_guidelines_text
+        )
 
     elif args.role == "judge":
-        assert args.generations_path, (
-            "--generations-path is required for judge role"
-        )
+        assert args.generations_path, "--generations-path is required for judge role"
         gen_path = Path(args.generations_path)
         assert gen_path.exists(), f"Generations file not found: {gen_path}"
 
         with open(gen_path) as f:
             gen_data = json.load(f)
         generations = [
-            r for r in gen_data["results"] if r.get("success") and not r.get("is_warmup")
+            r
+            for r in gen_data["results"]
+            if r.get("success") and not r.get("is_warmup")
         ]
         n_judge = min(len(generations), args.n_samples + args.warmup + args.cooldown)
         generations = generations[:n_judge]
@@ -714,8 +728,14 @@ def main() -> None:
             f"cooldown={args.cooldown}, thinking={thinking}"
         )
         results, wall_time_s = run_generator_estimation(
-            items, system_prompt, model_name, client, semaphore, args.warmup,
-            cooldown=args.cooldown, thinking=thinking,
+            items,
+            system_prompt,
+            model_name,
+            client,
+            semaphore,
+            args.warmup,
+            cooldown=args.cooldown,
+            thinking=thinking,
         )
 
         stats = compute_stats(

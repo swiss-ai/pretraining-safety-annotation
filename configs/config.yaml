@@ -2,6 +2,9 @@ charter_path: resources/ModelRaisingConstitution_v0.2.md
 writing_guidelines_path: resources/ValueAnnotationGuidelines_v0.1.md
 data_dir: data
 max_tokens: 2048
+api_keys:
+  https://api.swissai.cscs.ch/v1: SWISS_AI_API_KEY
+  https://openrouter.ai/api/v1: OPENROUTER_API_KEY
 phase1:
   dataset: jkminder/Dolma3_mix_annotation_sample
   subsets: []
@@ -9,27 +12,11 @@ phase1:
 phase2:
   endpoint: https://api.swissai.cscs.ch/v1
   judge_models:
-  # - alias: glm-4.5-air
-  #   api_name: jminder/pZcWDUxqEQ
-  #   hf_slug: zai-org/GLM-4.5-Air-FP8
-  # - alias: olmo3-32B-think
-  #   api_name: jminder/UqFTpAeJcvV4
-  #   hf_slug: olmo-ai/olmo-3-32b-thinking
     - alias: kimi-k2.5
-      api_name: jkminder/lAiFTaihSJ
+      api_name: moonshotai/Kimi-K2.5
       hf_slug: moonshotai/Kimi-K2.5
-  # - alias: glm-4.7-flash
-  #   api_name: zai-org/GLM-4.7-Flash
-  #   hf_slug: zai-org/GLM-4.7-Flash
-  #   thinking: false
-  # - alias: llama-3.3-70b-instruct
-  #   api_name: meta-llama/Llama-3.3-70B-Instruct
-  #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
-  #   thinking: false
-  # - alias: apertus-70b-instruct
-  #   api_name: swiss-ai/Apertus-70B-Instruct-2509
-  #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
-    # thinking: false
+      endpoint: https://openrouter.ai/api/v1
+
   generator_models:
     - alias: glm-4.5-air
       api_name: jminder/pZcWDUxqEQ
@@ -41,24 +28,25 @@ phase2:
     #   api_name: jkminder/lAiFTaihSJ
     #   hf_slug: moonshotai/Kimi-K2.5
     - alias: gpt-oss-120b
-      api_name: openai/gpt-oss-120b-oPoB
+      api_name: openai/gpt-oss-120b-cPOP
       hf_slug: openai/gpt-oss-120b
     - alias: glm-4.7-flash
       api_name: zai-org/GLM-4.7-Flash
       hf_slug: zai-org/GLM-4.7-Flash
+    #   thinking: false
+    # - alias: smollm3-3b
+    #   api_name: HuggingFaceTB/SmolLM3-3B-hhtO
+    #   hf_slug: HuggingFaceTB/SmolLM3-3B
+    #   thinking: false
+    # - alias: llama-3.3-70b-instruct
+    #   api_name: meta-llama/Llama-3.3-70B-Instruct
+    #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
+    #   thinking: false
+    - alias: apertus-70b-instruct
+      api_name: swiss-ai/Apertus-70B-Instruct-2509
+      hf_slug: swiss-ai/Apertus-70B-Instruct-2509
       thinking: false
-    - alias: smollm3-3b
-      api_name: HuggingFaceTB/SmolLM3-3B-hhtO
-      hf_slug: HuggingFaceTB/SmolLM3-3B
-      thinking: false
-  # - alias: llama-3.3-70b-instruct
-  #   api_name: meta-llama/Llama-3.3-70B-Instruct
-  #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
-  #   thinking: false
-  # - alias: apertus-70b-instruct
-  #   api_name: swiss-ai/Apertus-70B-Instruct-2509
-  #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
-  #   thinking: false
+      json_mode: true
   improver:
     judge_prompt: improver_judge.md
     generator_prompt: improver_generator.md

@@ -9,10 +9,11 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools reasoning <item_id>[,id2,...] <iteration>
     python -m pipeline.improver_tools diversity <iteration>
     python -m pipeline.improver_tools scores <iteration>
+    python -m pipeline.improver_tools distribution <iteration>
     python -m pipeline.improver_tools gold [--limit N] [--offset N] [--verbose]
     python -m pipeline.improver_tools compare <item_id> <iteration>
     python -m pipeline.improver_tools reviews [<iteration>] [--limit N]
-    python -m pipeline.improver_tools filter <iteration> --dim X --below N [--part preflection|reflection]
+    python -m pipeline.improver_tools filter <iteration> --dim X --below N [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
     python -m pipeline.improver_tools trend
     python -m pipeline.improver_tools diagnose <group_id>
     python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]
@@ -34,6 +35,8 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools escalate <item_id> <group_id> --reason "..."
     python -m pipeline.improver_tools escalations [--status S]
     python -m pipeline.improver_tools correlation_trend [--target T]
+    python -m pipeline.improver_tools parse_stats <iteration>
+    python -m pipeline.improver_tools rollback <alias> <role> <version>
 """
 
 import json
@@ -347,6 +350,60 @@ def cmd_scores(iteration: int) -> None:
         )
 
 
+def cmd_distribution(iteration: int) -> None:
+    """Print per-dimension score distributions and floor-rule trigger counts."""
+    items = load_items_for_iteration(iteration)
+    judged = [i for i in items if i.get("judgment")]
+    if not judged:
+        print(f"No judged items for iteration {iteration}")
+        return
+
+    # Collect scores per (part, dimension)
+    part_dim_scores: dict[str, dict[str, list[int]]] = {}
+    for item in judged:
+        for part, part_j in _judgment_parts(item["judgment"]).items():
+            for dim, score in part_j.get("scores", {}).items():
+                part_dim_scores.setdefault(part, {}).setdefault(dim, []).append(score)
+
+    # Global distribution
+    all_scores = []
+    for part_dims in part_dim_scores.values():
+        for scores in part_dims.values():
+            all_scores.extend(scores)
+
+    print(
+        f"Iteration {iteration}: {len(judged)} items, {len(all_scores)} dimension scores\n"
+    )
+    print("=== Global distribution ===")
+    dist = Counter(all_scores)
+    for s in sorted(dist):
+        pct = dist[s] / len(all_scores) * 100
+        bar = "#" * int(pct)
+        print(f"  {s}: {dist[s]:>4} ({pct:4.1f}%) {bar}")
+    low = sum(1 for s in all_scores if s <= 2)
+    print(f"  Floor triggers (<=2): {low} ({low / len(all_scores) * 100:.1f}%)\n")
+
+    # Per-part, per-dimension breakdown
+    print("=== Per-dimension breakdown ===")
+    print(f"{'part':<20} {'dim':<20} {'mean':>5} {'<=2':>4} {'dist (1-5)'}")
+    print("-" * 75)
+    # Floor trigger totals by dimension
+    dim_floors: dict[str, int] = {}
+    for part in sorted(part_dim_scores):
+        for dim in sorted(part_dim_scores[part]):
+            scores = part_dim_scores[part][dim]
+            mean = statistics.mean(scores)
+            n_floor = sum(1 for s in scores if s <= 2)
+            dim_floors[dim] = dim_floors.get(dim, 0) + n_floor
+            d = Counter(scores)
+            dist_str = " ".join(f"{d.get(i, 0):>3}" for i in range(1, 6))
+            print(f"{part:<20} {dim:<20} {mean:5.2f} {n_floor:>4} [{dist_str}]")
+
+    print(f"\n=== Floor triggers by dimension (all parts) ===")
+    for dim in sorted(dim_floors, key=dim_floors.get, reverse=True):
+        print(f"  {dim}: {dim_floors[dim]}")
+
+
 def _load_gold() -> list[dict]:
     """Load gold annotations from SQLite."""
     from pipeline.phase1.storage import load_annotations
@@ -520,7 +577,12 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
 
 
 def cmd_filter(iteration: int, dim: str, below: float, part: str | None = None) -> None:
-    """Filter items by score threshold on a specific dimension."""
+    """Filter items by score threshold on a specific dimension.
+
+    Valid --part values: preflection_3p, preflection_1p, reflection_1p, reflection_3p
+    Valid --dim values: relevance, specificity, charter_grounding, voice_tone
+    If --part is omitted, searches all parts.
+    """
     assert dim, "--dim is required"
     items = load_items_for_iteration(iteration)
     judged = [i for i in items if i.get("judgment")]
@@ -790,6 +852,7 @@ def cmd_test_generate(
         semaphore=semaphore,
         save=False,
         writing_guidelines_text=writing_guidelines_text,
+        json_mode=gen_model_cfg.json_mode,
     )
 
     test_id = _make_test_id("tg")
@@ -1830,6 +1893,95 @@ def cmd_correlation_trend(target: str | None = None) -> None:
                 )
 
 
+def cmd_parse_stats(iteration: int) -> None:
+    """Show generation parse success/failure counts for an iteration.
+
+    Reads the run config to find n_attempted and n_gen_failed.
+    Falls back to comparing item counts if config data unavailable.
+    """
+    from pipeline.phase2.storage import load_runs
+
+    runs = load_runs()
+    run = next((r for r in runs if r["iteration"] == iteration), None)
+    if not run:
+        print(f"No run found for iteration {iteration}")
+        return
+
+    config = run.get("config", {})
+    if isinstance(config, str):
+        config = json.loads(config)
+
+    items = load_items_for_iteration(iteration)
+    n_judged = len([i for i in items if i.get("judgment")])
+    n_generated = len([i for i in items if i.get("analysis")])
+
+    n_attempted = config.get("n_attempted")
+    n_gen_failed = config.get("n_gen_failed")
+
+    if n_attempted is not None:
+        print(f"Iteration {iteration} parse stats:")
+        print(f"  Attempted:       {n_attempted}")
+        print(f"  Parsed OK:       {n_attempted - n_gen_failed}")
+        print(
+            f"  Parse failures:  {n_gen_failed} ({n_gen_failed / n_attempted * 100:.0f}%)"
+        )
+        print(f"  Judged:          {n_judged}")
+    else:
+        # Fallback for older runs without config data
+        print(f"Iteration {iteration} (no parse stats in run config — older run):")
+        print(f"  Generated items: {n_generated}")
+        print(f"  Judged items:    {n_judged}")
+        print(
+            f"  (Parse failure count unavailable — run was before parse_stats tracking)"
+        )
+
+    print(f"\n  Generator: {run.get('generator_model', '?')}")
+    print(f"  Judge:     {run.get('judge_model', '?')}")
+    print(f"  Prompt:    {run.get('gen_prompt', '?')}")
+
+
+def cmd_rollback(alias: str, role: str, version: int) -> None:
+    """Promote a specific version to be the latest by copying it to v(max+1).
+
+    The pipeline always uses the highest _vN.md file. If v2 performed best but
+    v3 and v4 exist, `rollback <alias> generator 2` copies v2 to v5, making it
+    the active prompt.
+    """
+    import glob as _glob
+    import shutil
+
+    from pipeline.config import PIPELINE_DATA_DIR
+
+    prompts_dir = PIPELINE_DATA_DIR / "prompts" / alias
+    assert (
+        prompts_dir.exists()
+    ), f"No prompt directory for alias '{alias}': {prompts_dir}"
+
+    prefix = "judge" if role == "judge" else "generator"
+    source = prompts_dir / f"{prefix}_v{version}.md"
+    assert source.exists(), f"Version file not found: {source}"
+
+    # Find current max version
+    import re
+
+    pattern = re.compile(rf"^{re.escape(prefix)}_v(\d+)\.md$")
+    max_v = 0
+    for p in prompts_dir.iterdir():
+        m = pattern.match(p.name)
+        if m:
+            max_v = max(max_v, int(m.group(1)))
+
+    if max_v == version:
+        print(f"v{version} is already the latest version — nothing to do.")
+        return
+
+    new_v = max_v + 1
+    dest = prompts_dir / f"{prefix}_v{new_v}.md"
+    shutil.copy2(source, dest)
+    print(f"Rolled back: copied {source.name} → {dest.name}")
+    print(f"Active prompt is now {dest.name} (content identical to v{version})")
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -1838,8 +1990,23 @@ def main():
 
     cmd = args[0]
 
-    if "--help" in args or "-h" in args:
+    if "--help" in args or "-h" in args or cmd == "help":
         print(__doc__)
+        print(
+            "\nFor detailed help on a specific command: python -m pipeline.improver_tools <command> --help"
+        )
+        print("\nKey concepts:")
+        print(
+            "  - item_id: hex string prefix (8+ chars), copied from scores/failures output"
+        )
+        print("  - iteration: integer, shown in run_cross_batch output")
+        print(
+            "  - group_id: UUID prefix (8+ chars), links iterations from same cross-batch"
+        )
+        print(
+            "  - --part: preflection_3p | preflection_1p | reflection_1p | reflection_3p"
+        )
+        print("  - --dim: relevance | specificity | charter_grounding | voice_tone")
         sys.exit(0)
 
     positional = [a for a in args[1:] if not a.startswith("--")]
@@ -1892,6 +2059,9 @@ def main():
     elif cmd == "scores":
         _require_positional(1, "scores <iteration>")
         cmd_scores(int(positional[0]))
+    elif cmd == "distribution":
+        _require_positional(1, "distribution <iteration>")
+        cmd_distribution(int(positional[0]))
     elif cmd == "gold":
         cmd_gold(
             limit=_get_flag_int("--limit", 5),
@@ -1906,7 +2076,8 @@ def main():
         cmd_reviews(iteration=iteration, limit=_get_flag_int("--limit", 20))
     elif cmd == "filter":
         _require_positional(
-            1, "filter <iteration> --dim X --below N [--part preflection|reflection]"
+            1,
+            "filter <iteration> --dim X --below N [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]",
         )
         cmd_filter(
             int(positional[0]),
@@ -2004,6 +2175,12 @@ def main():
         cmd_escalations(status=_get_flag("--status"))
     elif cmd == "correlation_trend":
         cmd_correlation_trend(target=_get_flag("--target"))
+    elif cmd == "parse_stats":
+        _require_positional(1, "parse_stats <iteration>")
+        cmd_parse_stats(int(positional[0]))
+    elif cmd == "rollback":
+        _require_positional(3, "rollback <alias> <role> <version>")
+        cmd_rollback(positional[0], positional[1], int(positional[2]))
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

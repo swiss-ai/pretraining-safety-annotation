@@ -12,6 +12,7 @@ import random
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import dotenv
 
@@ -62,8 +63,6 @@ def _load_canaries() -> list[dict]:
     """Load canary quirks from resources/canaries.yaml."""
     with open(CANARIES_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)["canaries"]
-
-
 
 
 _FIELD_ALIASES = {
@@ -127,7 +126,7 @@ def _parse_generation(raw: str) -> dict:
 
 
 def _parse_judgment(raw: str) -> dict:
-    """Parse judge JSON output into structured fields.
+    """Parse judge JSON output into structured fields (single-voice format).
 
     Extracts JSON from response, handling prose before/after JSON and code fences.
     """
@@ -141,6 +140,30 @@ def _parse_judgment(raw: str) -> dict:
     assert isinstance(parsed["scores"], dict), "scores must be a dict"
     assert len(parsed["scores"]) > 0, "scores must not be empty"
     parsed["aggregate"] = sum(parsed["scores"].values()) / len(parsed["scores"])
+    return parsed
+
+
+_FOUR_VOICES = ("preflection_3p", "preflection_1p", "reflection_1p", "reflection_3p")
+
+
+def _parse_combined_judgment(raw: str) -> dict:
+    """Parse combined judge JSON output with scores for all four voices."""
+    parsed = extract_json(raw)
+    missing = set(_FOUR_VOICES) - set(parsed.keys())
+    assert not missing, (
+        f"Missing voices in combined judgment: {missing}. "
+        f"Got keys: {list(parsed.keys())}. Raw preview: {raw[:200]}"
+    )
+    for voice in _FOUR_VOICES:
+        vd = parsed[voice]
+        assert isinstance(vd, dict), f"{voice} must be a dict"
+        assert (
+            "scores" in vd and "reasoning" in vd
+        ), f"{voice} must have 'scores' and 'reasoning'"
+        assert (
+            isinstance(vd["scores"], dict) and len(vd["scores"]) > 0
+        ), f"{voice} scores must be a non-empty dict"
+        vd["aggregate"] = sum(vd["scores"].values()) / len(vd["scores"])
     return parsed
 
 
@@ -251,6 +274,7 @@ def generate_batch(
     save: bool = True,
     writing_guidelines_text: str = "",
     thinking: bool = False,
+    json_mode: bool = False,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
@@ -270,11 +294,10 @@ def generate_batch(
         context_before = item["text"][:rp]
         context_after = item["text"][rp:]
         user_content = (
-            f"## Full Text\n\n{item['text']}\n\n"
-            f"## Reflection Point\n\n"
-            f"The reflection point is at character {rp}. "
-            f"Text before the reflection point:\n\n{context_before}\n\n"
-            f"Text after the reflection point (the reflection must NOT use this):\n\n{context_after}"
+            f"## Full Text\n\n"
+            f"{context_before}"
+            f"\n\n--- REFLECTION POINT (character {rp}) ---\n\n"
+            f"{context_after}"
         )
 
         # Canary injection: 10% chance, one random canary per sample
@@ -296,7 +319,12 @@ def generate_batch(
         try:
             t0 = time.monotonic()
             raw, reasoning, usage = await api_call(
-                client, model, messages, semaphore, thinking=thinking
+                client,
+                model,
+                messages,
+                semaphore,
+                thinking=thinking,
+                json_mode=json_mode,
             )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
@@ -347,7 +375,9 @@ def generate_batch(
     skipped = sum(1 for r in results if r is None)
     if skipped:
         logger.warning(
-            "Generation: {}/{} items skipped due to errors", skipped, len(items)
+            "Generation: {}/{} items skipped due to parse/API errors",
+            skipped,
+            len(items),
         )
     return [r for r in results if r is not None]
 
@@ -426,6 +456,80 @@ async def _judge_one_part(
     return parsed, raw, reasoning, usage
 
 
+async def _judge_combined(
+    item: dict,
+    prompt_template: str,
+    accept_threshold: float,
+    model: str,
+    client: openai.AsyncOpenAI,
+    semaphore: asyncio.Semaphore,
+    charter_text: str = "",
+    writing_guidelines_text: str = "",
+    thinking: bool = False,
+) -> tuple[dict, str, str | None, dict]:
+    """Judge all four voices in a single API call.
+
+    Returns (parsed_combined, raw_response, reasoning_content, usage_dict).
+    """
+    system_prompt = (
+        prompt_template.replace("{accept_threshold}", str(accept_threshold))
+        .replace("{charter}", charter_text)
+        .replace("{writing_guidelines}", writing_guidelines_text)
+    )
+
+    rp = item["reflection_point"]
+    context_before = item["text"][:rp]
+
+    # Resolve content for each voice with legacy fallbacks
+    _FALLBACK = {"preflection_3p": "preflection", "reflection_1p": "reflection"}
+    voices = {}
+    for part in _FOUR_VOICES:
+        if part in item and item[part] is not None:
+            voices[part] = item[part]
+        elif part in _FALLBACK and _FALLBACK[part] in item:
+            voices[part] = item[_FALLBACK[part]]
+        else:
+            voices[part] = item[part]  # will KeyError with clear message
+
+    user_content = (
+        f"## Full Text\n\n{item['text']}\n\n"
+        f"## Reflection Point\n\n"
+        f"The reflection point is at character {rp}. "
+        f"Preflections should be judged against the FULL text. "
+        f"Reflections should be judged only against text up to the reflection point.\n\n"
+        f"Text up to the reflection point:\n\n{context_before}\n\n"
+        f"---\n\n"
+        f"## preflection_3p\n\n{voices['preflection_3p']}\n\n"
+        f"## preflection_1p\n\n{voices['preflection_1p']}\n\n"
+        f"## reflection_1p\n\n{voices['reflection_1p']}\n\n"
+        f"## reflection_3p\n\n{voices['reflection_3p']}"
+    )
+
+    # Inform the judge about canary injections (applies to reflections)
+    canary_id = item.get("canary")
+    if canary_id:
+        canaries = _load_canaries()
+        canary = next((c for c in canaries if c["id"] == canary_id), None)
+        if canary:
+            user_content += (
+                f"\n\n## Canary Notice\n\n"
+                f"The reflections have a canary injection (quirk: {canary['quirk']}, "
+                f"value: {canary['value']}). The reflections were instructed to include "
+                f"this. Do NOT penalize the reflections for including this canary — "
+                f"judge the rest of each reflection on its own merits."
+            )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    raw, reasoning, usage = await api_call(
+        client, model, messages, semaphore, thinking=thinking
+    )
+    parsed = _parse_combined_judgment(raw)
+    return parsed, raw, reasoning, usage
+
+
 def judge_batch(
     items: list[dict],
     prompt_path: Path,
@@ -467,15 +571,18 @@ def judge_batch(
         # Legacy items: only two parts
         return ["preflection", "reflection"]
 
+    # Use combined judging when prompt supports it (no {part_type} placeholder)
+    use_combined = "{part_type}" not in prompt_template
+
     async def judge_one(item: dict) -> dict | None:
         parts = _parts_to_judge(item)
         try:
             t0 = time.monotonic()
-            part_results: dict[str, tuple] = {}
-            for part in parts:
-                parsed, raw, reasoning, usage = await _judge_one_part(
+
+            if use_combined and len(parts) == 4:
+                # Combined: single API call for all 4 voices
+                parsed, raw, reasoning, usage = await _judge_combined(
                     item,
-                    part,
                     prompt_template,
                     accept_threshold,
                     model,
@@ -485,61 +592,117 @@ def judge_batch(
                     writing_guidelines_text=writing_guidelines_text,
                     thinking=thinking,
                 )
-                part_results[part] = (parsed, raw, reasoning, usage)
-            judge_latency_ms = int((time.monotonic() - t0) * 1000)
+                judge_latency_ms = int((time.monotonic() - t0) * 1000)
+
+                all_scores = [
+                    s for part in parts for s in parsed[part]["scores"].values()
+                ]
+                aggregate = sum(all_scores) / len(all_scores)
+                has_floor_violation = any(s <= floor_threshold for s in all_scores)
+                decision = (
+                    "reject"
+                    if has_floor_violation or aggregate < accept_threshold
+                    else "accept"
+                )
+
+                judgment_parts: dict[str, dict] = {}
+                for part in parts:
+                    judgment_parts[part] = {
+                        "scores": parsed[part]["scores"],
+                        "aggregate": parsed[part]["aggregate"],
+                        "reasoning": parsed[part]["reasoning"],
+                        "model_reasoning": reasoning,
+                        "usage": usage,
+                    }
+
+                judgment = {
+                    **judgment_parts,
+                    "aggregate": aggregate,
+                    "decision": decision,
+                    "judge_prompt": prompt_filename,
+                    "raw_responses": {"combined": raw},
+                    "usage": usage,
+                    "latency_ms": judge_latency_ms,
+                    "timestamp": __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat(),
+                }
+            else:
+                # Legacy per-part judging (old prompt with {part_type})
+                part_results: dict[str, tuple] = {}
+                for part in parts:
+                    p_parsed, p_raw, p_reasoning, p_usage = await _judge_one_part(
+                        item,
+                        part,
+                        prompt_template,
+                        accept_threshold,
+                        model,
+                        client,
+                        semaphore,
+                        charter_text=charter_text,
+                        writing_guidelines_text=writing_guidelines_text,
+                        thinking=thinking,
+                    )
+                    part_results[part] = (p_parsed, p_raw, p_reasoning, p_usage)
+                judge_latency_ms = int((time.monotonic() - t0) * 1000)
+
+                all_scores = [
+                    s
+                    for part, (p_parsed, _, _, _) in part_results.items()
+                    for s in p_parsed["scores"].values()
+                ]
+                aggregate = sum(all_scores) / len(all_scores)
+                has_floor_violation = any(s <= floor_threshold for s in all_scores)
+                decision = (
+                    "reject"
+                    if has_floor_violation or aggregate < accept_threshold
+                    else "accept"
+                )
+
+                total_usage: dict[str, int] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                }
+                raw_responses: dict[str, str] = {}
+                judgment_parts = {}
+                for part, (
+                    p_parsed,
+                    p_raw,
+                    p_reasoning,
+                    p_usage,
+                ) in part_results.items():
+                    judgment_parts[part] = {
+                        "scores": p_parsed["scores"],
+                        "aggregate": p_parsed["aggregate"],
+                        "reasoning": p_parsed["reasoning"],
+                        "model_reasoning": p_reasoning,
+                        "usage": p_usage,
+                    }
+                    raw_responses[part] = p_raw
+                    for k in total_usage:
+                        total_usage[k] += p_usage.get(k, 0)
+
+                judgment = {
+                    **judgment_parts,
+                    "aggregate": aggregate,
+                    "decision": decision,
+                    "judge_prompt": prompt_filename,
+                    "raw_responses": raw_responses,
+                    "usage": total_usage,
+                    "latency_ms": judge_latency_ms,
+                    "timestamp": __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat(),
+                }
+
+            judged = {**item, "judgment": judgment}
+            if save:
+                save_item(judged)
+            return judged
         except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
             logger.warning("Skipping item {} — judging failed: {}", item["item_id"], e)
             return None
-
-        all_scores = [
-            s
-            for part, (parsed, _, _, _) in part_results.items()
-            for s in parsed["scores"].values()
-        ]
-        aggregate = sum(all_scores) / len(all_scores)
-        # Floor rule: any dimension ≤ floor_threshold forces reject (documented in judge prompt)
-        has_floor_violation = any(s <= floor_threshold for s in all_scores)
-        decision = (
-            "reject"
-            if has_floor_violation or aggregate < accept_threshold
-            else "accept"
-        )
-
-        total_usage: dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-        }
-        raw_responses: dict[str, str] = {}
-        judgment_parts: dict[str, dict] = {}
-        for part, (parsed, raw, reasoning, usage) in part_results.items():
-            judgment_parts[part] = {
-                "scores": parsed["scores"],
-                "aggregate": parsed["aggregate"],
-                "reasoning": parsed["reasoning"],
-                "model_reasoning": reasoning,
-                "usage": usage,
-            }
-            raw_responses[part] = raw
-            for k in total_usage:
-                total_usage[k] += usage.get(k, 0)
-
-        judgment = {
-            **judgment_parts,
-            "aggregate": aggregate,
-            "decision": decision,
-            "judge_prompt": prompt_filename,
-            "raw_responses": raw_responses,
-            "usage": total_usage,
-            "latency_ms": judge_latency_ms,
-            "timestamp": __import__("datetime")
-            .datetime.now(__import__("datetime").timezone.utc)
-            .isoformat(),
-        }
-        judged = {**item, "judgment": judgment}
-        if save:
-            save_item(judged)
-        return judged
 
     coros = [judge_one(item) for item in items]
     results = run_concurrent(*coros, desc="Judging")
@@ -585,35 +748,8 @@ def _run_one_pair(
     source: str,
     group_id: str | None = None,
 ) -> dict:
-    """Run generate->judge for one (generator, judge) pair. Returns run summary dict.
-
-    Installs signal handlers for graceful shutdown during DB writes.
-    """
-    from pipeline.storage import _get_conn, checkpoint
-    from uuid import uuid4
-
-    prev_sigterm = signal.getsignal(signal.SIGTERM)
-    prev_sigint = signal.getsignal(signal.SIGINT)
-
-    def _graceful_shutdown(signum, frame):
-        logger.warning(
-            "Received signal {} during iteration — checkpointing DB before exit", signum
-        )
-        try:
-            _get_conn().commit()
-            checkpoint()
-        except Exception:
-            pass
-        sys.exit(128 + signum)
-
-    signal.signal(signal.SIGTERM, _graceful_shutdown)
-    signal.signal(signal.SIGINT, _graceful_shutdown)
-
-    try:
-        return _run_one_pair_inner(cfg, items, gen_alias, judge_alias, source, group_id)
-    finally:
-        signal.signal(signal.SIGTERM, prev_sigterm)
-        signal.signal(signal.SIGINT, prev_sigint)
+    """Run generate->judge for one (generator, judge) pair. Returns run summary dict."""
+    return _run_one_pair_inner(cfg, items, gen_alias, judge_alias, source, group_id)
 
 
 def _run_one_pair_inner(
@@ -626,14 +762,25 @@ def _run_one_pair_inner(
 ) -> dict:
     """Inner implementation of _run_one_pair (split out for signal safety)."""
     iteration = next_iteration()
-    client, semaphore = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
-    )
-    charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
     gen_model_cfg = resolve_generator_model(cfg, gen_alias)
     judge_model_cfg = resolve_judge_model(cfg, judge_alias)
+
+    max_conc = cfg.phase2.iteration.max_concurrent
+    gen_endpoint = gen_model_cfg.endpoint or cfg.phase2.endpoint
+    judge_endpoint = judge_model_cfg.endpoint or cfg.phase2.endpoint
+
+    gen_client, gen_sem = make_api_client(gen_endpoint, max_conc, cfg.api_keys)
+    if judge_endpoint == gen_endpoint:
+        judge_client, judge_sem = gen_client, gen_sem
+    else:
+        judge_client, judge_sem = make_api_client(
+            judge_endpoint, max_conc, cfg.api_keys
+        )
+
+    charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
+
     gen_prompt = resolve_prompt_path("generator_latest.md", alias=gen_alias)
     judge_prompt = resolve_prompt_path("judge_latest.md", alias=judge_alias)
 
@@ -645,10 +792,11 @@ def _run_one_pair_inner(
         charter_text,
         gen_model_cfg.api_name,
         iteration,
-        client,
-        semaphore,
+        gen_client,
+        gen_sem,
         writing_guidelines_text=writing_guidelines_text,
         thinking=gen_model_cfg.thinking,
+        json_mode=gen_model_cfg.json_mode,
     )
 
     judged = judge_batch(
@@ -657,8 +805,8 @@ def _run_one_pair_inner(
         judge_model_cfg.api_name,
         iteration,
         cfg.phase2.scoring.accept_threshold,
-        client,
-        semaphore,
+        judge_client,
+        judge_sem,
         floor_threshold=cfg.phase2.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
@@ -672,6 +820,8 @@ def _run_one_pair_inner(
     scores = [item["judgment"]["aggregate"] for item in judged]
     mean_score = sum(scores) / len(scores) if scores else 0.0
 
+    n_attempted = len(items)
+    n_gen_failed = n_attempted - len(generated)
     save_run(
         iteration=iteration,
         gen_prompt=gen_prompt.name,
@@ -683,6 +833,8 @@ def _run_one_pair_inner(
         config={
             "accept_threshold": cfg.phase2.scoring.accept_threshold,
             "max_concurrent": cfg.phase2.iteration.max_concurrent,
+            "n_attempted": n_attempted,
+            "n_gen_failed": n_gen_failed,
         },
         analysis=summary,
         source=source,
@@ -718,10 +870,6 @@ def _run_cross_iteration(
     """
     from uuid import uuid4
 
-    client, _semaphore = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
-    )
-
     # Determine fixed vs. iterated models
     if role == "judge":
         fixed_alias = target_alias
@@ -735,7 +883,7 @@ def _run_cross_iteration(
         pairs = [(target_alias, m.alias) for m in counterpart_models]
 
     # Health-check all involved models upfront
-    _health_check_models(client, cfg, role, target_alias)
+    _health_check_models(cfg, role, target_alias)
 
     # Select items once (fixed seed based on current max iteration)
     base_iter = next_iteration()
@@ -748,46 +896,94 @@ def _run_cross_iteration(
     )
 
     group_id = str(uuid4())
-    summaries = []
-    for gen_alias, judge_alias in pairs:
-        logger.info("Cross-iteration: gen={} judge={}", gen_alias, judge_alias)
-        result = _run_one_pair(
-            cfg,
-            items,
-            gen_alias,
-            judge_alias,
-            source=source,
-            group_id=group_id,
-        )
-        summaries.append(result)
 
-    return summaries
+    # Install signal handlers for graceful shutdown (main thread only)
+    from pipeline.storage import _get_conn, checkpoint
+
+    prev_sigterm = signal.getsignal(signal.SIGTERM)
+    prev_sigint = signal.getsignal(signal.SIGINT)
+
+    def _graceful_shutdown(signum, frame):
+        logger.warning(
+            "Received signal {} during cross-iteration — checkpointing DB before exit",
+            signum,
+        )
+        try:
+            _get_conn().commit()
+            checkpoint()
+        except Exception:
+            pass
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+
+    try:
+        logger.info(
+            "Running {} pairs in parallel: {}",
+            len(pairs),
+            [(g, j) for g, j in pairs],
+        )
+        summaries = []
+        with ThreadPoolExecutor(max_workers=len(pairs)) as executor:
+            futures = {
+                executor.submit(
+                    _run_one_pair,
+                    cfg,
+                    items,
+                    gen_alias,
+                    judge_alias,
+                    source,
+                    group_id,
+                ): (gen_alias, judge_alias)
+                for gen_alias, judge_alias in pairs
+            }
+            for future in as_completed(futures):
+                gen_alias, judge_alias = futures[future]
+                result = future.result()
+                logger.info(
+                    "Completed: gen={} judge={} → {}/{} accepted, mean={:.2f}",
+                    gen_alias,
+                    judge_alias,
+                    result["n_accepted"],
+                    result["n_items"],
+                    result["mean_score"],
+                )
+                summaries.append(result)
+
+        return summaries
+    finally:
+        signal.signal(signal.SIGTERM, prev_sigterm)
+        signal.signal(signal.SIGINT, prev_sigint)
 
 
 def _health_check_models(
-    client: openai.AsyncOpenAI,
     cfg: AppConfig,
     role: str,
     target_alias: str,
 ) -> None:
     """Health-check the target model and all counterpart models for a cross-iteration."""
+    max_conc = cfg.phase2.iteration.max_concurrent
     checked: set[str] = set()
+
+    def _check(m: ModelConfig) -> None:
+        key = (m.endpoint or cfg.phase2.endpoint, m.api_name)
+        if key in checked:
+            return
+        client, _ = make_api_client(
+            m.endpoint or cfg.phase2.endpoint, max_conc, cfg.api_keys
+        )
+        health_check(client, m.api_name)
+        checked.add(key)
+
     if role == "judge":
-        target_cfg = resolve_judge_model(cfg, target_alias)
-        health_check(client, target_cfg.api_name)
-        checked.add(target_cfg.api_name)
+        _check(resolve_judge_model(cfg, target_alias))
         for m in cfg.phase2.generator_models:
-            if m.api_name not in checked:
-                health_check(client, m.api_name)
-                checked.add(m.api_name)
+            _check(m)
     else:
-        target_cfg = resolve_generator_model(cfg, target_alias)
-        health_check(client, target_cfg.api_name)
-        checked.add(target_cfg.api_name)
+        _check(resolve_generator_model(cfg, target_alias))
         for m in cfg.phase2.judge_models:
-            if m.api_name not in checked:
-                health_check(client, m.api_name)
-                checked.add(m.api_name)
+            _check(m)
 
 
 def run_judge_cross_iteration(
@@ -868,8 +1064,9 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
                 )
                 continue
 
+            endpoint = model_cfg.endpoint or cfg.phase2.endpoint
             client, semaphore = make_api_client(
-                cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
+                endpoint, cfg.phase2.iteration.max_concurrent, cfg.api_keys
             )
             api_name = model_cfg.api_name
 

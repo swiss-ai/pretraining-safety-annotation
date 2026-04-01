@@ -72,6 +72,8 @@ class ModelConfig:
     api_name: str = ""
     hf_slug: str = ""
     thinking: bool = False
+    endpoint: str = ""
+    json_mode: bool = False
 
 
 @dataclass
@@ -155,6 +157,7 @@ class AppConfig:
     writing_guidelines_path: str = MISSING
     data_dir: str = "data"
     max_tokens: int = 3840
+    api_keys: dict[str, str] = field(default_factory=dict)
     phase1: Phase1Config = field(default_factory=Phase1Config)
     phase2: Phase2Config = field(default_factory=Phase2Config)
     phase3: Phase3Config = field(default_factory=Phase3Config)

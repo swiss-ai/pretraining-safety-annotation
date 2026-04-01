@@ -142,7 +142,53 @@ def _build_improver_prompt(
     latest_iter = runs[-1]["iteration"] if runs else 0
     has_data = latest_iter > 0
 
+    # Check if gold annotations or human reviews exist
+    has_gold = False
+    has_reviews = False
+    try:
+        from pipeline.phase1.storage import load_latest_annotations
+
+        has_gold = len(load_latest_annotations()) > 0
+    except Exception:
+        pass
+    try:
+        from pipeline.phase2.storage import load_reviews
+
+        has_reviews = len(load_reviews()) > 0
+    except Exception:
+        pass
+
     counterpart_list = ", ".join(counterpart_models)
+
+    # Auto-inject latest diagnose output if data exists
+    baseline_diagnose = ""
+    if has_data:
+        # Find the latest group_id involving this target model in the relevant role
+        target_runs = [
+            r
+            for r in runs
+            if r.get("group_id")
+            and (
+                (role == "judge" and r.get("judge_model") == target_alias)
+                or (role == "generator" and r.get("generator_model") == target_alias)
+            )
+        ]
+        if target_runs:
+            latest_gid = target_runs[-1]["group_id"]
+            try:
+                import io
+                import contextlib
+
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    from pipeline.improver_tools import cmd_diagnose
+
+                    cmd_diagnose(latest_gid)
+                baseline_diagnose = buf.getvalue()
+                if len(baseline_diagnose) > 4000:
+                    baseline_diagnose = baseline_diagnose[:4000] + "\n... (truncated)"
+            except Exception as e:
+                logger.warning("Failed to auto-run diagnose: {}", e)
 
     if has_data:
         first_run_note = ""
@@ -157,6 +203,30 @@ Then wait:
 Then use `diagnose <group_id>` for a full analysis.
 Do NOT waste time querying empty data — run the batch first.
 """
+
+    # Build conditional sections for gold/review data
+    gold_review_note = ""
+    if not has_gold and not has_reviews:
+        gold_review_note = """
+## Gold annotations & human reviews: NONE AVAILABLE
+There are no gold annotations or human reviews in the database yet.
+Do NOT waste tool calls checking for them — the `gold`, `compare`, `reviews`, and
+`correlations` commands will return empty results. Skip the Gold Set Comparison and
+Human Review Mining sections of the improver instructions.
+"""
+    else:
+        extra_agents = []
+        if has_gold:
+            extra_agents.append(
+                "- **Gold comparator**: compare generated outputs with gold annotations — run `compare` on multiple items, identify systematic gaps"
+            )
+        if has_reviews:
+            extra_agents.append(
+                "- **Human reviews analyst**: read ALL human reviews (`reviews` without iteration filter) and extract key insights from reviewer notes"
+            )
+        gold_review_note = (
+            "\nAdditional subagents to spawn:\n" + "\n".join(extra_agents) + "\n"
+        )
 
     return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
 
@@ -173,6 +243,33 @@ Your improvements will be tested against ALL {other_type} models: [{counterpart_
 When you run a batch, it creates one iteration per {other_type} model, all sharing a group_id.
 Use `cross_summary <group_id>` to see aggregated per-model stats after each batch.
 
+## How the pipeline sends messages to generators
+The user message sent to generator models is structured as:
+```
+## Full Text
+<text before reflection point>
+
+--- REFLECTION POINT (character N) ---
+
+<text after reflection point>
+```
+The system prompt is the generator prompt with {{charter}} and {{writing_guidelines}} substituted.
+The full text (including after the reflection point) is visible to the model. The generator prompt
+instructs models to split their analysis into "BEFORE REFLECTION POINT" and "AFTER REFLECTION
+POINT" sections, with reflections drawing only from the before-analysis. This structured
+separation is the primary mechanism to prevent future context leakage — the model sees all text
+but must discipline itself via the analysis split.
+There is no `response_format=json_object` for most models, so JSON compliance depends on
+prompt instructions.
+
+## Lessons from previous improver runs (DO NOT repeat these mistakes)
+- **Do NOT list alternative opening phrases** (e.g., "try starting with 'At this juncture' or
+  'Looking at this'"). Small models copy them verbatim as new templates, creating worse
+  diversity than before. Instead, use abstract instructions like "vary your approach" or
+  "never start two annotations the same way."
+- **Keep prompts short** (<800 words). Small models (7B-70B) degrade with long system prompts.
+  If a prompt grows too large, it will regress — cut examples and redundant instructions.
+
 ## Query tools
 Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration number from your batch output.
   uv run python -m pipeline.improver_tools summary <ITER>     — aggregate stats
@@ -180,6 +277,7 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools failures <ITER> --reasoning-limit 500  — full reasoning
   uv run python -m pipeline.improver_tools diversity <ITER>   — frequency-based diversity analysis
   uv run python -m pipeline.improver_tools scores <ITER>      — compact scores table
+  uv run python -m pipeline.improver_tools distribution <ITER> — per-dimension score distributions + floor trigger counts
   uv run python -m pipeline.improver_tools show <id> <ITER>   — full text + outputs for one item
   uv run python -m pipeline.improver_tools show <id1,id2,...> <ITER>  — batch show multiple items
   uv run python -m pipeline.improver_tools show <id> <ITER> --brief   — truncated source text
@@ -190,9 +288,14 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools gold --verbose            — gold with full source text (large output!)
   uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold
   uv run python -m pipeline.improver_tools reviews [<ITER>]   — human reviews with judge comparison
-  uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection|reflection]
+  uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
   uv run python -m pipeline.improver_tools trend                     — cross-iteration comparison table
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
+  uv run python -m pipeline.improver_tools parse_stats <ITER>        — generation parse success/failure counts
+
+**Item IDs are hex strings** (e.g. `a27f2f5f`, `9eeb3229`). The `show` and `reasoning` commands
+match by prefix — pass the first 8+ chars. Numeric values like `25` or `40` are NOT valid indices.
+Copy IDs from the `scores`, `failures`, or `filter` output.
 
 ## Test tools (run experiments WITHOUT modifying main data)
   uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--role {role}]
@@ -202,6 +305,7 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools diagnose <group_id>        — ONE-SHOT full analysis (use this first!)
   uv run python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]  — cross-iteration item comparison
   uv run python -m pipeline.improver_tools test_results --role {role}  — view test results
+  uv run python -m pipeline.improver_tools rollback {target_alias} {role} <version>  — promote version N to latest
 
 ## Running long commands (CRITICAL — `run_cross_batch` takes 3-5 minutes!)
 `run_cross_batch`, `run_batch`, `test_judge`, and `test_generate` make many API calls and
@@ -215,6 +319,9 @@ TaskOutput: {{"task_id": "<id from above>", "block": true, "timeout": 600000}}
 ```
 **NEVER** run these commands synchronously (default Bash timeout is 120s — too short).
 **ALWAYS** include `2>&1` to capture stderr.
+**DO NOT block waiting immediately** — while a batch runs in the background, analyze existing
+iteration data in parallel. Only `TaskOutput` (block) when you've finished all other analysis
+and actually need the batch results to proceed.
 
 ## Scratch directory — ALL scripts go here, NOWHERE ELSE
 Write ad-hoc analysis scripts to: {agent_tmp_dir}
@@ -226,25 +333,36 @@ files outside {agent_tmp_dir}/ and they will be left behind as garbage.
 
 ## State
 Read your state file at {state_path} FIRST. It contains notes from previous iterations.
-
+{"" if not baseline_diagnose else f'''
+## Latest baseline diagnostics (auto-generated — saves you running diagnose yourself)
+```
+{baseline_diagnose}
+```
+This data is pre-loaded so you can skip running `diagnose` and go straight to deeper analysis
+(failures, show, reasoning on specific items). Pass this output to your subagents too.
+'''}
 ## Strategy: use MANY Opus subagents for parallel exploration (CRITICAL)
 You have access to the Agent tool. **Always use model="opus" for subagents** — they need
 strong reasoning. **Spawn 5-8 subagents in parallel** for every analysis round. The bottleneck
 is wall-clock time, not tokens — more parallel subagents = faster and deeper analysis.
 
+**Before spawning subagents**: Run `diagnose <group_id>` yourself first. Then pass the diagnose
+output to each subagent in its prompt so they don't re-run it. Each subagent prompt should
+include: (1) the diagnose output, (2) their specific analysis task, (3) which commands to run
+that the parent has NOT already run. This eliminates redundant queries.
+
 Launch these subagents simultaneously (all in one message with multiple Agent calls):
-- **Failures analyst**: analyze all failures and low-scoring items — run `failures`, `reasoning`, `show` on worst items
+- **Failures analyst**: analyze all failures — run `failures`, `reasoning`, `show` on worst items
 - **Gold comparator**: compare generated outputs with gold annotations — run `compare` on multiple items, identify systematic gaps
 - **Human reviews analyst**: read ALL human reviews (`reviews` without iteration filter — output is large, must use subagent!) and extract key insights from reviewer notes
 - **Diversity analyst**: check diversity patterns — run `diversity`, look for formulaic/repetitive output
 - **Dimension deep-dive**: run `filter` for each scoring dimension below threshold, identify which dimensions drag scores down
 - **Cross-model comparator**: if multiple iterations exist, run `diff` between iterations to see what changed
-- **Canary checker**: check canary items specifically — are they being penalized? Run `show` on canary items
-- **Score distribution analyst**: run `scores` and analyze the distribution — are scores clustered? bimodal? skewed?
+- **Score distribution analyst**: run `distribution` and analyze — are scores clustered? bimodal? skewed?
 
 Each subagent should return a concise summary of findings with specific evidence (item IDs, scores, quotes).
 Then synthesize ALL subagent findings to write improved prompts.
-
+{gold_review_note}
 **Avoid redundancy**: When you delegate analysis to subagents, do NOT run the same queries
 yourself. Wait for ALL subagent results before proceeding. Never call the same command twice —
 save the output mentally and reuse it. Prefer batch commands (`scores`, `summary`, `diversity`)
@@ -272,6 +390,18 @@ over inspecting items one by one.
     - **Results**: before/after metrics if you ran test batches
     - **Next steps**: what to try in the next iteration
 
+## Time budget
+Spend no more than 40% of your tool calls on analysis. Start writing prompt changes early —
+you can always refine after testing. A shipped v(N+1) that's 80% right is worth more than a
+perfect analysis that never produces a prompt.
+
+## VERSION SELECTION — CRITICAL
+The pipeline ALWAYS uses the highest version number (_vN.md) as the active prompt.
+If you write v2 (best), then v3 (worse), v3 is deployed — not v2. Before finalizing:
+- If an earlier version performed best, run `rollback {target_alias} {prompt_type} <best_version>`
+  to copy it to v(max+1), making it the active prompt.
+- Never leave a worse version as the highest number on disk.
+
 ## RULES — VIOLATIONS WASTE YOUR LIMITED TOOL CALLS
 
 1. **NO PIPES.** Never use `|` in Bash commands. No `| tail`, `| head`, `| grep`. Run commands
@@ -282,6 +412,8 @@ over inspecting items one by one.
 3. **SCRIPTS ONLY IN {agent_tmp_dir}/.** Never write to `scripts/`, project root, or anywhere
    else — you cannot delete files outside {agent_tmp_dir}/.
 4. Use `uv run python -m pipeline.improver_tools ...` for data access — NOT raw file reads.
+   Do NOT read `pipeline/improver_tools.py` — it is too large. Run `uv run python -m pipeline.improver_tools help`
+   for a CLI reference if needed.
 5. Do NOT overfit to individual examples. Focus on systematic patterns.
 6. The {prompt_type} prompt must NOT hardcode specific charter/constitution content.
 7. `diff <iter1> <iter2>` only works for iterations that share source items (i.e. iterations
@@ -302,15 +434,97 @@ The inline `python -c` form triggers security filters on `#` comments and `{{` b
 """
 
 
+_STATE_MAX_CHARS = 6000  # ~1500 tokens — trigger compression above this
+
+
+def _auto_compress_state(state_path: Path) -> None:
+    """Use Claude to intelligently compress state.md when it exceeds threshold.
+
+    Spawns a lightweight Claude CLI call (haiku) to rewrite the state file
+    more concisely while preserving key learnings and metrics.
+    Falls back to tail-truncation if Claude is unavailable.
+    """
+    if not state_path.exists():
+        return
+    content = state_path.read_text(encoding="utf-8")
+    if len(content) <= _STATE_MAX_CHARS:
+        return
+
+    logger.info(
+        "State file {} chars exceeds {} — compressing with Claude...",
+        len(content),
+        _STATE_MAX_CHARS,
+    )
+
+    import subprocess
+
+    compress_prompt = (
+        "Compress the following improver state file to under 4000 characters. "
+        "Keep:\n"
+        "- Current active prompt versions and their key metrics\n"
+        "- What NOT to try (failed approaches with brief reasons)\n"
+        "- Key lessons learned\n"
+        "- Most recent iteration results\n"
+        "Drop:\n"
+        "- Per-item details and verbose tables from old rounds\n"
+        "- Redundant iteration-by-iteration logs (summarize trends instead)\n"
+        "- Analysis that led to abandoned approaches\n"
+        "Output ONLY the compressed state file content, nothing else.\n\n"
+        "--- STATE FILE ---\n"
+        f"{content}"
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "--model", "haiku", "-p", compress_prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=str(PROJECT_ROOT),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            compressed = result.stdout.strip()
+            if len(compressed) < len(content):
+                state_path.write_text(compressed, encoding="utf-8")
+                logger.info(
+                    "Claude-compressed state.md: {} → {} chars",
+                    len(content),
+                    len(compressed),
+                )
+                return
+            else:
+                logger.warning("Claude compression didn't reduce size, skipping")
+        else:
+            logger.warning(
+                "Claude compression failed (rc={}): {}",
+                result.returncode,
+                result.stderr[:200],
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning("Claude compression unavailable: {}", e)
+
+    # Fallback: keep the last portion
+    trimmed = content[-_STATE_MAX_CHARS:]
+    nl = trimmed.find("\n")
+    if nl != -1:
+        trimmed = trimmed[nl + 1 :]
+    fallback = (
+        "# Improver State (auto-compressed — fallback)\n\n"
+        "[Earlier history trimmed — see git log for full history]\n\n" + trimmed
+    )
+    state_path.write_text(fallback, encoding="utf-8")
+    logger.info(
+        "Fallback-compressed state.md: {} → {} chars",
+        len(content),
+        len(fallback),
+    )
+
+
 def _preflight_health_check(cfg: AppConfig, role: str, target_alias: str) -> None:
     """Ping the inference API before spawning agents. Fail fast if unreachable."""
-    from pipeline.api import make_api_client
     from pipeline.phase2.run import _health_check_models
 
-    client, _ = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
-    )
-    _health_check_models(client, cfg, role, target_alias)
+    _health_check_models(cfg, role, target_alias)
     logger.info("Pre-flight health check passed for {} / {}.", role, target_alias)
 
 
@@ -334,6 +548,10 @@ def run_improver(cfg: AppConfig, role: str, target_alias: str) -> None:
     def _post_hook():
         new_prompt = _detect_new_prompts(target_alias, role)
         logger.info("Improver {} done: latest prompt -> {}", key, new_prompt)
+
+        # Auto-compress state.md if it exceeds size threshold
+        _auto_compress_state(PROMPTS_DIR / target_alias / "state.md")
+
         if role == "judge":
             from pipeline.phase2.run import rejudge_all_prompts_and_models
 
