@@ -353,6 +353,7 @@ class MegatronAnnotatedShuffler(PipelineStep):
         save_filename: str = "annotated",
         seed: int = 42,
         token_size: int = 2,
+        annotation_threshold: int = 3,
     ):
         super().__init__()
         self.input_folder = get_datafolder(input_folder)
@@ -362,6 +363,7 @@ class MegatronAnnotatedShuffler(PipelineStep):
         self.save_filename = save_filename
         self.token_size = token_size
         self.seed = seed
+        self.annotation_threshold = annotation_threshold
 
     def run(
         self, data: DocumentsPipeline = None, rank: int = 0, world_size: int = 1
@@ -489,14 +491,15 @@ class MegatronAnnotatedShuffler(PipelineStep):
             ("doc_id", pa.large_string()),
             ("text", pa.large_string()),
             ("token_length", pa.int32()),
+            ("safety_score", pa.int8()),
         ])
         temp_paths = [
             os.path.join(out_dir, f"_sidecar_part_{p}.parquet")
             for p in range(N_PARTITIONS)
         ]
         writers = [pq.ParquetWriter(tp, temp_schema) for tp in temp_paths]
-        buffers: list[tuple[list, list, list, list]] = [
-            ([], [], [], []) for _ in range(N_PARTITIONS)
+        buffers: list[tuple[list, list, list, list, list]] = [
+            ([], [], [], [], []) for _ in range(N_PARTITIONS)
         ]
         FLUSH_EVERY = 500  # files between flushes → ~10GB peak buffer
 
@@ -506,22 +509,24 @@ class MegatronAnnotatedShuffler(PipelineStep):
         ):
             group = file_groups[fi]
             table = pq.read_table(
-                str(sorted_parquets[fi]), columns=["id", "text"]
+                str(sorted_parquets[fi]), columns=["id", "text", "safety_score"]
             )
             rows = [ri for _, ri in group]
             subtable = table.take(rows)
             ids = subtable.column("id").to_pylist()
             texts = subtable.column("text").to_pylist()
+            scores = subtable.column("safety_score").to_pylist()
             del table, subtable
 
-            for (out_pos, _), did, text in zip(group, ids, texts):
+            for (out_pos, _), did, text, score in zip(group, ids, texts, scores):
                 p = min(out_pos // partition_size, N_PARTITIONS - 1)
                 buf = buffers[p]
                 buf[0].append(out_pos)
                 buf[1].append(did)
                 buf[2].append(text)
                 buf[3].append(int(token_lengths[out_pos]))
-            del ids, texts
+                buf[4].append(int(score))
+            del ids, texts, scores
 
             if (fi_idx + 1) % FLUSH_EVERY == 0 or fi_idx == len(sorted_fis) - 1:
                 for p in range(N_PARTITIONS):
@@ -533,12 +538,13 @@ class MegatronAnnotatedShuffler(PipelineStep):
                                 pa.array(buf[1], type=pa.large_string()),
                                 pa.array(buf[2], type=pa.large_string()),
                                 pa.array(buf[3], type=pa.int32()),
+                                pa.array(buf[4], type=pa.int8()),
                             ],
                             schema=temp_schema,
                         )
                         writers[p].write_batch(batch)
                         del batch
-                    buffers[p] = ([], [], [], [])
+                    buffers[p] = ([], [], [], [], [])
 
         for w in writers:
             w.close()
@@ -549,6 +555,8 @@ class MegatronAnnotatedShuffler(PipelineStep):
             ("doc_id", pa.large_string()),
             ("text", pa.large_string()),
             ("token_length", pa.int32()),
+            ("safety_score", pa.int8()),
+            ("is_bad", pa.bool_()),
             ("reflection", pa.large_string()),
             ("preflection", pa.large_string()),
             ("reflection_position", pa.int32()),
@@ -562,11 +570,18 @@ class MegatronAnnotatedShuffler(PipelineStep):
                 logger.info(
                     f"  Sidecar partition {p}/{N_PARTITIONS}: {n_part:,} rows"
                 )
+                scores_col = part.column("safety_score").combine_chunks()
+                is_bad_col = pa.array(
+                    [s >= self.annotation_threshold for s in scores_col.to_pylist()],
+                    type=pa.bool_(),
+                )
                 batch = pa.RecordBatch.from_arrays(
                     [
                         part.column("doc_id").combine_chunks(),
                         part.column("text").combine_chunks(),
                         part.column("token_length").combine_chunks(),
+                        scores_col,
+                        is_bad_col,
                         pa.array([""] * n_part, type=pa.large_string()),
                         pa.array([""] * n_part, type=pa.large_string()),
                         pa.array([0] * n_part, type=pa.int32()),

@@ -64,10 +64,13 @@ def _setup_test_data(test_dir: Path) -> tuple[Path, Path]:
                     f"Annotated document {part_idx}_{i}: "
                     + "This text will receive a reflection annotation later. " * 5
                 )
+        # Assign varied safety scores: 0,1,2,3,4 across the 5 rows per file
+        ann_scores = [(part_idx * n_ann + i) % 6 for i in range(n_ann)]
         ann_table = pa.table({
             "id": pa.array(ann_ids, type=pa.string()),
             "text": pa.array(ann_texts, type=pa.string()),
             "source": pa.array(["test"] * n_ann, type=pa.string()),
+            "safety_score": pa.array(ann_scores, type=pa.int8()),
         })
         pq.write_table(ann_table, str(annotated_dir / f"part_{part_idx:05d}.parquet"))
 
@@ -205,8 +208,8 @@ def test_pipeline_both():
     # --- sidecar.parquet ---
     sidecar = pq.read_table(str(ann_dir / "sidecar.parquet"))
     assert set(sidecar.column_names) == {
-        "doc_id", "text", "token_length", "reflection", "preflection",
-        "reflection_position",
+        "doc_id", "text", "token_length", "safety_score", "is_bad",
+        "reflection", "preflection", "reflection_position",
     }
     assert len(sidecar) == n_annotated
     sidecar_ids = set(sidecar.column("doc_id").to_pylist())
@@ -217,6 +220,29 @@ def test_pipeline_both():
     assert all(r == "" for r in sidecar.column("reflection").to_pylist())
     assert all(r == "" for r in sidecar.column("preflection").to_pylist())
     assert all(r == 0 for r in sidecar.column("reflection_position").to_pylist())
+
+    # --- safety_score / is_bad ---
+    # Build expected id→score from input annotated parquets
+    expected_scores: dict[str, int] = {}
+    for f in sorted(annotated_dir.glob("part_*.parquet")):
+        t = pq.read_table(f, columns=["id", "safety_score"])
+        for did, score in zip(t.column("id").to_pylist(), t.column("safety_score").to_pylist()):
+            expected_scores[did] = score
+
+    sidecar_doc_ids = sidecar.column("doc_id").to_pylist()
+    sidecar_scores = sidecar.column("safety_score").to_pylist()
+    sidecar_is_bad = sidecar.column("is_bad").to_pylist()
+    for i in range(n_annotated):
+        did = sidecar_doc_ids[i]
+        assert did in expected_scores, f"Sidecar doc_id {did!r} not in input parquets"
+        assert sidecar_scores[i] == expected_scores[did], (
+            f"Window {i} ({did}): sidecar safety_score={sidecar_scores[i]}, "
+            f"expected={expected_scores[did]}"
+        )
+        assert sidecar_is_bad[i] == (expected_scores[did] >= 3), (
+            f"Window {i} ({did}): is_bad={sidecar_is_bad[i]}, "
+            f"expected={expected_scores[did] >= 3}"
+        )
 
     # --- Content match: tokenize sidecar text, compare to window ---
     from pipeline.tokenizer import _get_tokenizer
