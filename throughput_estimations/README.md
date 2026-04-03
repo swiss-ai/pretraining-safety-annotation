@@ -2,7 +2,42 @@
 
 Estimates GPU-hours needed to annotate ~102M samples with reflection/preflection generation and neutral summarization.
 
-## Summary
+## Current State (2026-04-03)
+
+Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
+
+### 4-voice annotation
+
+| Model | Nodes | GPUs (TP×DP) | Concurrency | Samples/sec | Wall time | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
+|-------|-------|--------------|-------------|-------------|-----------|----------------|------------------|-----------------|
+| **gpt-oss-120b** | 1 | 4 (TP1×DP4) | 1024 | 10.55 | ~113 days | 760 | **10,824** | 8.6K - 12.6K |
+| **gpt-oss-120b** | 4 | 16 (TP1×DP4) | 1024 | 28.58 | ~42 days | 762 | **15,981** | 12.6K - 18.6K |
+| **GLM-4.7-Flash** | 1 | 4 (TP1×DP4) | 1024 | 3.95 | ~301 days | 2,782 | **28,884** | 22K - 35K |
+| **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.52 | ~338 days | 3,548 | **32,439** | 10.9K - 46.5K |
+| **Nemotron-3-Super-FP8** | 1 | 4 (TP4×DP1) | 1024 | 2.26 | ~527 days | 1,553 | **50,471** | 34.9K - 58.4K |
+
+### Neutral summary
+
+| Model | GPUs (TP×DP) | Concurrency | Samples/sec | Avg content tok | GPU-hours (102M) | Range (p25-p75) |
+|-------|--------------|-------------|-------------|-----------------|------------------|-----------------|
+| **SmolLM3-3B** | 4 (TP1) | 200 | 34.76 | 108 | **3,285** | 2.5K - 3.8K |
+| **GLM-4.5-Air-FP8** | 4 (TP4) | 200 | 9.94 | 65 | **11,483** | 8.9K - 13.3K |
+| **gpt-oss-120b** | 4 (TP1) | 200 | 9.69 | 89 | **11,785** | 9.0K - 13.6K |
+
+### Key takeaways
+
+- **Fewer nodes = cheaper**: more nodes increase throughput but with diminishing GPU-efficiency. gpt-oss: 1n→4n gives 2.7x throughput at 1.5x GPU cost. GLM-4.5-Air-FP8: 4n→16n gives 2.5x throughput at 1.6x GPU cost. Use more nodes only to meet wall-time deadlines.
+- **DP >> TP for small models**: GLM-4.7-Flash TP1×DP4 is 2.4x cheaper than TP4×DP1 (29K vs 68K GPU-h). Data parallelism is critical for models that fit on 1 GPU.
+- **gpt-oss-120b is the cheapest generator** at ~10.8K GPU-h (1 node). Produces short outputs (~760 tok).
+- **SmolLM3-3B is the cheapest summarizer** at ~3.3K GPU-h. 3x cheaper than next best.
+- **Higher concurrency always helps**: c1024 beats c512 at every configuration.
+- **Nemotron-3-Super at TP4 is 50K GPU-h** — needs TP1×DP4 retest (may not fit on 1 GPU).
+- **GLM-4.5-Air-FP8 does not fit at TP1** — minimum TP2 required. Best single-node config is TP2×DP2.
+- **Sampling params now tracked**: per-model HuggingFace-recommended sampling params added (Apr 3). Qwen3.5 presence_penalty=1.5 reduced output tokens ~15% but sglang still can't separate thinking tokens.
+
+---
+
+## Experiment Timeline
 
 ### Neutral summary (2026-03-30)
 
@@ -19,34 +54,36 @@ Content tokens measured with SmolLM2-1.7B-Instruct tokenizer after stripping mod
 
 SmolLM3 is the clear winner for summarization — 3x cheaper than the next best option. GLM and gpt-oss are comparable despite different overhead profiles (GLM: concise summaries + heavy thinking; gpt-oss: longer summaries + channel analysis). Qwen 3.5-35B-A3B is unusable: sglang doesn't separate its thinking tokens, so ~1,800 tok of reasoning chain lands in the content per request.
 
-### 4-voice format (2026-03-30)
+### 4-voice annotation — all results (updated 2026-04-03)
 
-Generator now produces four annotation voices per sample: `preflection_3p`, `preflection_1p`, `reflection_1p`, `reflection_3p` (previously only `preflection` + `reflection`).
+Generator produces four annotation voices per sample: `preflection_3p`, `preflection_1p`, `reflection_1p`, `reflection_3p`.
 
-| Model | GPUs | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
-|-------|------|-------------|----------------|------------------|-----------------|
-| **gpt-oss-120b** | 4 (TP=1) | 1.58 | 748 | **72,400** | 58K - 85K |
-| **GLM-4.5-Air-FP8** | 4 (TP=4) | 1.27 | 1,710 | **89,900** | 62K - 109K |
+All 10k-sample runs: direct node endpoints, 10 warmup + 10 cooldown, 0 failures. 1k-sample runs: 5 warmup.
 
-### 4-voice scaling experiments — 10k samples (2026-03-30/31)
+| Model | Nodes | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) | Date | Sampling |
+|-------|-------|--------------|-------------|-------------|----------------|------------------|-----------------|------|----------|
+| **gpt-oss-120b** | 1 | 4 (TP1×DP4) | 1024 | 10.55 | 760 | **10,824** | 8.6K - 12.6K | Apr 1 | defaults |
+| **gpt-oss-120b** | 4 | 16 (TP1×DP4) | 1024 | 28.58 | 762 | **15,981** | 12.6K - 18.6K | Apr 1 | defaults |
+| **GLM-4.7-Flash** | 1 | 4 (TP1×DP4) | 1024 | 3.95 | 2,782 | **28,884** | 22K - 35K | Apr 1 | defaults |
+| **GLM-4.5-Air-FP8** | 1 | 4 (TP4×DP1) | 1024 | 3.56 | 1,432 | **32,035** | — | Apr 1 | defaults |
+| **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.52 | 3,548 | **32,439** | 10.9K - 46.5K | Apr 2 | correct |
+| **GLM-4.5-Air-FP8** | 1 | 4 (TP2×DP2) | 1024 | 3.11 | 1,413 | **36,737** | — | Apr 1 | defaults |
+| **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.05 | 4,167 | **37,473** | — | Apr 2 | defaults |
+| **Nemotron-3-Super-FP8** | 1 | 4 (TP4×DP1) | 1024 | 2.26 | 1,553 | **50,471** | 34.9K - 58.4K | Apr 2 | defaults |
+| **GLM-4.5-Air-FP8** | 4 | 16 (TP4×DP1) | 1024 | 8.00 | 1,808 | **57,131** | 40K - 68K | Mar 31 | defaults |
+| **GLM-4.5-Air-FP8** | 4 | 16 (TP4×DP1) | 512 | 6.96 | 1,793 | **65,639** | 46K - 78K | Mar 31 | defaults |
+| **GLM-4.7-Flash** | 1 | 4 (TP4×DP1) | 512 | 1.67 | 2,755 | **68,358** | 53K - 83K | Apr 1 | defaults |
+| **GLM-4.5-Air-FP8** | 8 | 32 (TP4×DP1) | 1024 | 13.33 | 1,826 | **68,522** | 48K - 81K | Mar 31 | defaults |
+| ~~gpt-oss-120b~~ | 4 | 16 (TP1×DP1) | 1024 | 6.23 | 880 | ~~73,326~~ | 62K - 85K | Mar 31 | defaults |
+| **GLM-4.5-Air-FP8** | 8 | 32 (TP4×DP1) | 512 | 10.39 | 1,812 | **87,930** | 60K - 104K | Mar 31 | defaults |
+| **GLM-4.5-Air-FP8** | 1 | 4 (TP4×DP1) | 50 | 1.27 | 1,710 | **89,900** | 62K - 109K | Mar 30 | defaults |
+| **GLM-4.5-Air-FP8** | 16 | 64 (TP4×DP1) | 1024 | 19.63 | 1,814 | **93,075** | 64K - 110K | Mar 31 | defaults |
+| **GLM-4.5-Air-FP8** | 16 | 64 (TP4×DP1) | 512 | 13.59 | 1,812 | **134,480** | 93K - 159K | Mar 31 | defaults |
+| **Qwen3.5-122B-A10B-FP8** | 1 | 4 (TP4×DP1) | 1024 | 0.49 | 1,684 | **234,560** | — | Apr 2 | defaults |
 
-Direct node endpoints (no load balancer), 10,000 samples + 10 warmup + 10 cooldown, 4-voice prompt.
+⚠️ Mar 31 gpt-oss-120b 4-node run was misconfigured with DP=1 — only 1 of 4 replicas served traffic. Superseded by Apr 1 results.
 
-| Model | Nodes | GPUs | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
-|-------|-------|------|-------------|-------------|----------------|------------------|-----------------|
-| **GLM-4.5-Air-FP8** | 4 | 16 | 512 | 6.96 | 1,793 | **65,639** | 46K - 78K |
-| **GLM-4.5-Air-FP8** | 4 | 16 | 1024 | 8.00 | 1,808 | **57,131** | 40K - 68K |
-| **GLM-4.5-Air-FP8** | 8 | 32 | 512 | 10.39 | 1,812 | **87,930** | 60K - 104K |
-| **GLM-4.5-Air-FP8** | 8 | 32 | 1024 | 13.33 | 1,826 | **68,522** | 48K - 81K |
-| **GLM-4.5-Air-FP8** | 16 | 64 | 512 | 13.59 | 1,812 | **134,480** | 93K - 159K |
-| **GLM-4.5-Air-FP8** | 16 | 64 | 1024 | 19.63 | 1,814 | **93,075** | 64K - 110K |
-| **gpt-oss-120b** | 4 | 16 | 1024 | 6.23 | 880 | **73,326** | 62K - 85K |
-
-Key findings:
-- **Higher concurrency always helps**: c1024 beats c512 at every node count (e.g. 8n: 87.9K → 68.5K GPU-h)
-- **4n/c1024 is the most GPU-efficient** for GLM FP8 at ~57K GPU-h
-- **Diminishing returns from more nodes**: 16n/c512 gives same throughput as 8n/c1024 (~13.5 sps) at 2x GPU cost — the bottleneck is request concurrency, not GPU count
-- **gpt-oss-120b produces shorter outputs** (880 vs ~1,800 tok) but is slower per GPU, ending up at ~73K GPU-h
+⚠️ Runs before Apr 3 used server-default sampling params (typically t=1.0, top_p=1.0) instead of HuggingFace-recommended values. "correct" = per-model recommended params applied. "defaults" = server defaults. See [Sampling Parameters](#sampling-parameters) section.
 
 ### 2-voice format (2026-03-26)
 
@@ -235,6 +272,168 @@ Output tokens increased 1.27x vs 2-voice (1,348 → 1,710). Throughput dropped f
 | Wall time | ~937 days |
 | GPU-hours | ~89,904 |
 | Range (p25-p75) | 61,858 - 108,880 |
+
+---
+
+### 4-voice — New Results (2026-04-01)
+
+All runs: 10,000 samples + 10 warmup + 10 cooldown, direct node endpoints, 0 failures.
+
+#### gpt-oss-120b — 1 node / 4 GPUs (TP1×DP4) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 950s (~16 min) |
+| Samples/sec | 10.55 |
+| Input tok/sec | 72,822 |
+| Output tok/sec | 8,020 |
+| Mean input / output tokens | 6,903 / 760 |
+| GPU-hours (102M) | **~10,824** (8.6K - 12.6K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=1, DP=4. Massive improvement over March 30 (1.58 sps → 10.55 sps) — DP4 gives 4 independent replicas.
+
+Result: `generator_gpt-oss-120b-lrSw_20260401_174738.json`
+
+#### gpt-oss-120b — 4 nodes / 16 GPUs (TP1×DP4) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 351s (~6 min) |
+| Samples/sec | 28.58 |
+| Input tok/sec | 197,297 |
+| Output tok/sec | 21,773 |
+| Mean input / output tokens | 6,903 / 762 |
+| GPU-hours (102M) | **~15,981** (12.6K - 18.6K) |
+
+Data-parallel scaling with TP=1, DP=4. 2.7x throughput vs 1-node but 1.5x GPU cost — 1-node is more GPU-efficient.
+
+Result: `generator_gpt-oss-120b-TMOD_20260401_174652.json`
+
+#### GLM-4.7-Flash — 1 node / 4 GPUs (TP1×DP4) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 2,535s (~42 min) |
+| Samples/sec | 3.95 |
+| Input tok/sec | 27,033 |
+| Output tok/sec | 11,000 |
+| Mean input / output tokens | 6,838 / 2,782 |
+| GPU-hours (102M) | **~28,884** (22K - 35K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=1, DP=4. New model. Produces ~2,780 output tokens (1.5x more than GLM-4.5-Air-FP8's ~1,800) but high throughput per GPU.
+
+Result: `generator_GLM-4.7-Flash-HgJu_20260401_174118.json`
+
+#### GLM-4.7-Flash — 1 node / 4 GPUs (TP4×DP1) / c512
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 5,998s (~100 min) |
+| Samples/sec | 1.67 |
+| Input tok/sec | 11,423 |
+| Output tok/sec | 4,602 |
+| Mean input / output tokens | 6,838 / 2,755 |
+| GPU-hours (102M) | **~68,358** (53K - 83K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=4, DP=1. Same model but TP4 instead of DP4 — 2.4x slower, showing DP is far more efficient for models that fit on 1 GPU.
+
+Result: `generator_GLM-4.7-Flash-TuHj_20260401_170838.json`
+
+---
+
+### 4-voice — New Results (2026-04-02)
+
+All runs: 10,000 samples + 10 warmup + 10 cooldown, direct node endpoints, 0 failures.
+
+#### Nemotron-3-Super-120B-A12B-FP8 — 1 node / 4 GPUs (TP4×DP1) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 4,429s (~74 min) |
+| Samples/sec | 2.26 |
+| Input tok/sec | 15,944 |
+| Output tok/sec | 3,510 |
+| Mean input / output tokens | 7,055 / 1,553 |
+| GPU-hours (102M) | **~50,471** (34.9K - 58.4K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=4, EP=4. No sampling params override (ran before sampling defaults were added). Moderate output length (~1,553 tok), but stuck at TP4×DP1 — needs TP1×DP4 retest to see if model fits on 1 GPU. If it does, should drop to ~12-15K GPU-h range like gpt-oss.
+
+Result: `generator_NVIDIA-Nemotron-3-Su_20260402_203136.json`
+
+#### Qwen3.5-35B-A3B-FP8 — 1 node / 4 GPUs (TP1×DP4) / c1024 (correct sampling)
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 2,847s (~47 min) |
+| Samples/sec | 3.52 |
+| Input tok/sec | 24,806 |
+| Output tok/sec | 12,489 |
+| Mean input / output tokens | 7,047 / 3,548 |
+| GPU-hours (102M) | **~32,439** (10.9K - 46.5K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=1, DP=4. First run with correct HF-recommended sampling params: `temperature=1.0, top_p=0.95, top_k=20, presence_penalty=1.5`. Output tokens dropped ~15% vs defaults (4,167 → 3,548) thanks to presence_penalty, but still very long — sglang still can't separate Qwen3.5 thinking tokens. Huge variance (p25 estimate 10.9K vs p75 46.5K) reflects bimodal output length distribution.
+
+Result: `generator_Qwen3.5-35B-A3B-FP8-_20260402_204858.json`
+
+#### Qwen3.5-35B-A3B-FP8 — 1 node / 4 GPUs (TP1×DP4) / c1024 (default sampling)
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 3,282s (~55 min) |
+| Samples/sec | 3.05 |
+| Input tok/sec | 21,493 |
+| Output tok/sec | 12,709 |
+| Mean input / output tokens | 7,047 / 4,167 |
+| GPU-hours (102M) | **~37,473** |
+
+**Setup**: Same as above but with server-default sampling (no presence_penalty). ~15% more output tokens than the correct-params run.
+
+Result: `generator_Qwen3.5-35B-A3B-FP8-_20260402_092302.json`
+
+#### Qwen3.5-122B-A10B-FP8 — 1 node / 4 GPUs (TP4×DP1) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 20,541s (~342 min) |
+| Samples/sec | 0.49 |
+| Input tok/sec | 3,451 |
+| Output tok/sec | 824 |
+| Mean input / output tokens | 7,047 / 1,684 |
+| GPU-hours (102M) | **~234,560** |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=4, DP=1. Very slow — needs TP4 so no data parallelism. Not competitive.
+
+Result: `generator_Qwen3.5-122B-A10B-FP_20260402_141300.json`
+
+#### GLM-4.5-Air-FP8 — 1 node / 4 GPUs (TP4×DP1) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 2,805s (~47 min) |
+| Samples/sec | 3.56 |
+| Input tok/sec | 24,347 |
+| Output tok/sec | 5,098 |
+| Mean input / output tokens | 6,839 / 1,432 |
+| GPU-hours (102M) | **~32,035** |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=4, DP=1, c1024. Big improvement over the Mar 30 c50 run (1.27 → 3.56 sps) but still 3x pricier than gpt-oss. GLM-4.5-Air does not fit at TP1 — minimum TP2 required.
+
+Result: `generator_pZcWDUxqEQ_20260401_191247.json`
+
+#### GLM-4.5-Air-FP8 — 1 node / 4 GPUs (TP2×DP2) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 3,217s (~54 min) |
+| Samples/sec | 3.11 |
+| Input tok/sec | 21,270 |
+| Output tok/sec | 4,394 |
+| Mean input / output tokens | 6,839 / 1,413 |
+| GPU-hours (102M) | **~36,737** |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=2, DP=2, c1024. Worse than TP4×DP1 (3.11 vs 3.56 sps) — TP2 leaves each replica with less memory bandwidth, and DP2 only gives 2 replicas. TP4 single-replica is more efficient for this model.
+
+Result: `generator_pZcWDUxqEQ_20260401_185341.json`
 
 ---
 
@@ -511,14 +710,37 @@ Note: reasoning_tokens=0 in both runs — sglang includes thinking tokens in out
 - **Higher concurrency helps**: SmolLM3 went 20.5→34.8 sps (1.7x) and GLM 5.8→9.9 sps (1.7x) when going from max_concurrent=50 to 200
 
 ### Annotation (4-voice)
-- **Output token count is the dominant cost driver**: gpt-oss averages 748 tokens/sample, GLM FP8 averages 1,710 — a 2.3x difference
-- **4-voice increases output tokens ~1.3–1.5x vs 2-voice**: gpt-oss went 501→748 (1.49x), GLM FP8 went 1,348→1,710 (1.27x). Less than 2x because analysis and reasoning are shared across all four voices
-- **gpt-oss is the cheapest option for 4-voice** at ~72K GPU-h, slightly beating GLM FP8 (~90K GPU-h)
+- **gpt-oss-120b is the cheapest generator** at 10.8K GPU-h on 1 node (TP1×DP4)
+- **GLM-4.7-Flash is the second-best** at 29K GPU-h on 1 node (TP1×DP4), despite producing ~2,780 output tokens per sample
+- **Output token count is the dominant cost driver**: gpt-oss averages 760 tokens/sample, GLM-4.7-Flash averages 2,782, GLM-4.5-Air-FP8 averages 1,710
+- **4-voice increases output tokens ~1.3–1.5x vs 2-voice**: gpt-oss went 501→760 (1.52x), GLM FP8 went 1,348→1,710 (1.27x). Less than 2x because analysis and reasoning are shared across all four voices
+
+### Scaling
+- **Fewer nodes = cheaper GPU-hours**: gpt-oss 1n→4n gives 2.7x throughput at 1.5x GPU cost (10.8K→16K GPU-h). GLM-4.5-Air-FP8 4n→16n gives 2.5x throughput at 1.6x GPU cost (57K→93K GPU-h). Use more nodes only to meet wall-time deadlines.
+- **DP >> TP for small models**: GLM-4.7-Flash TP1×DP4 is 2.4x cheaper than TP4×DP1 (29K vs 68K GPU-h). Data parallelism is critical for models that fit on 1 GPU.
+- **Higher concurrency always helps**: c1024 beats c512 at every configuration tested
+- **Diminishing returns from more nodes**: the bottleneck is request concurrency, not GPU count
 
 ### General
-- **GPU efficiency varies wildly**: gpt-oss on 1 GPU produces higher throughput than Kimi on 16 GPUs
+- **GPU efficiency varies wildly**: gpt-oss on 4 GPUs produces higher throughput than Kimi on 16 GPUs
 - **Prefix caching works across all models**: system prompt (~4-5K tokens) is cached after first request
 - **GLM FP8 gibberish was an image bug**: fixed by updating the sglang container image, not an FP8 quantization issue
+
+## Sampling Parameters
+
+Added 2026-04-03. Per-model recommended sampling parameters are now auto-resolved from the model name (see `pipeline/api.py:resolve_sampling_params`). CLI flags `--temperature`, `--top-p`, `--top-k`, `--presence-penalty` override the defaults.
+
+| Model family | temperature | top_p | top_k | presence_penalty | Source |
+|--------------|-------------|-------|-------|------------------|--------|
+| **Qwen3.5** | 1.0 | 0.95 | 20 | 1.5 | [HF model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B-FP8) (thinking mode, general tasks) |
+| **Qwen3** | 0.6 | 0.95 | 20 | — | [HF model card](https://huggingface.co/Qwen/Qwen3-235B-A22B) (thinking mode) |
+| **SmolLM3** | 0.6 | 0.95 | — | — | [HF model card](https://huggingface.co/HuggingFaceTB/SmolLM3-3B) |
+| **Kimi** | 0.6 | — | — | — | [HF model card](https://huggingface.co/moonshotai/Kimi-K2-Instruct) |
+| **GLM-4** | 1.0 | 0.95 | — | — | [HF model card](https://huggingface.co/zai-org/GLM-4.7-Flash) |
+| **Nemotron** | 1.0 | 0.95 | — | — | [HF model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8) |
+| **gpt-oss** | — | — | — | — | No recommendation on HF — server defaults used |
+
+All runs before Apr 3 used server defaults (typically `temperature=1.0, top_p=1.0`). The main impact is on Qwen3.5 (missing `presence_penalty=1.5` inflated output length) and SmolLM3/Kimi (temperature 1.0 vs recommended 0.6 — affects quality, not throughput ranking).
 
 ## Notes
 

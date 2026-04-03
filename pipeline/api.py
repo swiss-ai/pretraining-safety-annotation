@@ -20,6 +20,37 @@ from pipeline.log import logger
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
 
+# Per-model recommended sampling parameters from HuggingFace model cards.
+# Matched case-insensitively against the model name. First match wins.
+_SAMPLING_DEFAULTS: list[tuple[str, dict[str, float | int]]] = [
+    # Qwen3.5 thinking: t=1.0, top_p=0.95, top_k=20, presence_penalty=1.5
+    ("qwen3.5", {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5}),
+    # Qwen3 thinking: t=0.6, top_p=0.95, top_k=20
+    ("qwen3", {"temperature": 0.6, "top_p": 0.95, "top_k": 20}),
+    # SmolLM3: t=0.6, top_p=0.95
+    ("smollm3", {"temperature": 0.6, "top_p": 0.95}),
+    # Kimi: t=0.6
+    ("kimi", {"temperature": 0.6}),
+    # GLM-4 family (4.5-Air, 4.7-Flash, etc.): t=1.0, top_p=0.95
+    ("glm-4", {"temperature": 1.0, "top_p": 0.95}),
+    # Nemotron: t=1.0, top_p=0.95
+    ("nemotron", {"temperature": 1.0, "top_p": 0.95}),
+]
+
+
+def resolve_sampling_params(*names: str) -> dict[str, float | int]:
+    """Look up recommended sampling params for a model.
+
+    Matches *names* (model name, alias, etc.) case-insensitively against
+    known model families.  Returns the first match, or ``{}`` if none.
+    """
+    for name in names:
+        lower = name.lower()
+        for pattern, params in _SAMPLING_DEFAULTS:
+            if pattern in lower:
+                return dict(params)
+    return {}
+
 
 def make_api_client(
     endpoint: str,
@@ -63,6 +94,7 @@ async def api_call(
     semaphore: asyncio.Semaphore,
     thinking: bool = False,
     json_mode: bool = False,
+    sampling_params: dict[str, float | int] | None = None,
 ) -> tuple[str, str | None, dict]:
     """Make a single API call with network-error retry.
 
@@ -81,6 +113,17 @@ async def api_call(
     if json_mode:
         response_format = {"type": "json_object"}
 
+    # Sampling params: temperature, top_p, presence_penalty are native OpenAI
+    # API kwargs; top_k goes into extra_body (sglang/vllm extension).
+    sp = sampling_params or {}
+    api_kwargs: dict = {}
+    for k in ("temperature", "top_p", "presence_penalty"):
+        if k in sp:
+            api_kwargs[k] = sp[k]
+    if "top_k" in sp:
+        extra_body = extra_body or {}
+        extra_body["top_k"] = sp["top_k"]
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -89,6 +132,7 @@ async def api_call(
                     model=model,
                     messages=messages,
                     extra_body=extra_body,
+                    **api_kwargs,
                     **({"response_format": response_format} if response_format else {}),
                 )
             msg = response.choices[0].message
