@@ -58,6 +58,22 @@ CANARY_RATE = 0.10
 
 CANARIES_PATH = PROJECT_ROOT / "resources" / "canaries.yaml"
 
+# Task instructions appended to the user message to select generation mode.
+# Placed at the end of the user content so the system prompt prefix and
+# before-RP text prefix are shared between calls (maximises KV cache reuse).
+_REFLECTION_TASK = (
+    "\n\n## Task\n\n"
+    "Reflection mode. The text above is a partial passage — "
+    "your reflections should respond only to what you see here. "
+    "Produce: analysis, reflection_1p, reflection_3p."
+)
+
+_PREFLECTION_TASK = (
+    "\n\n## Task\n\n"
+    "Preflection mode. The text above is the full passage. "
+    "Produce: analysis, preflection_3p, preflection_1p."
+)
+
 
 def _load_canaries() -> list[dict]:
     """Load canary quirks from resources/canaries.yaml."""
@@ -90,12 +106,18 @@ _GEN_TEXT_FIELDS = (
 )
 
 
-def _parse_generation(raw: str) -> dict:
+def _parse_generation(
+    raw: str,
+    required_fields: set[str] | None = None,
+) -> dict:
     """Parse generator JSON output into structured fields.
 
     Extracts JSON from response, handling prose before/after JSON and code fences.
     Normalizes common field name variants to the canonical four-voice schema:
       preflection_3p, preflection_1p, reflection_1p, reflection_3p.
+
+    *required_fields* overrides the default set of mandatory keys. Pass a
+    subset when parsing a single-mode response (e.g. reflection-only).
     """
     parsed = extract_json(raw)
     # Apply aliases iteratively until stable (some aliases chain)
@@ -106,21 +128,22 @@ def _parse_generation(raw: str) -> dict:
             if variant in parsed and canonical not in parsed:
                 parsed[canonical] = parsed.pop(variant)
                 changed = True
-    required = {
-        "analysis",
-        "preflection_3p",
-        "preflection_1p",
-        "reflection_1p",
-        "reflection_3p",
-    }
-    missing = required - set(parsed.keys())
+    if required_fields is None:
+        required_fields = {
+            "analysis",
+            "preflection_3p",
+            "preflection_1p",
+            "reflection_1p",
+            "reflection_3p",
+        }
+    missing = required_fields - set(parsed.keys())
     assert not missing, (
         f"Missing fields in generation: {missing}. "
         f"Got keys: {list(parsed.keys())}. Raw preview: {raw[:200]}"
     )
     # Some models return string fields as lists — coerce to str
     for field in _GEN_TEXT_FIELDS:
-        if isinstance(parsed[field], list):
+        if field in parsed and isinstance(parsed[field], list):
             parsed[field] = "\n".join(str(x) for x in parsed[field])
     return parsed
 
@@ -293,49 +316,91 @@ def generate_batch(
         rp = item["reflection_point"]
         context_before = item["text"][:rp]
         context_after = item["text"][rp:]
-        user_content = (
-            f"## Full Text\n\n"
-            f"{context_before}"
-            f"\n\n--- REFLECTION POINT (character {rp}) ---\n\n"
-            f"{context_after}"
-        )
 
-        # Canary injection: 10% chance, one random canary per sample
+        # ---- Call 1: Reflection (text up to RP only) ----
+        refl_user = f"## Full Text\n\n{context_before}"
+
+        # Canary injection: 10% chance, reflections only
         canary_id = None
         if random.random() < CANARY_RATE:
             canary = random.choice(canaries)
             canary_id = canary["id"]
-            user_content += (
+            refl_user += (
                 f"\n\n## Canary Injection\n\n"
-                f"This sample has a canary injection. Apply to BOTH reflections, NOT to the preflection.\n"
+                f"This sample has a canary injection. Apply to BOTH reflections.\n"
                 f"- For reflection_1p: {canary['instruction']}\n"
                 f"- For reflection_3p: {canary['instruction_3p']}"
             )
 
-        messages = [
+        refl_user += _REFLECTION_TASK
+
+        refl_messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": refl_user},
         ]
+
         try:
             t0 = time.monotonic()
-            raw, reasoning, usage = await api_call(
+            refl_raw, refl_reasoning, refl_usage = await api_call(
                 client,
                 model,
-                messages,
+                refl_messages,
                 semaphore,
                 thinking=thinking,
                 json_mode=json_mode,
             )
-            latency_ms = int((time.monotonic() - t0) * 1000)
-
-            parsed = _parse_generation(raw)
+            refl_parsed = _parse_generation(
+                refl_raw,
+                required_fields={"analysis", "reflection_1p", "reflection_3p"},
+            )
         except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
             logger.warning(
-                "Skipping item {} — generation failed: {}", item["item_id"], e
+                "Skipping item {} — reflection generation failed: {}",
+                item["item_id"],
+                e,
             )
             return None
 
-        charter_elements = extract_charter_elements(parsed["reflection_1p"])
+        # ---- Call 2: Preflection (full text) ----
+        prefl_user = f"## Full Text\n\n{context_before}{context_after}"
+        prefl_user += _PREFLECTION_TASK
+
+        prefl_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prefl_user},
+        ]
+
+        try:
+            prefl_raw, prefl_reasoning, prefl_usage = await api_call(
+                client,
+                model,
+                prefl_messages,
+                semaphore,
+                thinking=thinking,
+                json_mode=json_mode,
+            )
+            prefl_parsed = _parse_generation(
+                prefl_raw,
+                required_fields={"analysis", "preflection_3p", "preflection_1p"},
+            )
+        except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
+            logger.warning(
+                "Skipping item {} — preflection generation failed: {}",
+                item["item_id"],
+                e,
+            )
+            return None
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        combined_analysis = (
+            f"REFLECTION ANALYSIS:\n{refl_parsed['analysis']}\n\n"
+            f"PREFLECTION ANALYSIS:\n{prefl_parsed['analysis']}"
+        )
+
+        charter_elements = extract_charter_elements(
+            refl_parsed.get("reflection_1p") or refl_parsed.get("reflection", "")
+        )
         record = {
             "item_id": item["item_id"],
             "iteration": iteration,
@@ -345,24 +410,36 @@ def generate_batch(
             "reflection_point": item["reflection_point"],
             "gen_prompt": prompt_filename,
             "model": model,
-            "analysis": parsed["analysis"],
-            # Legacy single-voice columns (kept for backward compat with old dashboard/tools)
-            "preflection": parsed["preflection_3p"],
-            "reflection": parsed["reflection_1p"],
-            # Explicit per-voice columns (new)
-            "preflection_1p": parsed["preflection_1p"],
-            "reflection_3p": parsed["reflection_3p"],
+            "analysis": combined_analysis,
+            # Legacy single-voice columns (kept for backward compat)
+            "preflection": (
+                prefl_parsed.get("preflection_3p")
+                or prefl_parsed.get("preflection", "")
+            ),
+            "reflection": (
+                refl_parsed.get("reflection_1p")
+                or refl_parsed.get("reflection", "")
+            ),
+            # Explicit per-voice columns
+            "preflection_1p": prefl_parsed.get("preflection_1p"),
+            "reflection_3p": refl_parsed.get("reflection_3p"),
             "charter_elements": charter_elements,
-            "raw_response": raw,
-            "reasoning": reasoning,
+            "raw_response": json.dumps(
+                {"reflection": refl_raw, "preflection": prefl_raw}
+            ),
+            "reasoning": refl_reasoning,
             "latency_ms": latency_ms,
             "timestamp": __import__("datetime")
             .datetime.now(__import__("datetime").timezone.utc)
             .isoformat(),
             "judgment": None,
-            "input_tokens": usage["input_tokens"],
-            "output_tokens": usage["output_tokens"],
-            "reasoning_tokens": usage["reasoning_tokens"],
+            "input_tokens": refl_usage["input_tokens"] + prefl_usage["input_tokens"],
+            "output_tokens": (
+                refl_usage["output_tokens"] + prefl_usage["output_tokens"]
+            ),
+            "reasoning_tokens": (
+                refl_usage["reasoning_tokens"] + prefl_usage["reasoning_tokens"]
+            ),
             "safety_score": item.get("safety_score"),
             "canary": canary_id,
         }
