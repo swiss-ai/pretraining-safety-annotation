@@ -216,6 +216,7 @@ def run_split(args: argparse.Namespace) -> None:
                     window_size=args.seq_length + 1,
                     save_filename="annotated",
                     seed=args.seed,
+                    annotation_threshold=args.annotation_threshold,
                 ),
             ],
             tasks=1,
@@ -287,6 +288,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=42,
         help="RNG seed for annotated shuffle (default: 42)",
+    )
+    p.add_argument(
+        "--annotation-threshold",
+        type=int,
+        default=3,
+        help="safety_score >= this is flagged is_bad in sidecar (default: 3)",
     )
     p.add_argument(
         "--pipeline",

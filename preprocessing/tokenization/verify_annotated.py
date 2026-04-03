@@ -90,8 +90,14 @@ def main():
     print("\nReading sidecar metadata ...")
     pf = pq.ParquetFile(str(sidecar_path))
     assert pf.metadata.num_rows == n, f"sidecar rows {pf.metadata.num_rows:,} != {n:,}"
-    expected_cols = {"doc_id", "text", "token_length", "reflection", "preflection", "reflection_position"}
-    assert set(pf.schema_arrow.names) == expected_cols
+    expected_cols = {
+        "doc_id", "text", "token_length", "safety_score", "is_bad",
+        "reflection", "preflection", "reflection_position",
+    }
+    actual_cols = set(pf.schema_arrow.names)
+    assert actual_cols == expected_cols, (
+        f"Column mismatch: extra={actual_cols - expected_cols}, missing={expected_cols - actual_cols}"
+    )
     n_rg = pf.metadata.num_row_groups
     print(f"  rows: {pf.metadata.num_rows:,}, row_groups: {n_rg}")
     print("  OK")

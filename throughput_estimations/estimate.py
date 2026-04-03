@@ -38,7 +38,7 @@ from pipeline.config import (
     resolve_judge_model,
     resolve_prompt_path,
 )
-from pipeline.api import MAX_RETRIES, RETRY_BACKOFF_BASE
+from pipeline.api import MAX_RETRIES, RETRY_BACKOFF_BASE, resolve_sampling_params
 from pipeline.phase2.run import _parse_generation, _parse_judgment
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 
@@ -51,6 +51,8 @@ async def _api_call(
     messages: list[dict[str, str]],
     semaphore: asyncio.Semaphore,
     thinking: bool = False,
+    max_tokens: int | None = None,
+    sampling_params: dict[str, float | int] | None = None,
 ) -> tuple[str, str | None, dict]:
     """API call with retry. Tolerates content=None when reasoning is present."""
     extra_body = None
@@ -59,6 +61,18 @@ async def _api_call(
             "separate_reasoning": True,
             "chat_template_kwargs": {"enable_thinking": True},
         }
+
+    # Sampling params: temperature, top_p, presence_penalty are native OpenAI
+    # API kwargs; top_k goes into extra_body (sglang/vllm extension).
+    sp = sampling_params or {}
+    api_kwargs: dict = {}
+    for k in ("temperature", "top_p", "presence_penalty"):
+        if k in sp:
+            api_kwargs[k] = sp[k]
+    if "top_k" in sp:
+        extra_body = extra_body or {}
+        extra_body["top_k"] = sp["top_k"]
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -66,7 +80,9 @@ async def _api_call(
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
+                    max_tokens=max_tokens,
                     extra_body=extra_body,
+                    **api_kwargs,
                 )
             msg = response.choices[0].message
             content = msg.content or ""
@@ -190,6 +206,8 @@ def run_generator_estimation(
     warmup: int,
     cooldown: int = 0,
     thinking: bool = False,
+    max_tokens: int | None = None,
+    sampling_params: dict[str, float | int] | None = None,
 ) -> list[dict]:
     """Run generator API calls on *items*, returning per-request metrics.
 
@@ -216,7 +234,8 @@ def run_generator_estimation(
         t0 = time.monotonic()
         try:
             raw, reasoning, usage = await _api_call(
-                client, model, messages, semaphore, thinking=thinking
+                client, model, messages, semaphore, thinking=thinking,
+                max_tokens=max_tokens, sampling_params=sampling_params,
             )
             latency_ms = int((time.monotonic() - t0) * 1000)
             try:
@@ -296,6 +315,8 @@ def run_judge_estimation(
     warmup: int,
     cooldown: int = 0,
     thinking: bool = False,
+    max_tokens: int | None = None,
+    sampling_params: dict[str, float | int] | None = None,
 ) -> list[dict]:
     """Run judge API calls on all 4 annotation voices per generation."""
     n_total = len(generations)
@@ -363,6 +384,8 @@ def run_judge_estimation(
                     ],
                     semaphore,
                     thinking=thinking,
+                    max_tokens=max_tokens,
+                    sampling_params=sampling_params,
                 )
                 _parse_judgment(raw)
 
@@ -421,6 +444,8 @@ def compute_stats(
     n_nodes: int,
     gpus_per_node: int,
     max_concurrent: int,
+    tp_size: int = 1,
+    dp_size: int = 1,
 ) -> dict:
     """Compute summary statistics and extrapolation from measured results.
 
@@ -471,6 +496,8 @@ def compute_stats(
         "n_cooldown": cooldown_count,
         "max_concurrent": max_concurrent,
         "n_gpus": n_gpus,
+        "tp_size": tp_size,
+        "dp_size": dp_size,
         "wall_time_s": wall_time_s,
         "input_tokens": {
             "mean": float(np.mean(input_toks)),
@@ -525,7 +552,7 @@ def print_summary(stats: dict, model_name: str, model_alias: str, role: str) -> 
         f"\nSamples: {stats['n_measured']} / {n_total} successful "
         f"({stats['n_failed']} failed, {stats['n_warmup']} warmup + {stats.get('n_cooldown', 0)} cooldown excluded)"
     )
-    print(f"Model: {model_name} on {stats['n_gpus']} GPUs")
+    print(f"Model: {model_name} on {stats['n_gpus']} GPUs (TP={stats['tp_size']}, DP={stats['dp_size']})")
     print(f"Wall time: {stats['wall_time_s']:.1f}s")
 
     print(f"\nPer-request token stats:")
@@ -585,6 +612,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--total-samples", type=int, default=102_772_028)
     p.add_argument("--n-nodes", type=int, default=4)
     p.add_argument("--gpus-per-node", type=int, default=4)
+    p.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size.")
+    p.add_argument("--dp-size", type=int, default=1, help="Data parallel size.")
     p.add_argument("--warmup", type=int, default=10)
     p.add_argument("--cooldown", type=int, default=10)
     p.add_argument(
@@ -607,6 +636,7 @@ def parse_args() -> argparse.Namespace:
         "--api-key",
         help='API key override. Use "none" for local endpoints without auth.',
     )
+    p.add_argument("--max-tokens", type=int, default=6144, help="Max output tokens per request.")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
         "--thinking",
@@ -614,6 +644,10 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Enable thinking mode (auto-detected from config if --model-alias is set).",
     )
+    p.add_argument("--temperature", type=float, default=None, help="Override sampling temperature.")
+    p.add_argument("--top-p", type=float, default=None, help="Override top-p (nucleus sampling).")
+    p.add_argument("--top-k", type=int, default=None, help="Override top-k sampling.")
+    p.add_argument("--presence-penalty", type=float, default=None, help="Override presence penalty.")
     return p.parse_args()
 
 
@@ -633,6 +667,19 @@ def main() -> None:
         thinking = args.thinking if args.thinking is not None else model_cfg.thinking
     else:
         raise SystemExit("Either --model-alias or --api-name is required.")
+
+    # Resolve per-model sampling params, then apply CLI overrides
+    sampling_params = resolve_sampling_params(model_name, model_alias)
+    if args.temperature is not None:
+        sampling_params["temperature"] = args.temperature
+    if args.top_p is not None:
+        sampling_params["top_p"] = args.top_p
+    if args.top_k is not None:
+        sampling_params["top_k"] = args.top_k
+    if args.presence_penalty is not None:
+        sampling_params["presence_penalty"] = args.presence_penalty
+    if sampling_params:
+        print(f"Sampling params: {sampling_params}")
 
     # Build client
     client, semaphore = make_client(
@@ -736,6 +783,8 @@ def main() -> None:
             args.warmup,
             cooldown=args.cooldown,
             thinking=thinking,
+            max_tokens=args.max_tokens,
+            sampling_params=sampling_params,
         )
 
         stats = compute_stats(
@@ -745,6 +794,8 @@ def main() -> None:
             args.n_nodes,
             args.gpus_per_node,
             args.max_concurrent,
+            tp_size=args.tp_size,
+            dp_size=args.dp_size,
         )
         print_summary(stats, model_name, model_alias, "generator")
 
@@ -764,8 +815,11 @@ def main() -> None:
                 "max_concurrent": args.max_concurrent,
                 "n_nodes": args.n_nodes,
                 "gpus_per_node": args.gpus_per_node,
+                "tp_size": args.tp_size,
+                "dp_size": args.dp_size,
                 "seed": args.seed,
                 "endpoint": args.endpoint or cfg.phase2.endpoint,
+                "sampling_params": sampling_params or None,
                 "timestamp": ts,
             },
             "stats": stats,
@@ -790,6 +844,8 @@ def main() -> None:
             args.warmup,
             cooldown=args.cooldown,
             thinking=thinking,
+            max_tokens=args.max_tokens,
+            sampling_params=sampling_params,
         )
 
         stats = compute_stats(
@@ -799,6 +855,8 @@ def main() -> None:
             args.n_nodes,
             args.gpus_per_node,
             args.max_concurrent,
+            tp_size=args.tp_size,
+            dp_size=args.dp_size,
         )
         print_summary(stats, model_name, model_alias, "judge")
 
@@ -818,7 +876,10 @@ def main() -> None:
                 "max_concurrent": args.max_concurrent,
                 "n_nodes": args.n_nodes,
                 "gpus_per_node": args.gpus_per_node,
+                "tp_size": args.tp_size,
+                "dp_size": args.dp_size,
                 "endpoint": args.endpoint or cfg.phase2.endpoint,
+                "sampling_params": sampling_params or None,
                 "timestamp": ts,
                 "generations_source": str(gen_path),
             },

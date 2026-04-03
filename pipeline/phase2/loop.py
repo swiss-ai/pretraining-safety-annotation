@@ -266,21 +266,35 @@ When you run a batch, it creates one iteration per {other_type} model, all shari
 Use `cross_summary <group_id>` to see aggregated per-model stats after each batch.
 
 ## How the pipeline sends messages to generators
-The user message sent to generator models is structured as:
+Generation uses two sequential API calls per item with the SAME system prompt.
+The system prompt is the generator prompt with {{charter}} and {{writing_guidelines}} substituted.
+
+**Call 1 — Reflection mode** (partial text only):
 ```
 ## Full Text
-<text before reflection point>
+<text up to reflection point>
 
---- REFLECTION POINT (character N) ---
-
-<text after reflection point>
+## Task
+Reflection mode. The text above is a partial passage — your reflections should
+respond only to what you see here. Produce: analysis, reflection_1p, reflection_3p.
 ```
-The system prompt is the generator prompt with {{charter}} and {{writing_guidelines}} substituted.
-The full text (including after the reflection point) is visible to the model. The generator prompt
-instructs models to split their analysis into "BEFORE REFLECTION POINT" and "AFTER REFLECTION
-POINT" sections, with reflections drawing only from the before-analysis. This structured
-separation is the primary mechanism to prevent future context leakage — the model sees all text
-but must discipline itself via the analysis split.
+Expected output: `analysis`, `reflection_1p`, `reflection_3p`
+
+**Call 2 — Preflection mode** (full text):
+```
+## Full Text
+<full text>
+
+## Task
+Preflection mode. The text above is the full passage.
+Produce: analysis, preflection_3p, preflection_1p.
+```
+Expected output: `analysis`, `preflection_3p`, `preflection_1p`
+
+The reflection call prevents foreshadowing — the model never sees text beyond the
+reflection point. The **mode paragraph** near the top of the generator prompt MUST be
+preserved. Do not write instructions that assume the model sees the full text in
+reflection mode, and do not merge the two calls back into one.
 There is no `response_format=json_object` for most models, so JSON compliance depends on
 prompt instructions.
 

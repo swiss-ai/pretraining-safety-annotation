@@ -30,7 +30,7 @@ import numpy as np
 import openai
 from tqdm.asyncio import tqdm_asyncio
 
-from pipeline.api import api_call
+from pipeline.api import api_call, resolve_sampling_params
 from pipeline.tokenizer import truncate_to_max_tokens
 
 MAX_TOKENS = 1920  # text budget: 2048 seq - 128 summary budget
@@ -90,6 +90,7 @@ def run_summary_estimation(
     semaphore: asyncio.Semaphore,
     warmup: int,
     thinking: bool = False,
+    sampling_params: dict[str, float | int] | None = None,
 ) -> tuple[list[dict], float]:
     """Run summary API calls on *items*, returning per-request metrics."""
 
@@ -103,6 +104,7 @@ def run_summary_estimation(
             raw, reasoning, usage = await api_call(
                 client, model, messages, semaphore,
                 thinking=thinking,
+                sampling_params=sampling_params,
             )
             latency_ms = int((time.monotonic() - t0) * 1000)
             return {
@@ -342,6 +344,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--api-key", default="none", help='API key. Use "none" for local endpoints.')
     p.add_argument("--thinking", action="store_true", help="Enable thinking mode.")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--temperature", type=float, default=None, help="Override sampling temperature.")
+    p.add_argument("--top-p", type=float, default=None, help="Override top-p (nucleus sampling).")
+    p.add_argument("--top-k", type=int, default=None, help="Override top-k sampling.")
+    p.add_argument("--presence-penalty", type=float, default=None, help="Override presence penalty.")
     return p.parse_args()
 
 
@@ -349,6 +355,19 @@ def main() -> None:
     args = parse_args()
     model_name = args.api_name
     model_alias = model_name.split("/")[-1][:30]
+
+    # Resolve per-model sampling params, then apply CLI overrides
+    sampling_params = resolve_sampling_params(model_name, model_alias)
+    if args.temperature is not None:
+        sampling_params["temperature"] = args.temperature
+    if args.top_p is not None:
+        sampling_params["top_p"] = args.top_p
+    if args.top_k is not None:
+        sampling_params["top_k"] = args.top_k
+    if args.presence_penalty is not None:
+        sampling_params["presence_penalty"] = args.presence_penalty
+    if sampling_params:
+        print(f"Sampling params: {sampling_params}")
 
     # Build client
     key = args.api_key
@@ -388,6 +407,7 @@ def main() -> None:
     results, wall_time_s = run_summary_estimation(
         items, model_name, client, semaphore, args.warmup,
         thinking=args.thinking,
+        sampling_params=sampling_params,
     )
 
     stats = compute_stats(
@@ -416,6 +436,7 @@ def main() -> None:
             "seed": args.seed,
             "endpoint": args.endpoint,
             "thinking": args.thinking,
+            "sampling_params": sampling_params or None,
             "timestamp": ts,
         },
         "stats": stats,
