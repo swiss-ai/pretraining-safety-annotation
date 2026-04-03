@@ -333,16 +333,10 @@ def run_improver_agent(
 
 
 def _allowed_tools(tmp_dir: Path) -> list[str]:
-    """Build allowed tools list for a given scratch directory.
-
-    Write and Edit are restricted to the prompt directory and the agent's
-    scratch directory to prevent littering the project root.
-    """
-    prompts_dir = PIPELINE_DATA_DIR / "prompts"
+    """Build allowed tools list for a given scratch directory."""
     return [
         "Read",
-        f"Edit(//{prompts_dir}/**)",
-        f"Edit(//{tmp_dir}/**)",
+        "Edit",
         "Glob",
         "Grep",
         "Bash(uv run python:*)",
@@ -354,8 +348,7 @@ def _allowed_tools(tmp_dir: Path) -> list[str]:
         "TaskCreate",
         "TaskUpdate",
         "TaskList",
-        f"Write(//{prompts_dir}/**)",
-        f"Write(//{tmp_dir}/**)",
+        "Write",
     ]
 
 

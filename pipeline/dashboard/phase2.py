@@ -10,6 +10,7 @@ from pathlib import Path
 from nicegui import app, ui
 
 from pipeline.config import AppConfig, load_config, resolve_prompt_path
+from pipeline.backup import force_upload
 from pipeline.dashboard import render_header
 from pipeline.dashboard.shared import CHARTER_TEXT, render_source_text
 from pipeline.phase2.storage import (
@@ -662,12 +663,23 @@ def _render_loop_history():
                     )
 
 
-def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> None:
+def _render_acceptance_rate_chart(
+    runs: list[dict],
+    iter_stats: list[dict],
+    prompt_mode: str = "latest",
+    min_samples: int = 0,
+    on_prompt_mode_change=None,
+    on_min_samples_change=None,
+) -> None:
     """Render per-generator-model acceptance rate bar chart with binomial 95% CI.
 
-    For each generator model, aggregates all runs with the latest gen prompt
-    version (using the latest judge prompt version), then computes acceptance
-    rate + confidence interval.
+    For each generator model, aggregates all runs with the selected gen prompt
+    version (always using the latest judge prompt version), then computes
+    acceptance rate + confidence interval.
+
+    prompt_mode: "latest" uses the latest gen prompt version, "best" picks the
+    gen prompt version with the highest acceptance rate.
+    min_samples: only include iterations with more than this many judged samples.
     """
     import math
     import re as _re_ar
@@ -675,6 +687,22 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
     def _prompt_version(prompt_str: str) -> int:
         m = _re_ar.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
+
+    def _filter_for_gen_version(with_judged, gen_v):
+        """Filter entries to a specific gen version + latest judge version."""
+        gen_entries = [
+            e for e in with_judged if _prompt_version(e.get("gen_prompt", "")) == gen_v
+        ]
+        if not gen_entries:
+            return []
+        latest_judge_v = max(
+            _prompt_version(e.get("judge_prompt", "")) for e in gen_entries
+        )
+        return [
+            e
+            for e in gen_entries
+            if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
+        ]
 
     if not iter_stats:
         return
@@ -687,34 +715,55 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
 
     labels = []
     rates = []
+    scores = []
     ci_low = []
     ci_high = []
     subtitles = []  # per-bar metadata shown below chart
 
     for gen_model in sorted(by_gen):
         entries = by_gen[gen_model]
-        # Only consider entries with judged items
-        with_judged = [e for e in entries if e["n_acc"] + e["n_rej"] > 0]
+        # Only consider entries with judged items (and above min_samples)
+        with_judged = [e for e in entries if e["n_acc"] + e["n_rej"] > min_samples]
         if not with_judged:
             continue
-        # Find latest gen prompt version that has judged data
-        latest_gen_v = max(
-            _prompt_version(e.get("gen_prompt", "")) for e in with_judged
+
+        all_gen_versions = sorted(
+            set(_prompt_version(e.get("gen_prompt", "")) for e in with_judged)
         )
-        latest_gen = [
-            e
-            for e in with_judged
-            if _prompt_version(e.get("gen_prompt", "")) == latest_gen_v
-        ]
-        # Among those, keep only latest judge prompt version
-        latest_judge_v = max(
-            _prompt_version(e.get("judge_prompt", "")) for e in latest_gen
-        )
-        latest = [
-            e
-            for e in latest_gen
-            if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
-        ]
+
+        if prompt_mode == "best":
+            # Pick the gen prompt version with the highest acceptance rate
+            # under the latest judge prompt version
+            latest_judge_v = max(
+                _prompt_version(e.get("judge_prompt", "")) for e in with_judged
+            )
+            under_latest_judge = [
+                e
+                for e in with_judged
+                if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
+            ]
+            best_v = None
+            best_rate = -1.0
+            for gv in all_gen_versions:
+                filtered = [
+                    e
+                    for e in under_latest_judge
+                    if _prompt_version(e.get("gen_prompt", "")) == gv
+                ]
+                t_acc = sum(e["n_acc"] for e in filtered)
+                t_rej = sum(e["n_rej"] for e in filtered)
+                t_n = t_acc + t_rej
+                if t_n > 0 and t_acc / t_n > best_rate:
+                    best_rate = t_acc / t_n
+                    best_v = gv
+            if best_v is None:
+                continue
+            selected_gen_v = best_v
+        else:
+            # Latest gen prompt version
+            selected_gen_v = max(all_gen_versions)
+
+        latest = _filter_for_gen_version(with_judged, selected_gen_v)
         # Aggregate across all matching iterations
         total_acc = sum(e["n_acc"] for e in latest)
         total_rej = sum(e["n_rej"] for e in latest)
@@ -724,23 +773,44 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
         p = total_acc / n_judged
         margin = 1.96 * math.sqrt(p * (1 - p) / n_judged) if n_judged > 1 else 0
 
+        # Mean score across matching iterations
+        score_vals = [e["mean_score"] for e in latest if e.get("mean_score", 0) > 0]
+        mean_score = statistics.mean(score_vals) if score_vals else 0
+
         judge_model = latest[0].get("judge_model", "?")
+        latest_judge_v = _prompt_version(latest[0].get("judge_prompt", ""))
         labels.append(gen_model)
         rates.append(round(p * 100, 1))
+        scores.append(round(mean_score, 2))
         ci_low.append(round(max(0, p - margin) * 100, 1))
         ci_high.append(round(min(1, p + margin) * 100, 1))
         subtitles.append(
-            f"gen v{latest_gen_v} | judge: {judge_model} v{latest_judge_v} | "
-            f"n={n_judged} across {len(latest)} iter"
+            f"{gen_model}: gen v{selected_gen_v} | judge: {judge_model} v{latest_judge_v} | "
+            f"n={n_judged} across {len(latest)} iter | score={round(mean_score, 2)}"
         )
 
     if not labels:
         return
 
+    mode_label = "latest prompt" if prompt_mode == "latest" else "best prompt"
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Acceptance Rate by Generator (latest prompt)").classes(
-            "text-h6 text-weight-bold"
-        )
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.label(f"Performance per Generator ({mode_label})").classes(
+                "text-h6 text-weight-bold"
+            )
+            if on_prompt_mode_change is not None:
+                ui.select(
+                    {"latest": "Latest Prompt", "best": "Best Prompt"},
+                    value=prompt_mode,
+                    label="Gen Prompt",
+                    on_change=on_prompt_mode_change,
+                ).classes("w-40")
+            if on_min_samples_change is not None:
+                ui.switch(
+                    "Hide runs with ≤50 samples",
+                    value=min_samples > 0,
+                    on_change=on_min_samples_change,
+                )
         # Show per-bar metadata as subtitle text
         for sub in subtitles:
             ui.label(sub).classes("text-caption text-grey-7")
@@ -749,6 +819,7 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
             "name": "Accept %",
             "type": "bar",
             "data": rates,
+            "yAxisIndex": 0,
             "itemStyle": {"color": "#4caf50"},
             "barMaxWidth": 60,
             "label": {
@@ -758,10 +829,24 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
                 "fontSize": 12,
             },
         }
+        score_series = {
+            "name": "Mean Score",
+            "type": "bar",
+            "data": scores,
+            "yAxisIndex": 1,
+            "itemStyle": {"color": "#2196f3"},
+            "barMaxWidth": 60,
+            "label": {
+                "show": True,
+                "position": "top",
+                "fontSize": 12,
+            },
+        }
         error_series = {
             "name": "95% CI",
             "type": "scatter",
             "data": [[i, rates[i]] for i in range(len(rates))],
+            "yAxisIndex": 0,
             "symbol": "none",
             "markLine": {
                 "silent": True,
@@ -777,28 +862,135 @@ def _render_acceptance_rate_chart(runs: list[dict], iter_stats: list[dict]) -> N
                 ],
             },
         }
+        max_score = max(scores) if scores else 10
         chart_opts = {
             "xAxis": {
                 "type": "category",
                 "data": labels,
                 "axisLabel": {"interval": 0, "fontSize": 11},
             },
-            "yAxis": {"type": "value", "name": "Accept %", "min": 0, "max": 100},
-            "series": [bar_series, error_series],
+            "yAxis": [
+                {"type": "value", "name": "Accept %", "min": 0, "max": 100},
+                {
+                    "type": "value",
+                    "name": "Mean Score",
+                    "min": 0,
+                    "max": round(max_score * 1.3, 1),
+                    "splitLine": {"show": False},
+                },
+            ],
+            "series": [bar_series, score_series, error_series],
             "tooltip": {"trigger": "axis"},
-            "grid": {"bottom": 60},
+            "legend": {"data": ["Accept %", "Mean Score"], "top": 0},
+            "grid": {"bottom": 60, "top": 40},
         }
-        ui.echart(chart_opts).classes("w-full").style("height: 300px;")
+        ui.echart(chart_opts).classes("w-full").style("height: 340px;")
+
+
+def _render_generator_stats_panel(runs: list[dict], iter_stats: list[dict]) -> None:
+    """Render closable panel with per-generator stats for the latest prompt version.
+
+    Shows failure rate, accept/reject counts, mean score, mean latency, etc.
+    """
+    import re as _re_gs
+
+    def _prompt_version(prompt_str: str) -> int:
+        m = _re_gs.search(r"_v(\d+)", prompt_str)
+        return int(m.group(1)) if m else 0
+
+    if not iter_stats:
+        return
+
+    # Group by generator model
+    by_gen: dict[str, list[dict]] = {}
+    for s in iter_stats:
+        gen = s.get("generator_model", "unknown")
+        by_gen.setdefault(gen, []).append(s)
+
+    rows: list[dict] = []
+    for gen_model in sorted(by_gen):
+        entries = by_gen[gen_model]
+        with_judged = [e for e in entries if e["n_acc"] + e["n_rej"] > 0]
+        if not with_judged:
+            continue
+        # Latest gen prompt version
+        latest_gen_v = max(
+            _prompt_version(e.get("gen_prompt", "")) for e in with_judged
+        )
+        latest = [
+            e
+            for e in with_judged
+            if _prompt_version(e.get("gen_prompt", "")) == latest_gen_v
+        ]
+        # Aggregate stats
+        total_acc = sum(e["n_acc"] for e in latest)
+        total_rej = sum(e["n_rej"] for e in latest)
+        n_judged = total_acc + total_rej
+        mean_score = (
+            statistics.mean(e["mean_score"] for e in latest if e["mean_score"] > 0)
+            if any(e["mean_score"] > 0 for e in latest)
+            else 0
+        )
+        # Failure rate from run config
+        n_attempted = sum(e.get("config", {}).get("n_attempted", 0) for e in latest)
+        n_gen_failed = sum(e.get("config", {}).get("n_gen_failed", 0) for e in latest)
+        fail_rate = round(n_gen_failed / n_attempted * 100, 1) if n_attempted > 0 else 0
+        # Mean latency from items
+        latencies = []
+        for e in latest:
+            it = e["iteration"]
+            for item in load_items_for_iteration(it):
+                if item.get("latency_ms"):
+                    latencies.append(item["latency_ms"])
+        mean_lat = round(statistics.mean(latencies) / 1000, 1) if latencies else None
+
+        rows.append(
+            {
+                "generator": gen_model,
+                "gen_prompt": f"v{latest_gen_v}",
+                "n_iters": str(len(latest)),
+                "n_attempted": str(n_attempted),
+                "n_judged": str(n_judged),
+                "fail_rate": f"{fail_rate}%",
+                "accept_rate": (
+                    f"{round(total_acc / n_judged * 100, 1)}%" if n_judged else "—"
+                ),
+                "mean_score": f"{mean_score:.2f}" if mean_score else "—",
+                "mean_latency": f"{mean_lat}s" if mean_lat else "—",
+            }
+        )
+
+    if not rows:
+        return
+
+    with ui.expansion("Generator Stats (latest prompt)", icon="bar_chart").classes(
+        "w-full q-mx-md q-mt-md"
+    ):
+        cols = [
+            {"name": "generator", "label": "Generator", "field": "generator"},
+            {"name": "gen_prompt", "label": "Prompt", "field": "gen_prompt"},
+            {"name": "n_iters", "label": "Iters", "field": "n_iters"},
+            {"name": "n_attempted", "label": "Attempted", "field": "n_attempted"},
+            {"name": "n_judged", "label": "Judged", "field": "n_judged"},
+            {"name": "fail_rate", "label": "Gen Fail %", "field": "fail_rate"},
+            {"name": "accept_rate", "label": "Accept %", "field": "accept_rate"},
+            {"name": "mean_score", "label": "Mean Score", "field": "mean_score"},
+            {"name": "mean_latency", "label": "Avg Latency", "field": "mean_latency"},
+        ]
+        ui.table(columns=cols, rows=rows, row_key="generator").classes("w-full")
 
 
 def _render_calibration_bar_chart(
-    pairs: list[dict] | None = None, split: str | None = None
+    pairs: list[dict] | None = None,
+    split: str | None = None,
+    _wrap_card: bool = True,
 ) -> None:
     """Render per-judge-model calibration bar chart (Pearson r and Cohen's kappa).
 
     Groups by judge_model, uses the latest judge prompt version per model.
     pairs: pre-loaded correlation pairs (avoids DB re-read). If None, loads from DB.
     split: filter pre-loaded pairs by "train" or "validation".
+    _wrap_card: if False, skip card wrapper and title (caller provides them).
     """
     import re as _re_cb
 
@@ -848,8 +1040,16 @@ def _render_calibration_bar_chart(
         pearson_vals.append(round(pr, 3) if pr is not None else None)
         kappa_vals.append(round(kp, 3) if kp is not None else None)
 
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
+    import contextlib
+
+    _card_ctx = (
+        ui.card().classes("w-full q-mx-md q-mt-md q-pa-md")
+        if _wrap_card
+        else contextlib.nullcontext()
+    )
+    with _card_ctx:
+        if _wrap_card:
+            ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
         ui.label(
             "Latest judge prompt per model. Pearson r (scores) and Cohen's κ (decisions)."
         ).classes("text-caption text-grey-7")
@@ -1327,6 +1527,15 @@ def pipeline_monitoring_page():
     viewer_id = app.storage.user.get("annotator_id", "")
 
     def pipeline_actions():
+        def _do_upload():
+            if force_upload():
+                ui.notify("Uploaded to HuggingFace", type="positive")
+            else:
+                ui.notify("Backup not configured (BACKUP_REPO not set)", type="warning")
+
+        ui.button(icon="cloud_upload", on_click=_do_upload).props(
+            "flat dense size=sm"
+        ).tooltip("Force upload to HuggingFace").style("color:#666;")
         ui.button(
             "Review",
             icon="rate_review",
@@ -1731,27 +1940,96 @@ def pipeline_monitoring_page():
                             on_change=_on_split_change,
                         ).classes("w-36")
 
-    # --- Per-Generator Acceptance Rate Bar Chart ---
-    _render_acceptance_rate_chart(runs, iter_stats)
+    # --- Per-Generator Acceptance Rate Bar Chart (auto-refreshing) ---
+    _acc_rate_state = {"prompt_mode": "latest", "min_samples": 0}
+    _acc_rate_container = ui.column().classes("w-full")
 
-    # --- Per-Judge Calibration Bar Chart (with split selector) ---
+    def _draw_acc_rate(r, s):
+        _acc_rate_container.clear()
+        with _acc_rate_container:
+            _render_acceptance_rate_chart(
+                r,
+                s,
+                _acc_rate_state["prompt_mode"],
+                min_samples=_acc_rate_state["min_samples"],
+                on_prompt_mode_change=lambda e: _on_acc_prompt_mode(e),
+                on_min_samples_change=lambda e: _on_acc_min_samples(e),
+            )
+
+    def _on_acc_prompt_mode(e):
+        _acc_rate_state["prompt_mode"] = e.value
+        fresh_runs = load_runs()
+        fresh_stats = _build_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    def _on_acc_min_samples(e):
+        _acc_rate_state["min_samples"] = 50 if e.value else 0
+        fresh_runs = load_runs()
+        fresh_stats = _build_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    def _build_acc_stats(fresh_runs):
+        fresh_stats = []
+        for run in fresh_runs:
+            it = run["iteration"]
+            items = load_items_for_iteration(it)
+            judged = [i for i in items if i.get("judgment")]
+            n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
+            scores = [i["judgment"]["aggregate"] for i in judged]
+            mean_s = statistics.mean(scores) if scores else 0
+            accept_rate = round(n_acc / len(judged) * 100, 1) if judged else 0
+            fresh_stats.append(
+                {
+                    **run,
+                    "n_acc": n_acc,
+                    "n_rej": len(judged) - n_acc,
+                    "mean_score": mean_s,
+                    "accept_rate": accept_rate,
+                }
+            )
+        return fresh_stats
+
+    _draw_acc_rate(runs, iter_stats)
+
+    _acc_rate_n_runs = [len(runs)]  # mutable tracker for change detection
+
+    def _refresh_acc_rate():
+        fresh_runs = load_runs()
+        if len(fresh_runs) == _acc_rate_n_runs[0]:
+            return  # no new iterations
+        _acc_rate_n_runs[0] = len(fresh_runs)
+        fresh_stats = _build_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    ui.timer(30.0, _refresh_acc_rate)
+
+    # --- Generator Stats (closable, latest prompt) ---
+    _render_generator_stats_panel(runs, iter_stats)
+
+    # --- Per-Judge Calibration Bar Chart (with split selector inside card) ---
     _cal_bar_pairs = _load_correlation_pairs()
-    _cal_bar_container = ui.column().classes("w-full")
-    with _cal_bar_container:
-        _render_calibration_bar_chart(pairs=_cal_bar_pairs)
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        with ui.row().classes("items-center gap-2"):
+            ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
 
-    def _on_cal_bar_split(e):
-        sp = None if e.value == "all" else e.value
-        _cal_bar_container.clear()
-        with _cal_bar_container:
-            _render_calibration_bar_chart(pairs=_cal_bar_pairs, split=sp)
+            def _on_cal_bar_split(e):
+                sp = None if e.value == "all" else e.value
+                _cal_bar_chart_area.clear()
+                with _cal_bar_chart_area:
+                    _render_calibration_bar_chart(
+                        pairs=_cal_bar_pairs, split=sp, _wrap_card=False
+                    )
 
-    ui.select(
-        ["all", "train", "validation"],
-        value="all",
-        label="Review Split",
-        on_change=_on_cal_bar_split,
-    ).classes("w-36 q-mx-md")
+            ui.select(
+                ["all", "train", "validation"],
+                value="all",
+                label="Review Split",
+                on_change=_on_cal_bar_split,
+            ).classes("w-36")
+
+        _cal_bar_chart_area = ui.column().classes("w-full")
+        with _cal_bar_chart_area:
+            _render_calibration_bar_chart(pairs=_cal_bar_pairs, _wrap_card=False)
 
     # --- API Model Statistics (collapsible) ---
     _render_api_stats_panel(runs, items_by_key)
@@ -2143,6 +2421,15 @@ def pipeline_review_page():
         return
 
     def review_actions():
+        def _do_upload():
+            if force_upload():
+                ui.notify("Uploaded to HuggingFace", type="positive")
+            else:
+                ui.notify("Backup not configured (BACKUP_REPO not set)", type="warning")
+
+        ui.button(icon="cloud_upload", on_click=_do_upload).props(
+            "flat dense size=sm"
+        ).tooltip("Force upload to HuggingFace").style("color:#666;")
         ui.button(
             "Dashboard",
             icon="dashboard",
@@ -2760,6 +3047,15 @@ def pipeline_reviews_page():
     viewer_id = app.storage.user.get("annotator_id", "")
 
     def reviews_actions():
+        def _do_upload():
+            if force_upload():
+                ui.notify("Uploaded to HuggingFace", type="positive")
+            else:
+                ui.notify("Backup not configured (BACKUP_REPO not set)", type="warning")
+
+        ui.button(icon="cloud_upload", on_click=_do_upload).props(
+            "flat dense size=sm"
+        ).tooltip("Force upload to HuggingFace").style("color:#666;")
         ui.button(
             "Dashboard",
             icon="dashboard",

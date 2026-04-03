@@ -175,9 +175,15 @@ def _build_improver_prompt(
         ]
         if target_runs:
             latest_gid = target_runs[-1]["group_id"]
+            logger.info(
+                "Auto-injecting diagnose for {}/{} (group_id={})",
+                role,
+                target_alias,
+                latest_gid[:8],
+            )
             try:
-                import io
                 import contextlib
+                import io
 
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
@@ -187,8 +193,24 @@ def _build_improver_prompt(
                 baseline_diagnose = buf.getvalue()
                 if len(baseline_diagnose) > 4000:
                     baseline_diagnose = baseline_diagnose[:4000] + "\n... (truncated)"
+                logger.info(
+                    "Auto-diagnose produced {} chars for {}",
+                    len(baseline_diagnose),
+                    target_alias,
+                )
             except Exception as e:
-                logger.warning("Failed to auto-run diagnose: {}", e)
+                logger.warning(
+                    "Failed to auto-run diagnose for {}: {} ({})",
+                    target_alias,
+                    type(e).__name__,
+                    e,
+                )
+        else:
+            logger.warning(
+                "No runs found for {}/{} — skipping auto-diagnose",
+                role,
+                target_alias,
+            )
 
     if has_data:
         first_run_note = ""
@@ -401,6 +423,8 @@ If you write v2 (best), then v3 (worse), v3 is deployed — not v2. Before final
 - If an earlier version performed best, run `rollback {target_alias} {prompt_type} <best_version>`
   to copy it to v(max+1), making it the active prompt.
 - Never leave a worse version as the highest number on disk.
+- **Always use rollback** rather than manually rewriting prompt files from old versions.
+  `rollback` is fast, exact, and doesn't risk introducing transcription errors.
 
 ## RULES — VIOLATIONS WASTE YOUR LIMITED TOOL CALLS
 
@@ -418,6 +442,20 @@ If you write v2 (best), then v3 (worse), v3 is deployed — not v2. Before final
 6. The {prompt_type} prompt must NOT hardcode specific charter/constitution content.
 7. `diff <iter1> <iter2>` only works for iterations that share source items (i.e. iterations
    within the SAME cross-batch group). Do NOT diff across different groups.
+
+## Writing prompt files
+Use the **Write** tool to create or overwrite prompt files in {model_dir}/. If Write is blocked
+for any reason, use this Python heredoc fallback:
+```bash
+uv run python << 'PYEOF'
+from pathlib import Path
+content = \"\"\"
+<your prompt content here>
+\"\"\"
+Path("{model_dir}/{prompt_type}_v{next_v}.md").write_text(content.strip())
+print("Written successfully")
+PYEOF
+```
 
 ## Bash Python tips (avoids permission errors)
 When running ad-hoc Python via Bash, **NEVER** use `python -c "..."` with multi-line strings.
