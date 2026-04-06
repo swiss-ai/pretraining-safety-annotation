@@ -35,13 +35,8 @@ if PASSWORD:
 # --- Shared UI components ---
 
 
-def render_phase_bar(active_phase: int = 1, right_slot=None):
-    """Render a stepper-style phase bar with clickable phase links.
-
-    Args:
-        active_phase: Currently active phase number (1-indexed).
-        right_slot: Optional callable rendered on the right side of the bar.
-    """
+def _phase_stepper_html(active_phase: int) -> str:
+    """Build the inline HTML for the phase stepper."""
 
     def _circle(n: int) -> str:
         style = (
@@ -50,22 +45,22 @@ def render_phase_bar(active_phase: int = 1, right_slot=None):
             else "background:transparent;border:2px solid #555;color:#666;"
         )
         return (
-            f'<div style="width:26px;height:26px;border-radius:50%;{style}'
+            f'<div style="width:22px;height:22px;border-radius:50%;{style}'
             f"display:flex;align-items:center;justify-content:center;"
-            f'font-size:0.8em;font-weight:600;flex-shrink:0;">{n}</div>'
+            f'font-size:0.75em;font-weight:600;flex-shrink:0;">{n}</div>'
         )
 
     def _label(n: int) -> str:
-        color = "white" if n == active_phase else "#666"
+        color = "white" if n == active_phase else "#888"
         weight = "600" if n == active_phase else "400"
         return (
-            f'<span style="color:{color};font-size:0.8em;font-weight:{weight};'
-            f'white-space:nowrap;margin-left:6px;">Phase {n}</span>'
+            f'<span style="color:{color};font-size:0.75em;font-weight:{weight};'
+            f'white-space:nowrap;margin-left:5px;">Phase {n}</span>'
         )
 
     connector_color = lambda n: "#1976d2" if n < active_phase else "#444"
     connector = (
-        lambda n: f'<div style="width:40px;height:2px;background:{connector_color(n)};margin:0 8px;flex-shrink:0;"></div>'
+        lambda n: f'<div style="width:28px;height:2px;background:{connector_color(n)};margin:0 6px;flex-shrink:0;"></div>'
     )
 
     parts = []
@@ -80,51 +75,45 @@ def render_phase_bar(active_phase: int = 1, right_slot=None):
             + "</a>"
         )
 
-    stepper_html = (
-        '<div style="display:flex;align-items:center;padding:6px 0;">'
-        + "".join(parts)
-        + "</div>"
-    )
-
-    with (
-        ui.row()
-        .classes("items-center justify-between w-full q-px-md")
-        .style("background:#252525;border-top:1px solid #333;min-height:44px;")
-    ):
-        ui.html(stepper_html)
-        if right_slot:
-            with ui.row().classes("items-center gap-2"):
-                right_slot()
+    return '<div style="display:flex;align-items:center;">' + "".join(parts) + "</div>"
 
 
 def render_header(annotator_id: str, active_phase: int = 1, right_slot=None):
-    """Render the shared page header: title bar + phase stepper.
+    """Render the shared page header: a single compact row with title,
+    phase stepper, optional right_slot, and account/logout.
 
     Args:
         annotator_id: Current user's name (empty string if not logged in).
-        active_phase: Currently active phase number, passed through to render_phase_bar.
-        right_slot: Optional callable for phase-bar right side (phase-specific actions).
+        active_phase: Currently active phase number.
+        right_slot: Optional callable for phase-specific right-side actions.
     """
     with (
         ui.header()
-        .classes("column items-stretch q-pa-none")
-        .style("background: #1d1d1d;")
+        .classes("row items-center q-pa-none")
+        .style("background: #1d1d1d; min-height: 40px;")
     ):
-        with ui.row().classes("items-center justify-between q-px-md q-py-xs w-full"):
-            ui.label("Model Raising Annotation Platform").classes("text-h6 text-white")
-            with ui.row().classes("items-center gap-4"):
-                if annotator_id:
-                    ui.label(f"Account: {annotator_id}").classes(
-                        "text-caption text-weight-medium"
-                    ).style("color:#aaa;")
-                ui.button(
-                    "Logout",
-                    on_click=lambda: (
-                        app.storage.user.clear(),
-                        ui.navigate.to("/"),
-                    ),
-                ).classes("text-white").props("flat dense")
-        render_phase_bar(active_phase, right_slot=right_slot)
+        with (
+            ui.row().classes("items-center q-px-md w-full no-wrap").style("gap: 16px;")
+        ):
+            ui.label("Model Raising").classes(
+                "text-subtitle1 text-weight-bold text-white"
+            ).style("white-space: nowrap;")
+            ui.html(_phase_stepper_html(active_phase))
+            ui.space()
+            if right_slot:
+                with ui.row().classes("items-center gap-2"):
+                    right_slot()
+            if annotator_id:
+                ui.label(f"{annotator_id}").classes(
+                    "text-caption text-weight-medium"
+                ).style("color:#aaa;")
+            ui.button(
+                "Logout",
+                on_click=lambda: (
+                    app.storage.user.clear(),
+                    ui.navigate.to("/"),
+                ),
+            ).classes("text-white").props("flat dense")
 
 
 # --- Shared pages ---
@@ -195,7 +184,7 @@ def login_page():
                 ui.notify("Please enter a name", type="warning")
                 return
             app.storage.user["annotator_id"] = str(val).strip()
-            ui.navigate.to("/annotate")
+            ui.navigate.to("/pipeline")
 
         name_input.on("keydown.enter", lambda _: start())
         ui.button("Start annotating", on_click=start, color="primary").classes("w-64")

@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from pipeline.storage import _get_conn
+from pipeline.storage import _get_conn, bump_cache_version, cached_load
 
 
 def review_split(item_id: str) -> str:
@@ -41,9 +41,13 @@ def build_review_lookup(
 
 def load_runs() -> list[dict]:
     """Load all iteration run records."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
-    return [_row_to_run(r) for r in rows]
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM runs ORDER BY id").fetchall()
+        return [_row_to_run(r) for r in rows]
+
+    return cached_load("runs", _load)
 
 
 def next_iteration() -> int:
@@ -61,6 +65,7 @@ def next_iteration() -> int:
             "SELECT value FROM iteration_counter WHERE id = 1"
         ).fetchone()
         conn.commit()
+        bump_cache_version()
     except Exception:
         conn.rollback()
         raise
@@ -110,6 +115,7 @@ def save_run(
         ),
     )
     conn.commit()
+    bump_cache_version()
 
 
 # --- Items ---
@@ -117,25 +123,37 @@ def save_run(
 
 def load_items() -> list[dict]:
     """Load all item records."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM items ORDER BY timestamp").fetchall()
-    return [_row_to_item(r) for r in rows]
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM items ORDER BY timestamp").fetchall()
+        return [_row_to_item(r) for r in rows]
+
+    return cached_load("items_all", _load)
 
 
 def load_latest_items() -> dict[tuple[str, int], dict]:
     """Load items keyed by (item_id, iteration). Dedup is implicit via PRIMARY KEY."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM items").fetchall()
-    return {(r["item_id"], r["iteration"]): _row_to_item(r) for r in rows}
+
+    def _load() -> dict[tuple[str, int], dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM items").fetchall()
+        return {(r["item_id"], r["iteration"]): _row_to_item(r) for r in rows}
+
+    return cached_load("latest_items", _load)
 
 
 def load_items_for_iteration(iteration: int) -> list[dict]:
     """Load items for a specific iteration."""
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM items WHERE iteration = ?", (iteration,)
-    ).fetchall()
-    return [_row_to_item(r) for r in rows]
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM items WHERE iteration = ?", (iteration,)
+        ).fetchall()
+        return [_row_to_item(r) for r in rows]
+
+    return cached_load(("items_iter", iteration), _load)
 
 
 def load_item_across_iterations(item_id: str, iterations: list[int]) -> list[dict]:
@@ -195,6 +213,7 @@ def save_item(record: dict) -> None:
         ),
     )
     conn.commit()
+    bump_cache_version()
 
 
 # --- Reviews ---
@@ -202,19 +221,27 @@ def save_item(record: dict) -> None:
 
 def load_reviews() -> list[dict]:
     """Load all human review records."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM reviews ORDER BY timestamp").fetchall()
-    return [_row_to_review(r) for r in rows]
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM reviews ORDER BY timestamp").fetchall()
+        return [_row_to_review(r) for r in rows]
+
+    return cached_load("reviews", _load)
 
 
 def load_latest_reviews() -> dict[tuple[str, int, str], dict]:
     """Load reviews keyed by (item_id, iteration, reviewer_id). Dedup is implicit."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM reviews").fetchall()
-    return {
-        (r["item_id"], r["iteration"], r["reviewer_id"]): _row_to_review(r)
-        for r in rows
-    }
+
+    def _load() -> dict[tuple[str, int, str], dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM reviews").fetchall()
+        return {
+            (r["item_id"], r["iteration"], r["reviewer_id"]): _row_to_review(r)
+            for r in rows
+        }
+
+    return cached_load("latest_reviews", _load)
 
 
 def save_review(
@@ -247,6 +274,7 @@ def save_review(
         ),
     )
     conn.commit()
+    bump_cache_version()
 
 
 # --- Review Comments ---
@@ -254,13 +282,19 @@ def save_review(
 
 def load_review_comments() -> dict[tuple[str, int, str], list[dict]]:
     """Load review comments grouped by (item_id, iteration, reviewer_id), sorted by timestamp."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM review_comments ORDER BY timestamp").fetchall()
-    by_review: dict[tuple[str, int, str], list[dict]] = {}
-    for r in rows:
-        key = (r["item_id"], r["iteration"], r["reviewer_id"])
-        by_review.setdefault(key, []).append(dict(r))
-    return by_review
+
+    def _load() -> dict[tuple[str, int, str], list[dict]]:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM review_comments ORDER BY timestamp"
+        ).fetchall()
+        by_review: dict[tuple[str, int, str], list[dict]] = {}
+        for r in rows:
+            key = (r["item_id"], r["iteration"], r["reviewer_id"])
+            by_review.setdefault(key, []).append(dict(r))
+        return by_review
+
+    return cached_load("review_comments", _load)
 
 
 def save_review_comment(
@@ -286,6 +320,7 @@ def save_review_comment(
         ),
     )
     conn.commit()
+    bump_cache_version()
 
 
 def delete_review_comment(comment_id: int) -> None:
@@ -293,6 +328,7 @@ def delete_review_comment(comment_id: int) -> None:
     conn = _get_conn()
     conn.execute("DELETE FROM review_comments WHERE id = ?", (comment_id,))
     conn.commit()
+    bump_cache_version()
 
 
 def delete_review(item_id: str, iteration: int, reviewer_id: str) -> None:
@@ -307,6 +343,7 @@ def delete_review(item_id: str, iteration: int, reviewer_id: str) -> None:
         (item_id, iteration, reviewer_id),
     )
     conn.commit()
+    bump_cache_version()
 
 
 # --- Test Results ---
@@ -321,6 +358,7 @@ def save_test_result(record: dict) -> None:
         (json.dumps(record), ts),
     )
     conn.commit()
+    bump_cache_version()
 
 
 def load_test_results(phase: str | None = None, role: str | None = None) -> list[dict]:
@@ -328,9 +366,13 @@ def load_test_results(phase: str | None = None, role: str | None = None) -> list
 
     Supports both old phase format ('A'/'B') and new role format ('judge'/'generator').
     """
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM test_results ORDER BY id").fetchall()
-    results = [json.loads(r["data"]) for r in rows]
+
+    def _load_all() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM test_results ORDER BY id").fetchall()
+        return [json.loads(r["data"]) for r in rows]
+
+    results = cached_load("test_results", _load_all)
     if phase is not None:
         results = [r for r in results if r.get("phase") == phase]
     if role is not None:
@@ -350,13 +392,18 @@ def save_loop_run(record: dict) -> None:
         (json.dumps(record), ts),
     )
     conn.commit()
+    bump_cache_version()
 
 
 def load_loop_history() -> list[dict]:
     """Load all loop run records."""
-    conn = _get_conn()
-    rows = conn.execute("SELECT * FROM loop_history ORDER BY id").fetchall()
-    return [json.loads(r["data"]) for r in rows]
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute("SELECT * FROM loop_history ORDER BY id").fetchall()
+        return [json.loads(r["data"]) for r in rows]
+
+    return cached_load("loop_history", _load)
 
 
 # --- Judge Correlations ---
@@ -385,20 +432,25 @@ def save_judge_correlation(
         ),
     )
     conn.commit()
+    bump_cache_version()
 
 
 def load_judge_correlations() -> list[dict]:
     """Load all judge correlation entries."""
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM judge_correlations ORDER BY timestamp"
-    ).fetchall()
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["judgment"] = json.loads(d["judgment"])
-        result.append(d)
-    return result
+
+    def _load() -> list[dict]:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM judge_correlations ORDER BY timestamp"
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["judgment"] = json.loads(d["judgment"])
+            result.append(d)
+        return result
+
+    return cached_load("judge_correlations", _load)
 
 
 # --- Row converters ---

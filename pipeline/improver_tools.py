@@ -3,6 +3,7 @@
 Usage (via Bash tool):
     python -m pipeline.improver_tools summary <iteration>
     python -m pipeline.improver_tools failures <iteration> [--limit N] [--offset N] [--reasoning-limit N]
+    python -m pipeline.improver_tools accepts <iteration> [--limit N] [--offset N] [--reasoning-limit N] [--sort top|borderline]
     python -m pipeline.improver_tools show <item_id>[,id2,...] <iteration> [--brief]
     python -m pipeline.improver_tools show --gold <iteration> [--brief]
     python -m pipeline.improver_tools item <item_id> <iteration>
@@ -12,8 +13,8 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools distribution <iteration>
     python -m pipeline.improver_tools gold [--limit N] [--offset N] [--verbose]
     python -m pipeline.improver_tools compare <item_id> <iteration>
-    python -m pipeline.improver_tools reviews [<iteration>] [--limit N]
-    python -m pipeline.improver_tools filter <iteration> --dim X --below N [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
+    python -m pipeline.improver_tools reviews [<judge_prompt>] [--limit N]
+    python -m pipeline.improver_tools filter <iteration> --dim X (--below N | --above N) [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
     python -m pipeline.improver_tools trend
     python -m pipeline.improver_tools diagnose <group_id>
     python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]
@@ -133,7 +134,60 @@ def cmd_failures(
     print(
         f"Rejected items ({len(rejected)} total, showing {offset}–{offset + len(sliced)}):\n"
     )
-    for item in sliced:
+    _print_judged_items(sliced, reasoning_limit)
+
+
+def cmd_accepts(
+    iteration: int,
+    limit: int = 10,
+    reasoning_limit: int = 200,
+    offset: int = 0,
+    sort: str = "top",
+) -> None:
+    """Print accepted items with judge reasoning — symmetric to `failures`.
+
+    Use this to hunt for false positives (items the judge accepted that
+    shouldn't have been). False positives directly contaminate the training
+    signal and are usually more harmful than false negatives, so always pair
+    `failures` analysis with `accepts` analysis.
+
+    sort:
+      "top"        — highest aggregate first (judge most confident; the
+                     hardest cases to challenge — if these have problems
+                     the rubric is badly miscalibrated). Default.
+      "borderline" — closest to the accept threshold first (judge least
+                     confident; useful for finding items the judge barely
+                     waved through that humans would reject).
+    """
+    from pipeline.config import load_config
+
+    cfg = load_config()
+    threshold = cfg.phase2.scoring.accept_threshold
+
+    items = load_items_for_iteration(iteration)
+    accepted = [
+        i for i in items if i.get("judgment") and i["judgment"]["decision"] == "accept"
+    ]
+    if sort == "borderline":
+        accepted.sort(key=lambda i: abs(i["judgment"]["aggregate"] - threshold))
+        sort_label = f"borderline (closest to threshold {threshold})"
+    elif sort == "top":
+        accepted.sort(key=lambda i: -i["judgment"]["aggregate"])
+        sort_label = "top (highest aggregate first)"
+    else:
+        raise ValueError(f"Unknown --sort value: {sort!r}. Use 'top' or 'borderline'.")
+
+    sliced = accepted[offset : offset + limit]
+    print(
+        f"Accepted items ({len(accepted)} total, sort={sort_label}, "
+        f"showing {offset}–{offset + len(sliced)}):\n"
+    )
+    _print_judged_items(sliced, reasoning_limit)
+
+
+def _print_judged_items(items: list[dict], reasoning_limit: int) -> None:
+    """Shared body of cmd_failures / cmd_accepts."""
+    for item in items:
         j = item["judgment"]
         print(
             f"--- {item['item_id'][:16]} (score={j['aggregate']:.2f}, gold={item.get('is_gold', False)}) ---"
@@ -479,16 +533,22 @@ def cmd_compare(item_id: str, iteration: int) -> None:
         print()
 
 
-def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
-    """Print human reviews, optionally filtered by iteration.
+def cmd_reviews(judge_prompt: str | None = None, limit: int = 20) -> None:
+    """Print human reviews, optionally filtered by judge prompt version.
 
     Shows reviewer scores, decision, and notes alongside the judge's scores
     for calibration comparison. Only shows *train* split reviews (75%) so
     the validation split remains unseen by the improver.
+
+    judge_prompt: substring match against the run's judge_prompt field
+    (e.g. "v10", "judge_v10.md"). When omitted, shows reviews across every
+    judge prompt version. Reviews are grouped by (judge_prompt, judge_model)
+    in the output so it's clear which prompt each note refers to.
     """
     from pipeline.phase2.storage import (
         load_latest_reviews,
         load_review_comments,
+        load_runs,
         review_split,
     )
 
@@ -500,90 +560,171 @@ def cmd_reviews(iteration: int | None = None, limit: int = 20) -> None:
 
     # Only show train-split reviews to the improver
     filtered = [r for r in reviews.values() if review_split(r["item_id"]) == "train"]
-    if iteration is not None:
-        filtered = [r for r in filtered if r["iteration"] == iteration]
-        items = load_items_for_iteration(iteration)
-    else:
-        items = []
-        # Load items for all reviewed iterations
-        seen_iters: set[int] = set()
-        for r in filtered:
-            if r["iteration"] not in seen_iters:
-                seen_iters.add(r["iteration"])
-                items.extend(load_items_for_iteration(r["iteration"]))
+
+    # Build iteration -> (judge_prompt, judge_model) lookup
+    runs = load_runs()
+    run_judge: dict[int, tuple[str, str]] = {
+        r["iteration"]: (r["judge_prompt"], r["judge_model"]) for r in runs
+    }
+
+    if judge_prompt is not None:
+        needle = judge_prompt.lower()
+        filtered = [
+            r
+            for r in filtered
+            if needle in (run_judge.get(r["iteration"], ("", ""))[0]).lower()
+        ]
+        if not filtered:
+            print(
+                f"No train-split reviews found for judge prompt matching "
+                f"'{judge_prompt}'."
+            )
+            return
+
+    # Load items for all referenced iterations
+    items = []
+    seen_iters: set[int] = set()
+    for r in filtered:
+        if r["iteration"] not in seen_iters:
+            seen_iters.add(r["iteration"])
+            items.extend(load_items_for_iteration(r["iteration"]))
 
     items_by_key = {(i["item_id"], i["iteration"]): i for i in items}
 
+    # Group by (judge_prompt, judge_model) so notes are organised by the
+    # prompt version that produced the judgment, not by iteration.
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for r in filtered:
+        info = run_judge.get(r["iteration"], ("unknown", "unknown"))
+        grouped.setdefault(info, []).append(r)
+
+    total_shown = 0
     print(
-        f"Human reviews ({len(filtered)} total, showing {min(limit, len(filtered))}):\n"
+        f"Human reviews ({len(filtered)} total across "
+        f"{len(grouped)} judge prompt(s)):\n"
     )
-    for r in filtered[:limit]:
-        item = items_by_key.get((r["item_id"], r["iteration"]))
-        judge_agg = ""
-        judge_decision = ""
-        if item and item.get("judgment"):
-            j = item["judgment"]
-            judge_agg = f"{j['aggregate']:.2f}"
-            judge_decision = j["decision"]
 
-        print(
-            f"--- {r['item_id'][:16]} iter={r['iteration']} reviewer={r['reviewer_id']} ---"
-        )
-        print(f"  Human:  decision={r['decision']}  aggregate={r['aggregate']:.2f}")
-        if judge_agg:
-            print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
+    def _prompt_sort_key(key: tuple[str, str]) -> tuple:
+        import re
 
-        scores = r["scores"]
-        is_per_part = scores and isinstance(next(iter(scores.values())), dict)
-        if is_per_part:
-            all_parts = sorted(
-                set(scores.keys())
-                | (
-                    set(_judgment_parts(item["judgment"]).keys())
-                    if item and item.get("judgment")
-                    else set()
-                )
+        m = re.search(r"_v(\d+)", key[0])
+        return (key[1], int(m.group(1)) if m else 0)
+
+    for group_key in sorted(grouped, key=_prompt_sort_key, reverse=True):
+        group_reviews = grouped[group_key]
+        gp_name, gm_name = group_key
+        remaining = limit - total_shown
+        if remaining <= 0:
+            print(
+                f"\n(--limit {limit} reached; "
+                f"{sum(len(v) for v in grouped.values()) - total_shown} more "
+                f"reviews not shown)"
             )
-            for part in all_parts:
-                human_s = (
-                    scores.get(part, {})
-                    if isinstance(scores.get(part, {}), dict)
-                    else {}
+            break
+        # Sort within a group: latest iteration first, then latest timestamp
+        group_reviews.sort(
+            key=lambda r: (-r["iteration"], r.get("timestamp", "")), reverse=False
+        )
+        show = group_reviews[:remaining]
+        print(
+            f"=== {gp_name} / {gm_name} "
+            f"({len(group_reviews)} reviews, showing {len(show)}) ==="
+        )
+        total_shown += len(show)
+        for r in show:
+            item = items_by_key.get((r["item_id"], r["iteration"]))
+            judge_agg = ""
+            judge_decision = ""
+            if item and item.get("judgment"):
+                j = item["judgment"]
+                judge_agg = f"{j['aggregate']:.2f}"
+                judge_decision = j["decision"]
+
+            print(
+                f"--- {r['item_id'][:16]} iter={r['iteration']} "
+                f"reviewer={r['reviewer_id']} ---"
+            )
+            print(
+                f"  Human:  decision={r['decision']}  "
+                f"aggregate={r['aggregate']:.2f}"
+            )
+            if judge_agg:
+                print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
+
+            scores = r["scores"]
+            is_per_part = scores and isinstance(next(iter(scores.values())), dict)
+            if is_per_part:
+                all_parts = sorted(
+                    set(scores.keys())
+                    | (
+                        set(_judgment_parts(item["judgment"]).keys())
+                        if item and item.get("judgment")
+                        else set()
+                    )
                 )
-                judge_s = {}
-                if item and item.get("judgment"):
-                    judge_s = item["judgment"].get(part, {}).get("scores", {})
-                dims = sorted(set(human_s) | set(judge_s))
-                pairs = " ".join(
-                    f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}" for d in dims
-                )
-                if dims:
-                    print(f"  {part}: {pairs}  (human/judge)")
-        else:
-            print(f"  Scores: {scores}")
+                for part in all_parts:
+                    human_s = (
+                        scores.get(part, {})
+                        if isinstance(scores.get(part, {}), dict)
+                        else {}
+                    )
+                    judge_s = {}
+                    if item and item.get("judgment"):
+                        judge_s = item["judgment"].get(part, {}).get("scores", {})
+                    dims = sorted(set(human_s) | set(judge_s))
+                    pairs = " ".join(
+                        f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}"
+                        for d in dims
+                    )
+                    if dims:
+                        print(f"  {part}: {pairs}  (human/judge)")
+            else:
+                print(f"  Scores: {scores}")
 
-        if r.get("notes"):
-            print(f"  Notes: {r['notes']}")
+            if r.get("notes"):
+                print(f"  Notes: {r['notes']}")
 
-        review_key = (r["item_id"], r["iteration"], r["reviewer_id"])
-        comments = all_comments.get(review_key, [])
-        if comments:
-            print("  Comments:")
-            for c in comments:
-                print(
-                    f"    {c['commenter_id']} ({c['timestamp'][:19]}): {c['comment']}"
-                )
-        print()
+            review_key = (r["item_id"], r["iteration"], r["reviewer_id"])
+            comments = all_comments.get(review_key, [])
+            if comments:
+                print("  Comments:")
+                for c in comments:
+                    print(
+                        f"    {c['commenter_id']} "
+                        f"({c['timestamp'][:19]}): {c['comment']}"
+                    )
+            print()
 
 
-def cmd_filter(iteration: int, dim: str, below: float, part: str | None = None) -> None:
+def cmd_filter(
+    iteration: int,
+    dim: str,
+    below: float | None = None,
+    above: float | None = None,
+    part: str | None = None,
+) -> None:
     """Filter items by score threshold on a specific dimension.
+
+    Exactly one of --below or --above must be supplied.
 
     Valid --part values: preflection_3p, preflection_1p, reflection_1p, reflection_3p
     Valid --dim values: relevance, specificity, charter_grounding, voice_tone
     If --part is omitted, searches all parts.
     """
     assert dim, "--dim is required"
+    assert (below is None) != (
+        above is None
+    ), "Exactly one of --below or --above is required"
+
+    if below is not None:
+        cmp = lambda s: s < below  # noqa: E731
+        cmp_label = f"< {below}"
+        sort_key = lambda x: x[4]  # noqa: E731 — ascending: worst first
+    else:
+        cmp = lambda s: s > above  # noqa: E731
+        cmp_label = f"> {above}"
+        sort_key = lambda x: -x[4]  # noqa: E731 — descending: best first
+
     items = load_items_for_iteration(iteration)
     judged = [i for i in items if i.get("judgment")]
 
@@ -599,7 +740,7 @@ def cmd_filter(iteration: int, dim: str, below: float, part: str | None = None) 
         j = item["judgment"]
         for p in parts:
             score = j.get(p, {}).get("scores", {}).get(dim)
-            if score is not None and score < below:
+            if score is not None and cmp(score):
                 # Map part name to item field (legacy or new)
                 _field = (
                     p
@@ -618,8 +759,10 @@ def cmd_filter(iteration: int, dim: str, below: float, part: str | None = None) 
                     )
                 )
 
-    hits.sort(key=lambda x: x[4])
-    print(f"Items with {dim} < {below} in iteration {iteration} ({len(hits)} hits):\n")
+    hits.sort(key=sort_key)
+    print(
+        f"Items with {dim} {cmp_label} in iteration {iteration} ({len(hits)} hits):\n"
+    )
     for iid, dec, agg, p, sc, preview in hits:
         print(
             f"  {iid[:16]} {dec:>3} agg={agg:.1f} {p[:3]}_{dim[:3]}={sc} | {preview}..."
@@ -684,29 +827,96 @@ def cmd_trend() -> None:
 def cmd_correlations() -> None:
     """Print judge-human correlation stats grouped by judge prompt version.
 
-    For each judge version that has re-judgment data, computes:
+    For each judge version with paired data, computes:
     - Decision agreement rate (accept/reject match %)
     - Mean absolute score difference (judge aggregate vs human aggregate)
     - Per-dimension score diffs where both human and judge scored the same dims
 
+    Combines two sources of judgments:
+      1. The items table — every item carries its original judgment along with
+         the (judge_prompt, judge_model) recorded on its run. This is enough
+         when reviews are for items judged by the prompt that was current
+         at generation time.
+      2. The judge_correlations table — retroactive re-judgments produced by
+         `rejudge_all`, used when an item was originally judged by an older
+         prompt and a newer one was applied later.
+
     Only uses *train* split reviews so the validation split remains unseen.
     """
-    from pipeline.phase2.storage import build_review_lookup, load_judge_correlations
+    from pipeline.phase2.storage import (
+        build_review_lookup,
+        load_judge_correlations,
+        load_latest_items,
+        load_runs,
+    )
 
-    correlations = load_judge_correlations()
-    if not correlations:
+    review_by_item = build_review_lookup(split="train")
+    if not review_by_item:
         print(
-            "No judge correlations yet. Correlations are recorded after each iteration when reviewed items exist."
+            "No human reviews in the train split yet. "
+            "Submit reviews on /pipeline/review (or via the annotation UI) "
+            "to populate calibration data."
         )
         return
 
-    review_by_item = build_review_lookup(split="train")
+    runs = load_runs()
+    run_judge_info: dict[int, tuple[str, str]] = {
+        r["iteration"]: (r["judge_prompt"], r["judge_model"]) for r in runs
+    }
 
-    # Group correlations by (judge_prompt, judge_model)
+    # Synthesize "entries" with the same shape as judge_correlations rows so
+    # the existing analysis loop below can consume them unchanged.
     by_prompt: dict[tuple[str, str], list[dict]] = {}
+    seen: set[tuple[str, str, str, int]] = set()
+
+    # Source 1: items table (original judgments)
+    all_items = load_latest_items()
+    for item_id, iteration in review_by_item:
+        item = all_items.get((item_id, iteration))
+        if not item or not item.get("judgment"):
+            continue
+        judge_info = run_judge_info.get(iteration)
+        if not judge_info:
+            continue
+        judge_prompt, judge_model = judge_info
+        by_prompt.setdefault((judge_prompt, judge_model), []).append(
+            {
+                "item_id": item_id,
+                "iteration": iteration,
+                "judge_prompt": judge_prompt,
+                "judge_model": judge_model,
+                "judgment": item["judgment"],
+            }
+        )
+        seen.add((judge_prompt, judge_model, item_id, iteration))
+
+    # Source 2: judge_correlations table (retroactive re-judgments)
+    correlations = load_judge_correlations()
     for c in correlations:
-        key = (c["judge_prompt"], c.get("judge_model", "unknown"))
-        by_prompt.setdefault(key, []).append(c)
+        key = (
+            c["judge_prompt"],
+            c.get("judge_model", "unknown"),
+            c["item_id"],
+            c["iteration"],
+        )
+        if key in seen:
+            continue
+        if (c["item_id"], c["iteration"]) not in review_by_item:
+            continue
+        by_prompt.setdefault(
+            (c["judge_prompt"], c.get("judge_model", "unknown")), []
+        ).append(c)
+
+    if not by_prompt:
+        n_reviews = len(review_by_item)
+        print(
+            f"Found {n_reviews} train-split reviews but none of the reviewed "
+            "items have a stored judge score. This usually means the reviews "
+            "are for items whose original judgment was never saved (very old "
+            "data). Run `python -m pipeline.improver_tools rejudge_all` to "
+            "populate calibration data."
+        )
+        return
 
     for prompt_name, model_name in sorted(by_prompt):
         entries = by_prompt[(prompt_name, model_name)]
@@ -771,6 +981,13 @@ def cmd_correlations() -> None:
             print("  Per-dimension mean |diff|:")
             for dim_key in sorted(dim_diffs):
                 print(f"    {dim_key}: {statistics.mean(dim_diffs[dim_key]):.2f}")
+
+    print(
+        "\nNote: this command shows numeric calibration only. To read the "
+        "reviewer NOTES (why the human disagreed) — which are usually the "
+        "most actionable signal — run "
+        "`python -m pipeline.improver_tools reviews`."
+    )
 
 
 def cmd_rejudge_all() -> None:
@@ -2038,6 +2255,19 @@ def main():
             reasoning_limit=_get_flag_int("--reasoning-limit", 200),
             offset=_get_flag_int("--offset", 0),
         )
+    elif cmd == "accepts":
+        _require_positional(
+            1,
+            "accepts <iteration> [--limit N] [--offset N] [--reasoning-limit N] "
+            "[--sort top|borderline]",
+        )
+        cmd_accepts(
+            int(positional[0]),
+            limit=_get_flag_int("--limit", 10),
+            reasoning_limit=_get_flag_int("--reasoning-limit", 200),
+            offset=_get_flag_int("--offset", 0),
+            sort=_get_flag("--sort", "top"),
+        )
     elif cmd == "show":
         brief = "--brief" in args
         gold_only = "--gold" in args
@@ -2072,17 +2302,21 @@ def main():
         _require_positional(2, "compare <item_id> <iteration>")
         cmd_compare(positional[0], int(positional[1]))
     elif cmd == "reviews":
-        iteration = int(positional[0]) if positional else None
-        cmd_reviews(iteration=iteration, limit=_get_flag_int("--limit", 20))
+        judge_prompt_arg = positional[0] if positional else None
+        cmd_reviews(judge_prompt=judge_prompt_arg, limit=_get_flag_int("--limit", 20))
     elif cmd == "filter":
         _require_positional(
             1,
-            "filter <iteration> --dim X --below N [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]",
+            "filter <iteration> --dim X (--below N | --above N) "
+            "[--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]",
         )
+        below_arg = _get_flag("--below")
+        above_arg = _get_flag("--above")
         cmd_filter(
             int(positional[0]),
             dim=_get_flag("--dim"),
-            below=float(_get_flag("--below")),
+            below=float(below_arg) if below_arg is not None else None,
+            above=float(above_arg) if above_arg is not None else None,
             part=_get_flag("--part"),
         )
     elif cmd == "trend":

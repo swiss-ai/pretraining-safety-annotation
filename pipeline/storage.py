@@ -228,7 +228,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE judge_correlations_old")
         conn.commit()
 
-
     # Summary pipeline tables (added 2026-03-30)
     if "summary_runs" not in tables:
         conn.execute("""
@@ -287,6 +286,57 @@ def _get_conn() -> sqlite3.Connection:
         "Opened SQLite connection (thread={})", threading.current_thread().name
     )
     return conn
+
+
+# --- Thread-local read cache, invalidated by PRAGMA data_version ---
+#
+# `PRAGMA data_version` increments whenever any *other* connection (in this
+# process or another) modifies the database. We additionally bump a per-thread
+# counter inside our own write helpers to invalidate when *this* connection
+# is the writer. The combination gives correct invalidation across:
+#   - the dashboard's own writes (save_review etc.)  → bump_cache_version
+#   - the pipeline process's writes (save_item etc.) → PRAGMA data_version
+#   - other dashboard threads / background jobs      → PRAGMA data_version
+#
+# Returned objects are cached by reference — callers must not mutate them.
+
+
+def _cache_token() -> tuple[int, int]:
+    conn = _get_conn()
+    sv = conn.execute("PRAGMA data_version").fetchone()[0]
+    bv = getattr(_local, "bump_version", 0)
+    return (sv, bv)
+
+
+def cached_load(key, loader):
+    """Thread-local memoization for read-only loaders.
+
+    Cache is invalidated whenever the database is modified by any other
+    connection (via PRAGMA data_version) or by our own write helpers
+    (via bump_cache_version()). Returned values are shared by reference;
+    callers must treat them as read-only.
+    """
+    cache = getattr(_local, "read_cache", None)
+    if cache is None:
+        cache = {}
+        _local.read_cache = cache
+    token = _cache_token()
+    entry = cache.get(key)
+    if entry is not None and entry[0] == token:
+        return entry[1]
+    result = loader()
+    cache[key] = (token, result)
+    return result
+
+
+def bump_cache_version() -> None:
+    """Invalidate this thread's read cache after a write on the same connection.
+
+    Must be called after committing any write — PRAGMA data_version does not
+    increment for changes made by the same connection, so we track our own
+    writes separately.
+    """
+    _local.bump_version = getattr(_local, "bump_version", 0) + 1
 
 
 def checkpoint() -> None:

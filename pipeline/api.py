@@ -24,7 +24,10 @@ RETRY_BACKOFF_BASE = 2.0
 # Matched case-insensitively against the model name. First match wins.
 _SAMPLING_DEFAULTS: list[tuple[str, dict[str, float | int]]] = [
     # Qwen3.5 thinking: t=1.0, top_p=0.95, top_k=20, presence_penalty=1.5
-    ("qwen3.5", {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5}),
+    (
+        "qwen3.5",
+        {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5},
+    ),
     # Qwen3 thinking: t=0.6, top_p=0.95, top_k=20
     ("qwen3", {"temperature": 0.6, "top_p": 0.95, "top_k": 20}),
     # SmolLM3: t=0.6, top_p=0.95
@@ -194,12 +197,18 @@ def extract_json(raw: str) -> dict:
     """Extract a JSON object from a model response.
 
     Tries multiple strategies in order:
+    0. Strip <think>...</think> blocks (thinking model output)
     1. Direct parse (response is pure JSON)
     2. Strip leading code fence (```json ... ```)
     3. Find a fenced JSON block anywhere in the response
     4. Find the first { and its matching } via brace counting
     """
     text = raw.strip()
+
+    # 0. Strip <think>...</think> blocks from thinking models
+    think_end = text.rfind("</think>")
+    if think_end != -1:
+        text = text[think_end + len("</think>") :].strip()
 
     # 1. Direct parse
     try:
@@ -218,13 +227,22 @@ def extract_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 3. Fenced JSON block anywhere
-    fence_match = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
-    if fence_match:
+    # 3. Fenced JSON block — try last match first (thinking models put templates early)
+    fence_matches = list(re.finditer(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL))
+    for match in reversed(fence_matches):
         try:
-            return json.loads(fence_match.group(1))
+            return json.loads(match.group(1))
         except json.JSONDecodeError:
-            pass
+            continue
+
+    # 3b. Unfenced JSON after code fences (thinking models put real JSON after examples)
+    if fence_matches:
+        after_last = text[fence_matches[-1].end() :].strip()
+        if after_last:
+            try:
+                return json.loads(after_last)
+            except json.JSONDecodeError:
+                pass
 
     # 4. First { to matching } via brace counting
     start = text.find("{")

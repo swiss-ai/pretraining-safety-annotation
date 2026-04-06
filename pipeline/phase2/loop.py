@@ -250,6 +250,50 @@ Human Review Mining sections of the improver instructions.
             "\nAdditional subagents to spawn:\n" + "\n".join(extra_agents) + "\n"
         )
 
+    # Human notes: optional operator guidance, injected if present.
+    # - Global (role-scoped):  pipeline/prompts/human_notes_<role>.md
+    # - Per-model override:    data/pipeline/prompts/<alias>/human_notes_<role>.md
+    # Both are loaded if they exist; neither is required. Contents are shown
+    # near the top of the prompt under a "Human notes" section.
+    human_notes_parts: list[str] = []
+    global_notes_path = _INIT_PROMPTS_DIR / f"human_notes_{role}.md"
+    if global_notes_path.exists():
+        try:
+            text = global_notes_path.read_text(encoding="utf-8").strip()
+            if text:
+                human_notes_parts.append(
+                    f"### Global notes (all {role} improvers)\n{text}"
+                )
+        except Exception as e:
+            logger.warning("Failed to read {}: {}", global_notes_path, e)
+    model_notes_path = model_dir / f"human_notes_{role}.md"
+    if model_notes_path.exists():
+        try:
+            text = model_notes_path.read_text(encoding="utf-8").strip()
+            if text:
+                human_notes_parts.append(
+                    f"### Notes for {target_alias} specifically\n{text}"
+                )
+        except Exception as e:
+            logger.warning("Failed to read {}: {}", model_notes_path, e)
+
+    if human_notes_parts:
+        human_notes_block = (
+            "\n## Human notes (priority — from your operator)\n"
+            "Read these carefully. They reflect guidance from the person running this "
+            "pipeline and override general heuristics where they conflict.\n\n"
+            + "\n\n".join(human_notes_parts)
+            + "\n"
+        )
+        logger.info(
+            "Injecting human notes for {}/{}: {} chars",
+            role,
+            target_alias,
+            len(human_notes_block),
+        )
+    else:
+        human_notes_block = ""
+
     return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
 
 ## {role_label} Improvement for model: {target_alias}
@@ -259,7 +303,7 @@ You are ONLY responsible for the **{target_alias}** model. Ignore iterations, er
 belonging to other models. When analyzing results, filter by your target model.
 
 {phase_instructions}
-{first_run_note}
+{first_run_note}{human_notes_block}
 ## Cross-model evaluation
 Your improvements will be tested against ALL {other_type} models: [{counterpart_list}].
 When you run a batch, it creates one iteration per {other_type} model, all sharing a group_id.

@@ -28,14 +28,22 @@ phase2:
     #   api_name: jkminder/lAiFTaihSJ
     #   hf_slug: moonshotai/Kimi-K2.5
     - alias: gpt-oss-120b
-      api_name: openai/gpt-oss-120b-cPOP
+      api_name: openai/gpt-oss-120b-qiCn
       hf_slug: openai/gpt-oss-120b
     - alias: glm-4.7-flash
       api_name: zai-org/GLM-4.7-Flash
       hf_slug: zai-org/GLM-4.7-Flash
-    #   thinking: false
+    - alias: qwen3.5-35b-a3b
+      api_name: Qwen/Qwen3.5-35B-A3B-Rkuh
+      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+    # - alias: qwen3.5-9b
+    #   api_name: Qwen/Qwen3.5-9B-hFgU
+    #   hf_slug: Qwen/Qwen3.5-9B
+    - alias: nemotron-3-super-120b-a12b
+      api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-yCOH
+      hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
     # - alias: smollm3-3b
-    #   api_name: HuggingFaceTB/SmolLM3-3B-hhtO
+    #   api_name: HuggingFaceTB/SmolLM3-3B-uDyM
     #   hf_slug: HuggingFaceTB/SmolLM3-3B
     #   thinking: false
     # - alias: llama-3.3-70b-instruct

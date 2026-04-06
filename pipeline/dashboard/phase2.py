@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import statistics
 import threading
 from pathlib import Path
@@ -20,6 +21,7 @@ from pipeline.phase2.storage import (
     load_item_across_iterations,
     load_items_for_iteration,
     load_judge_correlations,
+    load_latest_items,
     load_latest_reviews,
     load_loop_history,
     load_review_comments,
@@ -136,18 +138,67 @@ def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
 
 
 def _load_correlation_pairs(split: str | None = None) -> list[dict]:
-    """Load and join correlations with human reviews. Returns paired records.
+    """Load and join (judge, human) calibration pairs.
 
-    Each record has: judge_prompt, judge_model, iteration, item_id, judge_agg,
-    human_agg, judge_dec, human_dec.
+    Combines two sources:
+      1. Original judgments stored in the items table — every item carries the
+         judgment produced when it was generated, by the (judge_prompt,
+         judge_model) recorded on its run. This is the canonical source for
+         items judged by the prompt that was current at generation time.
+      2. Retroactive re-judgments stored in the judge_correlations table —
+         used when an item was originally judged by an *older* prompt and a
+         newer prompt was applied later via `rejudge_all`.
+
+    The two sources are deduplicated by (judge_prompt, judge_model, item_id,
+    iteration); the items table wins when both sources cover the same key.
+
+    Each returned record has: judge_prompt, judge_model, iteration, item_id,
+    judge_agg, human_agg, judge_dec, human_dec.
 
     split: "train", "validation", or None (all).
     """
-    correlations = load_judge_correlations()
     review_by_item = build_review_lookup(split=split)
+    if not review_by_item:
+        return []
 
-    pairs = []
-    for c in correlations:
+    runs = load_runs()
+    run_judge_info: dict[int, tuple[str, str]] = {
+        r["iteration"]: (r["judge_prompt"], r["judge_model"]) for r in runs
+    }
+
+    pairs: list[dict] = []
+    seen: set[tuple[str, str, str, int]] = set()
+
+    # Source 1: original judgments from the items table
+    all_items = load_latest_items()
+    for (item_id, iteration), rev in review_by_item.items():
+        item = all_items.get((item_id, iteration))
+        if not item or not item.get("judgment"):
+            continue
+        judge_info = run_judge_info.get(iteration)
+        if not judge_info:
+            continue
+        judge_prompt, judge_model = judge_info
+        j = item["judgment"]
+        pairs.append(
+            {
+                "judge_prompt": judge_prompt,
+                "judge_model": judge_model,
+                "iteration": iteration,
+                "item_id": item_id,
+                "judge_agg": j.get("aggregate", 0),
+                "human_agg": rev.get("aggregate", 0),
+                "judge_dec": j.get("decision", ""),
+                "human_dec": rev.get("decision", ""),
+            }
+        )
+        seen.add((judge_prompt, judge_model, item_id, iteration))
+
+    # Source 2: retroactive re-judgments from judge_correlations
+    for c in load_judge_correlations():
+        key = (c["judge_prompt"], c["judge_model"], c["item_id"], c["iteration"])
+        if key in seen:
+            continue
         rev = review_by_item.get((c["item_id"], c["iteration"]))
         if not rev:
             continue
@@ -163,6 +214,7 @@ def _load_correlation_pairs(split: str | None = None) -> list[dict]:
                 "human_dec": rev.get("decision", ""),
             }
         )
+
     return pairs
 
 
@@ -202,99 +254,6 @@ def _compute_correlation_by_judge_version(
     if gen_filter and iter_to_gen:
         pairs = [p for p in pairs if iter_to_gen.get(p["iteration"]) == gen_filter]
     return _aggregate_correlation_pairs(pairs)
-
-
-def _compute_calibration_from_correlations(
-    judge_prompt: str, judge_model: str, split: str | None = None
-) -> dict:
-    """Compute per-dimension Pearson correlations from judge_correlations data for a specific version.
-
-    Returns same shape as _compute_calibration: {dimension_correlations, n_paired}.
-    split: "train", "validation", or None (all).
-    """
-    correlations = load_judge_correlations()
-    review_by_item = build_review_lookup(split=split)
-
-    paired_scores: dict[str, list[tuple[float, float]]] = {}
-    n_paired = 0
-    for c in correlations:
-        if c["judge_prompt"] != judge_prompt or c["judge_model"] != judge_model:
-            continue
-        key = (c["item_id"], c["iteration"])
-        rev = review_by_item.get(key)
-        if not rev:
-            continue
-        n_paired += 1
-        j = c["judgment"]
-        rev_scores = rev.get("scores", {})
-        is_per_part = rev_scores and isinstance(
-            next(iter(rev_scores.values()), None), dict
-        )
-        _NON_PART_KEYS = {
-            "aggregate",
-            "decision",
-            "judge_prompt",
-            "raw_responses",
-            "usage",
-            "latency_ms",
-            "timestamp",
-        }
-        for part, part_j in j.items():
-            if part in _NON_PART_KEYS or not isinstance(part_j, dict):
-                continue
-            j_scores = part_j.get("scores", {})
-            h_scores = rev_scores.get(part, {}) if is_per_part else rev_scores
-            for dim, h_val in h_scores.items():
-                if dim in j_scores:
-                    paired_scores.setdefault(f"{part}_{dim}", []).append(
-                        (j_scores[dim], h_val)
-                    )
-
-    return {
-        "dimension_correlations": {
-            dim: _pearson(pairs) for dim, pairs in paired_scores.items()
-        },
-        "n_paired": n_paired,
-    }
-
-
-def _render_calibration_from_items(cal: dict) -> None:
-    """Render calibration panel content from _compute_calibration result (fallback when no correlations)."""
-    with ui.row().classes("gap-8"):
-        with ui.column():
-            ui.label(f"Paired reviews: {cal['n_paired']}").classes("text-body2")
-            agg = cal["aggregate_correlation"]
-            ui.label(
-                f"Aggregate correlation: {agg:.3f}"
-                if agg is not None
-                else "Aggregate correlation: N/A"
-            ).classes("text-body2")
-            agr = cal["decision_agreement"]
-            ui.label(
-                f"Decision agreement: {agr:.1%}"
-                if agr is not None
-                else "Decision agreement: N/A"
-            ).classes("text-body2")
-
-        dim_corrs = cal["dimension_correlations"]
-        # Group dimension correlations by part prefix (works for both old and new part names)
-        seen_parts: list[str] = []
-        for k in dim_corrs:
-            parts_in_key = k.rsplit("_", 1)
-            if len(parts_in_key) == 2:
-                part = parts_in_key[0]
-                if part not in seen_parts:
-                    seen_parts.append(part)
-        for part in seen_parts:
-            part_dims = {k: v for k, v in dim_corrs.items() if k.startswith(f"{part}_")}
-            if not part_dims:
-                continue
-            with ui.column():
-                ui.label(f"{part} correlations:").classes("text-body2 text-weight-bold")
-                for dim, corr in part_dims.items():
-                    short = dim[len(part) + 1 :]
-                    val = f"{corr:.3f}" if corr is not None else "N/A"
-                    ui.label(f"  {short}: {val}").classes("text-body2")
 
 
 def _render_judge_scores(judgment: dict, judge_model: str = "") -> None:
@@ -688,24 +647,27 @@ def _render_acceptance_rate_chart(
         m = _re_ar.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
 
-    def _filter_for_gen_version(with_judged, gen_v):
-        """Filter entries to a specific gen version + latest judge version."""
-        gen_entries = [
-            e for e in with_judged if _prompt_version(e.get("gen_prompt", "")) == gen_v
-        ]
-        if not gen_entries:
-            return []
-        latest_judge_v = max(
-            _prompt_version(e.get("judge_prompt", "")) for e in gen_entries
-        )
-        return [
-            e
-            for e in gen_entries
-            if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
-        ]
-
     if not iter_stats:
         return
+
+    # Global latest judge prompt version across all iter_stats with judged items.
+    # Only generators that have been run under this version are shown, so the
+    # chart compares apples to apples.
+    judged_iter_stats = [s for s in iter_stats if s["n_acc"] + s["n_rej"] > 0]
+    if not judged_iter_stats:
+        return
+    global_latest_judge_v = max(
+        _prompt_version(s.get("judge_prompt", "")) for s in judged_iter_stats
+    )
+
+    def _filter_for_gen_version(with_judged, gen_v):
+        """Filter entries to a specific gen version under the global latest judge."""
+        return [
+            e
+            for e in with_judged
+            if _prompt_version(e.get("gen_prompt", "")) == gen_v
+            and _prompt_version(e.get("judge_prompt", "")) == global_latest_judge_v
+        ]
 
     # Group iter_stats by generator_model
     by_gen: dict[str, list[dict]] = {}
@@ -722,8 +684,15 @@ def _render_acceptance_rate_chart(
 
     for gen_model in sorted(by_gen):
         entries = by_gen[gen_model]
-        # Only consider entries with judged items (and above min_samples)
-        with_judged = [e for e in entries if e["n_acc"] + e["n_rej"] > min_samples]
+        # Only consider entries with judged items (and above min_samples),
+        # restricted to the global latest judge prompt version so generators
+        # that never ran under it are excluded entirely.
+        with_judged = [
+            e
+            for e in entries
+            if e["n_acc"] + e["n_rej"] > min_samples
+            and _prompt_version(e.get("judge_prompt", "")) == global_latest_judge_v
+        ]
         if not with_judged:
             continue
 
@@ -733,21 +702,13 @@ def _render_acceptance_rate_chart(
 
         if prompt_mode == "best":
             # Pick the gen prompt version with the highest acceptance rate
-            # under the latest judge prompt version
-            latest_judge_v = max(
-                _prompt_version(e.get("judge_prompt", "")) for e in with_judged
-            )
-            under_latest_judge = [
-                e
-                for e in with_judged
-                if _prompt_version(e.get("judge_prompt", "")) == latest_judge_v
-            ]
+            # (already restricted to the global latest judge above).
             best_v = None
             best_rate = -1.0
             for gv in all_gen_versions:
                 filtered = [
                     e
-                    for e in under_latest_judge
+                    for e in with_judged
                     if _prompt_version(e.get("gen_prompt", "")) == gv
                 ]
                 t_acc = sum(e["n_acc"] for e in filtered)
@@ -1584,77 +1545,148 @@ def pipeline_monitoring_page():
             }
         )
 
-    # --- Judge Calibration Panel (uses latest judge correlations) ---
+    # --- Judge Calibration Panel (latest judge prompt per model) ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
         ui.label("Judge Calibration").classes("text-h6 text-weight-bold")
-        version_corrs_panel = _compute_correlation_by_judge_version()
-        if not version_corrs_panel:
-            cal = _compute_calibration(all_reviews, items_by_key)
-            if cal["n_paired"] == 0:
+        ui.label(
+            "Latest judge prompt per model. Decision agreement (Cohen's κ) and "
+            "aggregate score correlation (Pearson r), by split."
+        ).classes("text-caption text-grey-7")
+
+        _all_pairs = _load_correlation_pairs()
+        if not _all_pairs:
+            # Diagnose: review counts (by split) + whether the items they
+            # belong to have stored judgments at all.
+            _review_lookup = build_review_lookup()
+            _n_reviews_total = len(_review_lookup)
+            _n_train = sum(
+                1 for (iid, _it) in _review_lookup if review_split(iid) == "train"
+            )
+            _n_val = sum(
+                1 for (iid, _it) in _review_lookup if review_split(iid) == "validation"
+            )
+
+            with ui.column().classes("gap-1 q-mt-sm"):
                 ui.label(
-                    "No human reviews yet — submit reviews to see calibration metrics."
-                ).classes("text-grey-6")
-            else:
-                _render_calibration_from_items(cal)
+                    f"Reviews: {_n_reviews_total} total — "
+                    f"{_n_train} train, {_n_val} validation"
+                ).classes("text-body2")
+
+                if _n_reviews_total == 0:
+                    ui.label(
+                        "Submit some reviews on /pipeline/review to populate "
+                        "this panel — every reviewed item that already has a "
+                        "judge score will be paired automatically."
+                    ).classes("text-caption text-grey-6")
+                else:
+                    ui.label(
+                        "Reviews exist but none of the reviewed items have a "
+                        "stored judge score. This usually means the reviews "
+                        "are for items whose original judgment was never "
+                        "saved (very old data). Run "
+                    ).classes("text-caption text-grey-6")
+                    ui.code("python -m pipeline.improver_tools rejudge_all").classes(
+                        "text-caption"
+                    )
+                    ui.label(
+                        "to re-judge every reviewed item with the current "
+                        "judge prompts and populate this panel."
+                    ).classes("text-caption text-grey-6")
         else:
             import re as _re_panel
 
-            latest_key = max(
-                version_corrs_panel.keys(),
-                key=lambda k: (
-                    int(m.group(1)) if (m := _re_panel.search(r"_v(\d+)", k[0])) else 0
-                ),
-            )
-            latest = version_corrs_panel[latest_key]
-            latest_prompt, latest_model = latest_key
+            # Find latest judge prompt version per judge model
+            _latest_prompt: dict[str, tuple[int, str]] = {}
+            for _p in _all_pairs:
+                _model = _p["judge_model"]
+                _prompt = _p["judge_prompt"]
+                _m = _re_panel.search(r"_v(\d+)", _prompt)
+                _v = int(_m.group(1)) if _m else 0
+                if _model not in _latest_prompt or _v > _latest_prompt[_model][0]:
+                    _latest_prompt[_model] = (_v, _prompt)
 
-            # Also compute per-dimension calibration from correlations data
-            cal_from_corr = _compute_calibration_from_correlations(
-                latest_prompt, latest_model
-            )
+            def _fmt(x: float | None) -> str:
+                return f"{x:.3f}" if x is not None else "—"
 
-            with ui.row().classes("gap-8"):
-                with ui.column():
-                    ui.label(f"Judge: {latest_prompt} / {latest_model}").classes(
-                        "text-body2 text-weight-bold"
-                    )
-                    n_paired = cal_from_corr["n_paired"]
-                    ui.label(f"Paired reviews: {n_paired}").classes("text-body2")
-                    pr = latest["pearson"]
-                    ui.label(
-                        f"Score Pearson r: {pr:.3f}"
-                        if pr is not None
-                        else "Score Pearson r: N/A"
-                    ).classes("text-body2")
-                    kp = latest["kappa"]
-                    ui.label(
-                        f"Decision Cohen's κ: {kp:.3f}"
-                        if kp is not None
-                        else "Decision Cohen's κ: N/A"
-                    ).classes("text-body2")
-
-                dim_corrs = cal_from_corr.get("dimension_correlations", {})
-                seen_parts_panel: list[str] = []
-                for k in dim_corrs:
-                    parts_in_key = k.rsplit("_", 1)
-                    if len(parts_in_key) == 2:
-                        part = parts_in_key[0]
-                        if part not in seen_parts_panel:
-                            seen_parts_panel.append(part)
-                for part in seen_parts_panel:
-                    part_dims = {
-                        k: v for k, v in dim_corrs.items() if k.startswith(f"{part}_")
-                    }
-                    if not part_dims:
-                        continue
-                    with ui.column():
-                        ui.label(f"{part} correlations:").classes(
-                            "text-body2 text-weight-bold"
+            rows: list[dict] = []
+            for _model in sorted(_latest_prompt):
+                _prompt = _latest_prompt[_model][1]
+                _model_pairs = [
+                    p
+                    for p in _all_pairs
+                    if p["judge_model"] == _model and p["judge_prompt"] == _prompt
+                ]
+                for split_name in ("overall", "train", "validation"):
+                    if split_name == "overall":
+                        sp = _model_pairs
+                    else:
+                        sp = [
+                            p
+                            for p in _model_pairs
+                            if review_split(p["item_id"]) == split_name
+                        ]
+                    if not sp:
+                        rows.append(
+                            {
+                                "model": _model,
+                                "prompt": _prompt,
+                                "split": split_name,
+                                "n": 0,
+                                "kappa": "—",
+                                "pearson": "—",
+                            }
                         )
-                        for dim, corr in part_dims.items():
-                            short = dim[len(part) + 1 :]
-                            val = f"{corr:.3f}" if corr is not None else "N/A"
-                            ui.label(f"  {short}: {val}").classes("text-body2")
+                        continue
+                    agg = _aggregate_correlation_pairs(sp)
+                    entry = agg.get((_prompt, _model), {})
+                    rows.append(
+                        {
+                            "model": _model,
+                            "prompt": _prompt,
+                            "split": split_name,
+                            "n": len(sp),
+                            "kappa": _fmt(entry.get("kappa")),
+                            "pearson": _fmt(entry.get("pearson")),
+                        }
+                    )
+
+            ui.table(
+                columns=[
+                    {
+                        "name": "model",
+                        "label": "Judge Model",
+                        "field": "model",
+                        "align": "left",
+                    },
+                    {
+                        "name": "prompt",
+                        "label": "Prompt",
+                        "field": "prompt",
+                        "align": "left",
+                    },
+                    {
+                        "name": "split",
+                        "label": "Split",
+                        "field": "split",
+                        "align": "left",
+                    },
+                    {"name": "n", "label": "n", "field": "n", "align": "right"},
+                    {
+                        "name": "kappa",
+                        "label": "Decision κ",
+                        "field": "kappa",
+                        "align": "right",
+                    },
+                    {
+                        "name": "pearson",
+                        "label": "Score r",
+                        "field": "pearson",
+                        "align": "right",
+                    },
+                ],
+                rows=rows,
+                row_key="model",
+            ).props("dense flat").classes("w-full")
 
     # --- Trend Charts ---
     _SOURCE_LABEL = {
@@ -1941,7 +1973,7 @@ def pipeline_monitoring_page():
                         ).classes("w-36")
 
     # --- Per-Generator Acceptance Rate Bar Chart (auto-refreshing) ---
-    _acc_rate_state = {"prompt_mode": "latest", "min_samples": 0}
+    _acc_rate_state = {"prompt_mode": "best", "min_samples": 50}
     _acc_rate_container = ui.column().classes("w-full")
 
     def _draw_acc_rate(r, s):
@@ -2448,15 +2480,6 @@ def pipeline_review_page():
     cfg = load_config()
     dimensions = cfg.phase2.scoring.dimensions
 
-    # Build run metadata lookups
-    run_by_iter = {r["iteration"]: r for r in runs}
-    # group_id → list of iterations in that group
-    group_iters: dict[str, list[int]] = {}
-    for r in runs:
-        gid = r.get("group_id")
-        if gid:
-            group_iters.setdefault(gid, []).append(r["iteration"])
-
     def _prompt_version(filename: str) -> str:
         """Extract version from prompt filename, e.g. 'generator_v1.md' -> 'v1'."""
         import re
@@ -2467,6 +2490,44 @@ def pipeline_review_page():
     def _version_sort_key(v: str) -> int:
         return int(v[1:]) if v.startswith("v") and v[1:].isdigit() else 0
 
+    # Run metadata lookups — refreshed via _refresh_runs() on every sort pass
+    # because background pipeline jobs keep adding new iterations after the
+    # page is opened. If we cached these at page load, the Recommended sort
+    # would silently skip any generator/judge run that arrived later.
+    run_by_iter: dict[int, dict] = {}
+    group_iters: dict[str, list[int]] = {}
+    _latest_gen_prompt: dict[str, str] = {}
+    _latest_judge_prompt: dict[str, str] = {}
+
+    def _refresh_runs() -> None:
+        nonlocal runs, run_by_iter, group_iters
+        nonlocal _latest_gen_prompt, _latest_judge_prompt
+        runs = load_runs()
+        run_by_iter = {r["iteration"]: r for r in runs}
+        group_iters = {}
+        for r in runs:
+            gid = r.get("group_id")
+            if gid:
+                group_iters.setdefault(gid, []).append(r["iteration"])
+        _latest_gen_prompt = {}
+        for r in runs:
+            model = r.get("generator_model", "unknown")
+            v = _prompt_version(r["gen_prompt"])
+            if model not in _latest_gen_prompt or _version_sort_key(
+                v
+            ) > _version_sort_key(_latest_gen_prompt[model]):
+                _latest_gen_prompt[model] = v
+        _latest_judge_prompt = {}
+        for r in runs:
+            model = r.get("judge_model", "unknown")
+            v = _prompt_version(r["judge_prompt"])
+            if model not in _latest_judge_prompt or _version_sort_key(
+                v
+            ) > _version_sort_key(_latest_judge_prompt[model]):
+                _latest_judge_prompt[model] = v
+
+    _refresh_runs()
+
     all_gen_models = sorted({r.get("generator_model", "unknown") for r in runs})
     all_judge_models = sorted({r.get("judge_model", "unknown") for r in runs})
     all_gen_prompts = sorted(
@@ -2475,25 +2536,6 @@ def pipeline_review_page():
     all_judge_prompts = sorted(
         {_prompt_version(r["judge_prompt"]) for r in runs}, key=_version_sort_key
     )
-
-    # Per-model latest prompt versions (for "latest" filter option)
-    _latest_gen_prompt: dict[str, str] = {}
-    for r in runs:
-        model = r.get("generator_model", "unknown")
-        v = _prompt_version(r["gen_prompt"])
-        if model not in _latest_gen_prompt or _version_sort_key(v) > _version_sort_key(
-            _latest_gen_prompt[model]
-        ):
-            _latest_gen_prompt[model] = v
-
-    _latest_judge_prompt: dict[str, str] = {}
-    for r in runs:
-        model = r.get("judge_model", "unknown")
-        v = _prompt_version(r["judge_prompt"])
-        if model not in _latest_judge_prompt or _version_sort_key(
-            v
-        ) > _version_sort_key(_latest_judge_prompt[model]):
-            _latest_judge_prompt[model] = v
 
     # State — prompts default to "latest" (per-model), models default to All
     LATEST = "latest"
@@ -2506,48 +2548,75 @@ def pipeline_review_page():
     }
 
     # --- Filter bar ---
-    with ui.row().classes("q-px-md q-mt-md items-center gap-4"):
-        gen_model_select = ui.select(
-            options=["All"] + all_gen_models,
-            value="All",
-            label="Generator",
-        ).classes("w-40")
+    with ui.row().classes("q-px-md q-mt-xs items-center gap-2"):
+        gen_model_select = (
+            ui.select(
+                options=["All"] + all_gen_models,
+                value="All",
+                label="Generator",
+            )
+            .props("dense options-dense")
+            .classes("w-32")
+            .style("font-size: 0.8em;")
+        )
 
-        gen_prompt_select = ui.select(
-            options=["latest", "All"] + all_gen_prompts,
-            value=state["gen_prompt"],
-            label="Gen Prompt",
-        ).classes("w-32")
+        gen_prompt_select = (
+            ui.select(
+                options=["latest", "All"] + all_gen_prompts,
+                value=state["gen_prompt"],
+                label="Gen Prompt",
+            )
+            .props("dense options-dense")
+            .classes("w-24")
+            .style("font-size: 0.8em;")
+        )
 
-        judge_model_select = ui.select(
-            options=["All"] + all_judge_models,
-            value="All",
-            label="Judge",
-        ).classes("w-40")
+        judge_model_select = (
+            ui.select(
+                options=["All"] + all_judge_models,
+                value="All",
+                label="Judge",
+            )
+            .props("dense options-dense")
+            .classes("w-32")
+            .style("font-size: 0.8em;")
+        )
 
-        judge_prompt_select = ui.select(
-            options=["latest", "All"] + all_judge_prompts,
-            value=state["judge_prompt"],
-            label="Judge Prompt",
-        ).classes("w-32")
+        judge_prompt_select = (
+            ui.select(
+                options=["latest", "All"] + all_judge_prompts,
+                value=state["judge_prompt"],
+                label="Judge Prompt",
+            )
+            .props("dense options-dense")
+            .classes("w-24")
+            .style("font-size: 0.8em;")
+        )
 
-        sort_select = ui.select(
-            options=[
-                "Low judge score",
-                "High judge score",
-                "Low safety score",
-                "High safety score",
-                "Default order",
-            ],
-            value="Low judge score",
-            label="Sort",
-        ).classes("w-48")
+        sort_select = (
+            ui.select(
+                options=[
+                    "Recommended",
+                    "Low judge score",
+                    "High judge score",
+                    "Low safety score",
+                    "High safety score",
+                    "Default order",
+                ],
+                value="Recommended",
+                label="Sort",
+            )
+            .props("dense options-dense")
+            .classes("w-36")
+            .style("font-size: 0.8em;")
+        )
 
     # --- Main split panel ---
     with (
         ui.splitter(value=35)
         .classes("w-full")
-        .style("height: calc(100vh - 120px)") as splitter
+        .style("height: calc(100vh - 120px)")
+        .props('separator-class="bg-primary" separator-style="width: 4px;"') as splitter
     ):
         # Left: source text + charter
         with splitter.before:
@@ -2565,10 +2634,87 @@ def pipeline_review_page():
                     "font-family: Georgia, serif; white-space: pre-wrap; font-size: 0.95em;"
                 )
                 ui.separator()
-                ui.label("Charter").classes("text-subtitle2 text-weight-bold")
-                ui.markdown(charter_text, extras=["tables"]).classes(
-                    "text-body2"
-                ).style("flex: 1; overflow-y: auto; padding: 8px; line-height: 1.6;")
+                with ui.row().classes("items-center w-full gap-2"):
+                    ui.label("Charter").classes("text-subtitle2 text-weight-bold")
+                    charter_search = (
+                        ui.input(placeholder="Search charter...")
+                        .props("dense outlined clearable")
+                        .classes("flex-1")
+                    )
+                charter_md = (
+                    ui.markdown(charter_text, extras=["tables"])
+                    .classes("text-body2")
+                    .style("flex: 1; overflow-y: auto; padding: 8px; line-height: 1.6;")
+                )
+                _charter_dom_id = f"c{charter_md.id}"
+
+                def _on_charter_search(e) -> None:
+                    term = e.value or ""
+                    term_json = json.dumps(term)
+                    js = f"""
+                    (function() {{
+                        const root = document.getElementById({json.dumps(_charter_dom_id)});
+                        if (!root) return;
+                        // Remove previous highlights
+                        root.querySelectorAll('mark.charter-search').forEach(m => {{
+                            const parent = m.parentNode;
+                            parent.replaceChild(document.createTextNode(m.textContent), m);
+                            parent.normalize();
+                        }});
+                        const term = {term_json};
+                        if (!term) return;
+                        const re = new RegExp(
+                            term.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&'),
+                            'gi'
+                        );
+                        const walker = document.createTreeWalker(
+                            root, NodeFilter.SHOW_TEXT, {{
+                                acceptNode: n => n.parentNode &&
+                                    n.parentNode.nodeName !== 'SCRIPT' &&
+                                    n.parentNode.nodeName !== 'STYLE'
+                                    ? NodeFilter.FILTER_ACCEPT
+                                    : NodeFilter.FILTER_REJECT
+                            }}
+                        );
+                        const nodes = [];
+                        let n;
+                        while ((n = walker.nextNode())) nodes.push(n);
+                        for (const textNode of nodes) {{
+                            const text = textNode.nodeValue;
+                            re.lastIndex = 0;
+                            if (!re.test(text)) continue;
+                            re.lastIndex = 0;
+                            const frag = document.createDocumentFragment();
+                            let last = 0;
+                            let m;
+                            while ((m = re.exec(text)) !== null) {{
+                                if (m.index > last) {{
+                                    frag.appendChild(
+                                        document.createTextNode(text.slice(last, m.index))
+                                    );
+                                }}
+                                const mk = document.createElement('mark');
+                                mk.className = 'charter-search';
+                                mk.style.background = '#ffe066';
+                                mk.style.color = '#000';
+                                mk.textContent = m[0];
+                                frag.appendChild(mk);
+                                last = m.index + m[0].length;
+                            }}
+                            if (last < text.length) {{
+                                frag.appendChild(
+                                    document.createTextNode(text.slice(last))
+                                );
+                            }}
+                            textNode.parentNode.replaceChild(frag, textNode);
+                        }}
+                        const first = root.querySelector('mark.charter-search');
+                        if (first) first.scrollIntoView({{block: 'center'}});
+                    }})();
+                    """
+                    ui.run_javascript(js)
+
+                charter_search.on_value_change(_on_charter_search)
 
         # Right: LLM generation + judge scores + review form
         with splitter.after:
@@ -2591,13 +2737,6 @@ def pipeline_review_page():
 
                 ui.separator()
 
-                # Judge scores (hidden by default)
-                judge_expansion = ui.expansion("Judge Scores", icon="gavel").classes(
-                    "w-full"
-                )
-                with judge_expansion:
-                    judge_section = ui.column().classes("w-full gap-1")
-
                 # Human annotation (for gold items)
                 gold_expansion = ui.expansion(
                     "Human Annotation (Gold)", icon="person"
@@ -2612,16 +2751,54 @@ def pipeline_review_page():
                     ui.label("Your Review").classes("text-subtitle2 text-weight-bold")
                     review_existing_badge = ui.badge("").props("outline")
 
-                DIM_HINTS = {
-                    "relevance": "Does it identify what matters?",
-                    "specificity": "Is it specific to this text?",
-                    "charter_grounding": "Are charter refs appropriate and complete?",
-                    "voice_tone": "Correct voice, natural, concise?",
+                DIM_SHORT = {
+                    "relevance": "Rel",
+                    "specificity": "Spec",
+                    "charter_grounding": "Charter",
+                    "voice_tone": "Voice",
+                }
+                DIM_TOOLTIPS = {
+                    "relevance": (
+                        "Does it correctly identify what matters (or correctly note "
+                        "nothing is wrong)?\n"
+                        "1: Flags irrelevant issues, or misses obvious problems\n"
+                        "2: Right topic but mischaracterizes content (e.g. comedy "
+                        "as endorsement)\n"
+                        "3: Gets the gist but connections are forced or generic\n"
+                        "4: Identifies key concerns with minor gaps\n"
+                        "5: Precisely identifies the relevant concerns (or correctly "
+                        "identifies as unproblematic)"
+                    ),
+                    "specificity": (
+                        "Is it specific to *this* text, or could it apply to anything?\n"
+                        "1: Completely generic, or references content not in the text\n"
+                        "2: References broad topic but invents details\n"
+                        "3: References the topic but stays surface-level\n"
+                        "4: References concrete content with minor gaps\n"
+                        "5: References concrete claims, phrases, or content from the text"
+                    ),
+                    "charter_grounding": (
+                        "Are charter references appropriate and well-used?\n"
+                        "1: Wrong sections cited, or missing [X.Y] notation\n"
+                        "2: Sections vaguely related, or forces refs on benign text\n"
+                        "3: Correct sections but shallow connection\n"
+                        "4: Good charter refs with clear connections; minor issues\n"
+                        "5: Precise [X.Y] refs clearly connected to the text\n"
+                        "Note: no refs is correct (4-5) for genuinely benign text."
+                    ),
+                    "voice_tone": (
+                        "Correct voice (1p/3p as required), natural, appropriate length?\n"
+                        "1: Wrong voice (e.g. third-person reflection_1p)\n"
+                        "2: Correct voice but heavily templated/stock phrases\n"
+                        "3: Correct voice but stilted, formulaic, or verbose\n"
+                        "4: Natural and well-written with minor issues\n"
+                        "5: Natural, varied, concise — reads like a genuine response"
+                    ),
                 }
 
-                # Per-part scoring: {part: {dim: slider}} — rebuilt dynamically per item
+                # Per-part scoring: {part: {dim: slider}} — populated inline in
+                # gen_section as each text part is rendered.
                 score_inputs: dict[str, dict[str, ui.slider]] = {}
-                score_section = ui.column().classes("w-full gap-2")
 
                 threshold = cfg.phase2.scoring.accept_threshold
                 review_status_label = ui.label("").classes(
@@ -2641,43 +2818,55 @@ def pipeline_review_page():
                     review_status_label.set_text(f"Avg: {agg:.2f} → {decision.upper()}")
                     review_status_label.style(f"color: {color};")
 
-                def _rebuild_score_inputs(parts: list[str]) -> None:
-                    """Rebuild the slider section for the given part list."""
-                    score_section.clear()
-                    score_inputs.clear()
-                    with score_section:
-                        for part in parts:
-                            ui.label(part).classes("text-overline text-grey-7 q-mt-sm")
-                            score_inputs[part] = {}
-                            for dim in dimensions:
-                                with ui.column().classes("w-full gap-0"):
-                                    with ui.row().classes("items-center gap-2 w-full"):
-                                        ui.label(dim.replace("_", " ").title()).classes(
-                                            "w-40"
-                                        )
-                                        slider = ui.slider(
-                                            min=1, max=5, value=3
-                                        ).classes("flex-1")
-                                        score_label = ui.label("3").classes("w-8")
-                                        slider.on(
-                                            "update:model-value",
-                                            lambda e, lbl=score_label: lbl.set_text(
-                                                str(int(e.args))
-                                            ),
-                                        )
-                                        slider.on(
-                                            "update:model-value",
-                                            lambda _: _update_review_status(),
-                                        )
-                                        score_inputs[part][dim] = slider
-                                    hint = DIM_HINTS.get(dim, "")
-                                    if hint:
-                                        ui.label(hint).classes(
-                                            "text-caption text-grey-6"
-                                        ).style("margin-left: 160px; margin-top: -4px;")
+                def _build_part_sliders(part: str) -> None:
+                    """Render a compact one-line slider row for a single part."""
+                    score_inputs[part] = {}
+                    with (
+                        ui.row()
+                        .classes("items-center w-full no-wrap q-mt-xs q-mb-sm")
+                        .style("gap: 12px;")
+                    ):
+                        for dim in dimensions:
+                            with (
+                                ui.row()
+                                .classes("items-center no-wrap")
+                                .style("gap: 2px; flex: 1;")
+                            ):
+                                ui.label(DIM_SHORT.get(dim, dim)).classes(
+                                    "text-caption text-grey-7"
+                                ).style("min-width: 42px;")
+                                help_icon = (
+                                    ui.icon("help_outline")
+                                    .classes("text-grey-6 cursor-pointer")
+                                    .style("font-size: 13px;")
+                                )
+                                with help_icon:
+                                    ui.tooltip(DIM_TOOLTIPS.get(dim, "")).style(
+                                        "white-space: pre-line; max-width: 320px; "
+                                        "font-size: 0.8em;"
+                                    )
+                                slider = (
+                                    ui.slider(min=1, max=5, value=3)
+                                    .classes("flex-1")
+                                    .style("min-width: 60px; margin-left: 4px;")
+                                )
+                                score_label = (
+                                    ui.label("3")
+                                    .classes("text-caption text-weight-medium")
+                                    .style("min-width: 12px;")
+                                )
+                                slider.on(
+                                    "update:model-value",
+                                    lambda e, lbl=score_label: lbl.set_text(
+                                        str(int(e.args))
+                                    ),
+                                )
+                                slider.on(
+                                    "update:model-value",
+                                    lambda _: _update_review_status(),
+                                )
+                                score_inputs[part][dim] = slider
 
-                # Build initial sliders for the two legacy parts
-                _rebuild_score_inputs(["preflection", "reflection"])
                 _update_review_status()
 
                 notes_input = (
@@ -2694,6 +2883,15 @@ def pipeline_review_page():
                         on_click=lambda: submit_review(),
                         color="primary",
                     )
+
+                ui.separator()
+
+                # Judge scores (collapsed by default) — placed at the bottom
+                judge_expansion = ui.expansion("Judge Scores", icon="gavel").classes(
+                    "w-full"
+                )
+                with judge_expansion:
+                    judge_section = ui.column().classes("w-full gap-1")
 
     def _filtered_iterations() -> list[int]:
         """Return iteration numbers matching current filter selections."""
@@ -2728,6 +2926,10 @@ def pipeline_review_page():
         After sorting, interleaves items round-robin across generator models
         so that reviews cover all generators equally.
         """
+        # Pick up any new runs added by background jobs since page load —
+        # otherwise _filtered_iterations and the "latest prompt" lookups stay
+        # frozen to the page's initial snapshot.
+        _refresh_runs()
         iters = _filtered_iterations()
         all_items: list[dict] = []
         for it in iters:
@@ -2740,7 +2942,76 @@ def pipeline_review_page():
                 seen[key] = item
         judged = [i for i in seen.values() if i.get("judgment")]
         sort = sort_select.value
-        if sort == "Low judge score":
+        if sort == "Recommended":
+            # Skip items already reviewed by anyone other than the current
+            # viewer — we don't want reviewer overlap. The viewer's own
+            # reviewed items still appear so they can revisit/edit them.
+            _latest = load_latest_reviews()
+            _claimed: set[tuple[str, int]] = set()
+            for iid, it, reviewer in _latest:
+                if reviewer != viewer_id:
+                    _claimed.add((iid, it))
+            judged = [
+                i for i in judged if (i["item_id"], i["iteration"]) not in _claimed
+            ]
+
+            # Bucket items by judge decision/score into 4 groups (25% each):
+            #   1. Very highly accepted  2. Medium-high accepted
+            #   3. Borderline            4. Rejected
+            # Within each bucket, prioritise bad safety scores (2 bad : 1 good).
+            rejected = [i for i in judged if i["judgment"]["decision"] != "accept"]
+            accepted = [i for i in judged if i["judgment"]["decision"] == "accept"]
+            accepted.sort(key=lambda i: i["judgment"]["aggregate"])
+            # Split accepted into thirds by rank
+            n = len(accepted)
+            borderline = accepted[: n // 3]
+            medium_high = accepted[n // 3 : 2 * n // 3]
+            very_high = accepted[2 * n // 3 :]
+
+            import random as _rnd
+
+            _rng = _rnd.Random(42)  # deterministic but shuffled
+
+            def _safety_interleave(bucket: list[dict]) -> list[dict]:
+                """Re-order a bucket so that ~2/3 are bad safety and ~1/3 good."""
+                bad = [
+                    i
+                    for i in bucket
+                    if i.get("safety_score") is not None and i["safety_score"] >= 4
+                ]
+                good = [
+                    i
+                    for i in bucket
+                    if i.get("safety_score") is None or i["safety_score"] < 4
+                ]
+                _rng.shuffle(bad)
+                _rng.shuffle(good)
+                # Interleave 2 bad, 1 good
+                result: list[dict] = []
+                bi, gi = 0, 0
+                while bi < len(bad) or gi < len(good):
+                    for _ in range(2):
+                        if bi < len(bad):
+                            result.append(bad[bi])
+                            bi += 1
+                    if gi < len(good):
+                        result.append(good[gi])
+                        gi += 1
+                return result
+
+            buckets = [
+                _safety_interleave(very_high),
+                _safety_interleave(medium_high),
+                _safety_interleave(borderline),
+                _safety_interleave(rejected),
+            ]
+            # Round-robin across the 4 buckets for equal representation
+            judged = []
+            while any(buckets):
+                for b in buckets:
+                    if b:
+                        judged.append(b.pop(0))
+        elif sort == "Low judge score":
             judged.sort(key=lambda i: i["judgment"]["aggregate"])
         elif sort == "High judge score":
             judged.sort(key=lambda i: -i["judgment"]["aggregate"])
@@ -2755,6 +3026,10 @@ def pipeline_review_page():
                     -(i.get("safety_score") or 0),
                 )
             )
+
+        # Skip per-model interleaving for Recommended (global order matters)
+        if sort == "Recommended":
+            return judged
 
         # Interleave across generator models for balanced reviewing
         by_gen: dict[str, list[dict]] = {}
@@ -2806,6 +3081,7 @@ def pipeline_review_page():
         )
 
         gen_section.clear()
+        score_inputs.clear()
         with gen_section:
             with ui.row().classes("items-center gap-2"):
                 ui.label("LLM Generation").classes("text-subtitle2 text-weight-bold")
@@ -2841,6 +3117,7 @@ def pipeline_review_page():
                 ui.label(text_value).classes("text-body2").style(
                     "white-space: pre-wrap;"
                 )
+                _build_part_sliders(label_text)
             elements = item.get("charter_elements", [])
             if elements:
                 ui.label("Charter Elements").classes("text-overline text-grey-7")
@@ -2900,14 +3177,6 @@ def pipeline_review_page():
         with gold_section:
             if item.get("is_gold"):
                 _show_gold_annotation(item["item_id"])
-
-        # Rebuild score inputs for the appropriate part set
-        if item.get("preflection_1p") is not None:
-            _rebuild_score_inputs(
-                ["preflection_3p", "preflection_1p", "reflection_1p", "reflection_3p"]
-            )
-        else:
-            _rebuild_score_inputs(["preflection", "reflection"])
 
         # Pre-fill from existing review
         latest_reviews = load_latest_reviews()
@@ -3094,20 +3363,38 @@ def pipeline_reviews_page():
         all_reviews = load_reviews()
         review_comments = load_review_comments()
 
-        # Group by iteration
-        by_iter: dict[int, list[dict]] = {}
-        for r in all_reviews:
-            by_iter.setdefault(r["iteration"], []).append(r)
+        # Group by (judge_prompt, judge_model) so reviews are organised by the
+        # prompt version that produced the judgment, not by iteration. Multiple
+        # iterations share the same prompt and we care about per-prompt
+        # calibration, not per-iteration.
+        import re as _re_grp
 
-        for iteration in sorted(by_iter.keys(), reverse=True):
-            reviews = by_iter[iteration]
+        by_judge: dict[tuple[str, str], list[dict]] = {}
+        for r in all_reviews:
+            run_info = reviews_run_by_iter.get(r["iteration"], {})
+            key = (
+                run_info.get("judge_prompt", "unknown"),
+                run_info.get("judge_model", "unknown"),
+            )
+            by_judge.setdefault(key, []).append(r)
+
+        def _judge_sort_key(key: tuple[str, str]) -> tuple:
+            m = _re_grp.search(r"_v(\d+)", key[0])
+            return (key[1], int(m.group(1)) if m else 0)
+
+        sorted_keys = sorted(by_judge, key=_judge_sort_key, reverse=True)
+        latest_key = sorted_keys[0] if sorted_keys else None
+
+        for group_key in sorted_keys:
+            reviews = by_judge[group_key]
+            gp_name, gm_name = group_key
             with (
                 ui.expansion(
-                    f"Iteration {iteration} ({len(reviews)} reviews)",
+                    f"{gp_name} / {gm_name} ({len(reviews)} reviews)",
                     icon="rate_review",
                 )
                 .classes("w-full q-mx-md q-mt-sm")
-                .props("default-opened" if iteration == max(by_iter) else "")
+                .props("default-opened" if group_key == latest_key else "")
             ):
                 for r in sorted(reviews, key=lambda x: x["timestamp"], reverse=True):
                     item = items_by_key.get((r["item_id"], r["iteration"]))
@@ -3125,6 +3412,13 @@ def pipeline_reviews_page():
                             ui.badge(r["decision"].upper(), color=decision_color)
                             ui.badge(
                                 f"Score: {r['aggregate']:.2f}", color=decision_color
+                            ).props("outline")
+                            split_name = review_split(r["item_id"])
+                            ui.badge(
+                                split_name,
+                                color=(
+                                    "purple" if split_name == "validation" else "indigo"
+                                ),
                             ).props("outline")
                             rev_run = reviews_run_by_iter.get(r["iteration"], {})
                             rev_gen = rev_run.get("generator_model", "")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import signal
 import sys
 import time
@@ -383,7 +384,43 @@ def generate_batch(
                 prefl_raw,
                 required_fields={"analysis", "preflection_3p", "preflection_1p"},
             )
-        except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
+        except AssertionError:
+            # Mode confusion: model may have used reflection_* keys in preflection mode.
+            # Remap and retry before giving up.
+            try:
+                prefl_parsed = _parse_generation(
+                    prefl_raw, required_fields={"analysis"}
+                )
+                remapped = False
+                if (
+                    "reflection_1p" in prefl_parsed
+                    and "preflection_1p" not in prefl_parsed
+                ):
+                    prefl_parsed["preflection_1p"] = prefl_parsed.pop("reflection_1p")
+                    remapped = True
+                if (
+                    "reflection_3p" in prefl_parsed
+                    and "preflection_3p" not in prefl_parsed
+                ):
+                    prefl_parsed["preflection_3p"] = prefl_parsed.pop("reflection_3p")
+                    remapped = True
+                if (
+                    not remapped
+                    or "preflection_1p" not in prefl_parsed
+                    or "preflection_3p" not in prefl_parsed
+                ):
+                    raise
+                logger.info(
+                    "Remapped reflection_* → preflection_* for item {}", item["item_id"]
+                )
+            except Exception as e:
+                logger.warning(
+                    "Skipping item {} — preflection generation failed: {}",
+                    item["item_id"],
+                    e,
+                )
+                return None
+        except (json.JSONDecodeError, RuntimeError) as e:
             logger.warning(
                 "Skipping item {} — preflection generation failed: {}",
                 item["item_id"],
@@ -417,8 +454,7 @@ def generate_batch(
                 or prefl_parsed.get("preflection", "")
             ),
             "reflection": (
-                refl_parsed.get("reflection_1p")
-                or refl_parsed.get("reflection", "")
+                refl_parsed.get("reflection_1p") or refl_parsed.get("reflection", "")
             ),
             # Explicit per-voice columns
             "preflection_1p": prefl_parsed.get("preflection_1p"),
@@ -1088,6 +1124,10 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
     then for each (judge_prompt, judge_model) combination, re-judges any
     reviewed items that don't already have correlations. Idempotent.
 
+    The (judge_prompt, judge_model) work units run in parallel threads so
+    multiple judge versions can be re-judged concurrently. Each worker owns
+    its own event loop, client, and semaphore.
+
     Returns total count of newly judged items.
     """
 
@@ -1115,7 +1155,9 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
 
     latest_items = load_latest_items()
 
-    total_new = 0
+    # Collect all (model, judge_file, needs_judging) work units first so we
+    # can dispatch them in parallel.
+    work_units: list[tuple[ModelConfig, Path, str, list[dict]]] = []
     for model_cfg in cfg.phase2.judge_models:
         alias = model_cfg.alias
         model_dir = PROMPTS_DIR / alias
@@ -1141,50 +1183,73 @@ def rejudge_all_prompts_and_models(cfg: AppConfig) -> int:
                 )
                 continue
 
-            endpoint = model_cfg.endpoint or cfg.phase2.endpoint
-            client, semaphore = make_api_client(
-                endpoint, cfg.phase2.iteration.max_concurrent, cfg.api_keys
-            )
-            api_name = model_cfg.api_name
+            work_units.append((model_cfg, judge_file, prompt_name, needs_judging))
 
-            logger.info(
-                "Re-judging {} items with {} ({})...",
-                len(needs_judging),
-                prompt_name,
-                alias,
+    if not work_units:
+        logger.info("Total new correlations: 0")
+        return 0
+
+    # Read shared prompt context once
+    charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
+
+    # Budget: target ~200 concurrent API calls across all workers. Each worker
+    # processes one (judge_prompt, judge_model) batch with its own event loop,
+    # so per-worker concurrency is bounded by batch size. With typical batches
+    # of ~20 items, 10 workers ≈ 200 concurrent.
+    target_total_concurrent = 200
+    max_workers = max(1, min(len(work_units), target_total_concurrent))
+
+    def _process(work: tuple[ModelConfig, Path, str, list[dict]]) -> int:
+        model_cfg, judge_file, prompt_name, needs_judging = work
+        alias = model_cfg.alias
+        endpoint = model_cfg.endpoint or cfg.phase2.endpoint
+        # Per-worker semaphore size: allow the full batch to run concurrently.
+        client, semaphore = make_api_client(
+            endpoint, target_total_concurrent, cfg.api_keys
+        )
+
+        logger.info(
+            "Re-judging {} items with {} ({})...",
+            len(needs_judging),
+            prompt_name,
+            alias,
+        )
+
+        judged = judge_batch(
+            items=needs_judging,
+            prompt_path=judge_file,
+            model=model_cfg.api_name,
+            iteration=needs_judging[0]["iteration"],
+            accept_threshold=cfg.phase2.scoring.accept_threshold,
+            client=client,
+            semaphore=semaphore,
+            save=False,
+            floor_threshold=cfg.phase2.scoring.floor_threshold,
+            charter_text=charter_text,
+            writing_guidelines_text=writing_guidelines_text,
+            thinking=model_cfg.thinking,
+        )
+
+        for item in judged:
+            save_judge_correlation(
+                item_id=item["item_id"],
+                iteration=item["iteration"],
+                judge_prompt=prompt_name,
+                judge_model=alias,
+                judgment=item["judgment"],
             )
 
-            charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-            writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(
-                encoding="utf-8"
-            )
-            judged = judge_batch(
-                items=needs_judging,
-                prompt_path=judge_file,
-                model=api_name,
-                iteration=needs_judging[0]["iteration"],
-                accept_threshold=cfg.phase2.scoring.accept_threshold,
-                client=client,
-                semaphore=semaphore,
-                save=False,
-                floor_threshold=cfg.phase2.scoring.floor_threshold,
-                charter_text=charter_text,
-                writing_guidelines_text=writing_guidelines_text,
-            )
+        logger.info(
+            "Saved {} correlations for {} / {}.", len(judged), prompt_name, alias
+        )
+        return len(judged)
 
-            for item in judged:
-                save_judge_correlation(
-                    item_id=item["item_id"],
-                    iteration=item["iteration"],
-                    judge_prompt=prompt_name,
-                    judge_model=alias,
-                    judgment=item["judgment"],
-                )
-
-            total_new += len(judged)
-            logger.info(
-                "Saved {} correlations for {} / {}.", len(judged), prompt_name, alias
-            )
+    total_new = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_process, w) for w in work_units]
+        for future in as_completed(futures):
+            total_new += future.result()
 
     logger.info("Total new correlations: {}", total_new)
     return total_new
