@@ -138,6 +138,17 @@ async def api_call(
                     **api_kwargs,
                     **({"response_format": response_format} if response_format else {}),
                 )
+            # OpenRouter returns HTTP 200 with choices=None and a top-level
+            # `error` field when the upstream provider fails. The OpenAI SDK
+            # parses that into a ChatCompletion with choices=None, so guard
+            # explicitly before indexing.
+            if not getattr(response, "choices", None):
+                err = getattr(response, "error", None) or getattr(
+                    response, "model_extra", {}
+                ).get("error")
+                raise AssertionError(
+                    f"API returned no choices (upstream error: {err!r})"
+                )
             msg = response.choices[0].message
             content = msg.content
             assert content is not None, "API returned None content"
