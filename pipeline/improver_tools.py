@@ -13,7 +13,7 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools distribution <iteration>
     python -m pipeline.improver_tools gold [--limit N] [--offset N] [--verbose]
     python -m pipeline.improver_tools compare <item_id> <iteration>
-    python -m pipeline.improver_tools reviews [<judge_prompt>] [--limit N]
+    python -m pipeline.improver_tools reviews [<judge_prompt>] [--limit N] [--offset N]
     python -m pipeline.improver_tools filter <iteration> --dim X (--below N | --above N) [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
     python -m pipeline.improver_tools trend
     python -m pipeline.improver_tools diagnose <group_id>
@@ -558,7 +558,9 @@ def cmd_compare(item_id: str, iteration: int) -> None:
         print()
 
 
-def cmd_reviews(judge_prompt: str | None = None, limit: int = 20) -> None:
+def cmd_reviews(
+    judge_prompt: str | None = None, limit: int = 20, offset: int = 0
+) -> None:
     """Print human reviews, optionally filtered by judge prompt version.
 
     Shows reviewer scores, decision, and notes alongside the judge's scores
@@ -569,6 +571,10 @@ def cmd_reviews(judge_prompt: str | None = None, limit: int = 20) -> None:
     (e.g. "v10", "judge_v10.md"). When omitted, shows reviews across every
     judge prompt version. Reviews are grouped by (judge_prompt, judge_model)
     in the output so it's clear which prompt each note refers to.
+
+    offset/limit page through the *globally ordered* review list (newest
+    judge prompt first, then newest iteration first within a group), so
+    `--offset 50 --limit 50` returns the next page after `--limit 50`.
     """
     from pipeline.phase2.storage import (
         load_latest_reviews,
@@ -623,7 +629,6 @@ def cmd_reviews(judge_prompt: str | None = None, limit: int = 20) -> None:
         info = run_judge.get(r["iteration"], ("unknown", "unknown"))
         grouped.setdefault(info, []).append(r)
 
-    total_shown = 0
     print(
         f"Human reviews ({len(filtered)} total across "
         f"{len(grouped)} judge prompt(s)):\n"
@@ -635,90 +640,107 @@ def cmd_reviews(judge_prompt: str | None = None, limit: int = 20) -> None:
         m = re.search(r"_v(\d+)", key[0])
         return (key[1], int(m.group(1)) if m else 0)
 
+    # Build a global display order: group by (prompt, model) descending,
+    # then within each group sort by iteration desc / timestamp asc.
+    ordered: list[tuple[tuple[str, str], dict]] = []
+    group_totals: dict[tuple[str, str], int] = {}
     for group_key in sorted(grouped, key=_prompt_sort_key, reverse=True):
         group_reviews = grouped[group_key]
-        gp_name, gm_name = group_key
-        remaining = limit - total_shown
-        if remaining <= 0:
-            print(
-                f"\n(--limit {limit} reached; "
-                f"{sum(len(v) for v in grouped.values()) - total_shown} more "
-                f"reviews not shown)"
-            )
-            break
-        # Sort within a group: latest iteration first, then latest timestamp
         group_reviews.sort(
             key=lambda r: (-r["iteration"], r.get("timestamp", "")), reverse=False
         )
-        show = group_reviews[:remaining]
+        group_totals[group_key] = len(group_reviews)
+        for r in group_reviews:
+            ordered.append((group_key, r))
+
+    # Apply pagination across the flat list. Header is reprinted whenever
+    # the group changes within the visible window so the agent always knows
+    # which prompt the reviews on screen belong to.
+    end = offset + limit if limit > 0 else len(ordered)
+    window = ordered[offset:end]
+
+    if not window:
+        if offset >= len(ordered):
+            print(
+                f"(--offset {offset} is past the end; " f"{len(ordered)} reviews total)"
+            )
+        return
+
+    current_group: tuple[str, str] | None = None
+    for group_key, r in window:
+        if group_key != current_group:
+            current_group = group_key
+            gp_name, gm_name = group_key
+            group_shown_count = sum(1 for gk, _ in window if gk == group_key)
+            print(
+                f"=== {gp_name} / {gm_name} "
+                f"({group_totals[group_key]} reviews, "
+                f"showing {group_shown_count} on this page) ==="
+            )
+
+        item = items_by_key.get((r["item_id"], r["iteration"]))
+        judge_agg = ""
+        judge_decision = ""
+        if item and item.get("judgment"):
+            j = item["judgment"]
+            judge_agg = f"{j['aggregate']:.2f}"
+            judge_decision = j["decision"]
+
         print(
-            f"=== {gp_name} / {gm_name} "
-            f"({len(group_reviews)} reviews, showing {len(show)}) ==="
+            f"--- {r['item_id'][:16]} iter={r['iteration']} "
+            f"reviewer={r['reviewer_id']} ---"
         )
-        total_shown += len(show)
-        for r in show:
-            item = items_by_key.get((r["item_id"], r["iteration"]))
-            judge_agg = ""
-            judge_decision = ""
-            if item and item.get("judgment"):
-                j = item["judgment"]
-                judge_agg = f"{j['aggregate']:.2f}"
-                judge_decision = j["decision"]
+        print(f"  Human:  decision={r['decision']}  " f"aggregate={r['aggregate']:.2f}")
+        if judge_agg:
+            print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
 
-            print(
-                f"--- {r['item_id'][:16]} iter={r['iteration']} "
-                f"reviewer={r['reviewer_id']} ---"
-            )
-            print(
-                f"  Human:  decision={r['decision']}  "
-                f"aggregate={r['aggregate']:.2f}"
-            )
-            if judge_agg:
-                print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
-
-            scores = r["scores"]
-            is_per_part = scores and isinstance(next(iter(scores.values())), dict)
-            if is_per_part:
-                all_parts = sorted(
-                    set(scores.keys())
-                    | (
-                        set(_judgment_parts(item["judgment"]).keys())
-                        if item and item.get("judgment")
-                        else set()
-                    )
+        scores = r["scores"]
+        is_per_part = scores and isinstance(next(iter(scores.values())), dict)
+        if is_per_part:
+            all_parts = sorted(
+                set(scores.keys())
+                | (
+                    set(_judgment_parts(item["judgment"]).keys())
+                    if item and item.get("judgment")
+                    else set()
                 )
-                for part in all_parts:
-                    human_s = (
-                        scores.get(part, {})
-                        if isinstance(scores.get(part, {}), dict)
-                        else {}
-                    )
-                    judge_s = {}
-                    if item and item.get("judgment"):
-                        judge_s = item["judgment"].get(part, {}).get("scores", {})
-                    dims = sorted(set(human_s) | set(judge_s))
-                    pairs = " ".join(
-                        f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}"
-                        for d in dims
-                    )
-                    if dims:
-                        print(f"  {part}: {pairs}  (human/judge)")
-            else:
-                print(f"  Scores: {scores}")
+            )
+            for part in all_parts:
+                human_s = (
+                    scores.get(part, {})
+                    if isinstance(scores.get(part, {}), dict)
+                    else {}
+                )
+                judge_s = {}
+                if item and item.get("judgment"):
+                    judge_s = item["judgment"].get(part, {}).get("scores", {})
+                dims = sorted(set(human_s) | set(judge_s))
+                pairs = " ".join(
+                    f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}" for d in dims
+                )
+                if dims:
+                    print(f"  {part}: {pairs}  (human/judge)")
+        else:
+            print(f"  Scores: {scores}")
 
-            if r.get("notes"):
-                print(f"  Notes: {r['notes']}")
+        if r.get("notes"):
+            print(f"  Notes: {r['notes']}")
 
-            review_key = (r["item_id"], r["iteration"], r["reviewer_id"])
-            comments = all_comments.get(review_key, [])
-            if comments:
-                print("  Comments:")
-                for c in comments:
-                    print(
-                        f"    {c['commenter_id']} "
-                        f"({c['timestamp'][:19]}): {c['comment']}"
-                    )
-            print()
+        review_key = (r["item_id"], r["iteration"], r["reviewer_id"])
+        comments = all_comments.get(review_key, [])
+        if comments:
+            print("  Comments:")
+            for c in comments:
+                print(
+                    f"    {c['commenter_id']} "
+                    f"({c['timestamp'][:19]}): {c['comment']}"
+                )
+        print()
+
+    # Footer with pagination hint when there's more to see.
+    after = len(ordered) - end
+    if after > 0:
+        print(f"({after} more reviews — use --offset {end} to continue)")
 
 
 def cmd_filter(
@@ -2257,7 +2279,43 @@ def main():
         print("  - --dim: relevance | specificity | charter_grounding | voice_tone")
         sys.exit(0)
 
-    positional = [a for a in args[1:] if not a.startswith("--")]
+    # Flags that consume the following token as their value. Anything else
+    # starting with "--" is treated as a boolean flag. This lets us strip
+    # flag values out of the positional list so e.g. `reviews --limit 100`
+    # doesn't have `100` swallowed as the judge_prompt argument.
+    VALUE_FLAGS = {
+        "--limit",
+        "--reasoning-limit",
+        "--offset",
+        "--sort",
+        "--below",
+        "--above",
+        "--dim",
+        "--part",
+        "--items",
+        "--n",
+        "--role",
+        "--phase",
+        "--model",
+        "--iteration",
+        "--target",
+        "--type",
+        "--reason",
+        "--status",
+    }
+
+    positional: list[str] = []
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--"):
+            if a in VALUE_FLAGS:
+                i += 2  # skip flag and its value
+            else:
+                i += 1  # boolean flag
+        else:
+            positional.append(a)
+            i += 1
 
     def _require_positional(n: int, usage: str):
         if len(positional) < n:
@@ -2334,7 +2392,11 @@ def main():
         cmd_compare(positional[0], int(positional[1]))
     elif cmd == "reviews":
         judge_prompt_arg = positional[0] if positional else None
-        cmd_reviews(judge_prompt=judge_prompt_arg, limit=_get_flag_int("--limit", 20))
+        cmd_reviews(
+            judge_prompt=judge_prompt_arg,
+            limit=_get_flag_int("--limit", 20),
+            offset=_get_flag_int("--offset", 0),
+        )
     elif cmd == "filter":
         _require_positional(
             1,

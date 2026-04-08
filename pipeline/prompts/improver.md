@@ -41,13 +41,18 @@ For gold set items (is_gold=true), compare LLM generations against human annotat
 - Note: human annotations may not use bracket notation — the LLM should still use it
 
 ### 4. Human Review Mining
-Human reviews contain free-text notes with valuable qualitative feedback. **Always** have a subagent read all reviews (`reviews` command without an iteration filter) and extract actionable insights. The `reviews` output can be large — this is why you MUST delegate it to a subagent rather than reading it directly.
+Human reviews contain free-text notes with valuable qualitative feedback. **Always** have a subagent read all reviews and extract actionable insights. The `reviews` output can be large — this is why you MUST delegate it to a subagent rather than reading it directly.
 
-From the review notes, extract and save to your `state.md`:
+The `reviews` command paginates: it defaults to `--limit 20` so the first call is cheap, and the footer prints the exact `--offset N` to use for the next page (e.g. `(57 more reviews — use --offset 5 to continue)`). When the total review count is large, instruct the subagent to walk through every page rather than stopping after the first one. To grab everything in a single call regardless, pass `--limit 999` (or any number ≥ total).
+
+Reviewers can also leave threaded **comments** on each other's reviews — printed under each review as `Comments:`. A comment from a *different* reviewer is a calibration meta-signal about the review itself ("this rejection was wrong, the annotator was actually right") and should usually outweigh the original review.
+
+From the review notes and comments, extract and save to your `state.md`:
 - Recurring complaints or praise patterns across reviewers
 - Specific failure modes reviewers flag that the judge misses
 - Style/tone preferences expressed by reviewers
 - Any calibration notes (e.g., "this should have been accepted")
+- Reviews where another reviewer pushed back via a comment (treat as authoritative)
 
 These insights persist across your sessions via `state.md` and should inform prompt changes.
 
