@@ -559,24 +559,39 @@ def cmd_compare(item_id: str, iteration: int) -> None:
 
 
 def cmd_reviews(
-    judge_prompt: str | None = None, limit: int = 20, offset: int = 0
+    judge_prompt: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    reasoning_limit: int = 200,
 ) -> None:
     """Print human reviews, optionally filtered by judge prompt version.
 
     Shows reviewer scores, decision, and notes alongside the judge's scores
-    for calibration comparison. Only shows *train* split reviews (75%) so
-    the validation split remains unseen by the improver.
+    AND per-part reasoning for calibration comparison. The judge data shown
+    is the *most recent* rejudgment from `judge_correlations` for the same
+    judge_model — so if you've improved the judge prompt and run
+    `rejudge_all`, you see what the current prompt thinks of each reviewed
+    item, not the stale judgment that was active when the review was
+    written. Only shows *train* split reviews (75%) so the validation split
+    remains unseen by the improver.
 
     judge_prompt: substring match against the run's judge_prompt field
     (e.g. "v10", "judge_v10.md"). When omitted, shows reviews across every
     judge prompt version. Reviews are grouped by (judge_prompt, judge_model)
-    in the output so it's clear which prompt each note refers to.
+    in the output (the prompt the *reviewer* originally responded to) so
+    notes stay organised by their original context.
 
     offset/limit page through the *globally ordered* review list (newest
     judge prompt first, then newest iteration first within a group), so
     `--offset 50 --limit 50` returns the next page after `--limit 50`.
+
+    reasoning_limit: max chars of per-part judge reasoning to print
+    (default 200). Pass 0 to suppress reasoning entirely.
     """
+    import re
+
     from pipeline.phase2.storage import (
+        load_judge_correlations,
         load_latest_reviews,
         load_review_comments,
         load_runs,
@@ -588,6 +603,28 @@ def cmd_reviews(
     if not reviews:
         print("No human reviews yet.")
         return
+
+    # Build a lookup of the most recent rejudgment per
+    # (item_id, iteration, judge_model) so the displayed judge scores reflect
+    # the *current* judge prompt rather than whatever prompt was active when
+    # the review was originally written. We rank by the numeric suffix of
+    # `judge_v<N>.md` and break ties by timestamp.
+    def _judge_version(prompt: str) -> int:
+        m = re.search(r"_v(\d+)", prompt or "")
+        return int(m.group(1)) if m else -1
+
+    latest_corr: dict[tuple[str, int, str], tuple[str, dict]] = {}
+    for c in load_judge_correlations():
+        key = (c["item_id"], c["iteration"], c["judge_model"])
+        existing = latest_corr.get(key)
+        candidate = (_judge_version(c["judge_prompt"]), c.get("timestamp", ""))
+        if existing is None or candidate > (
+            _judge_version(existing[0]),
+            existing[1].get("_corr_timestamp", ""),
+        ):
+            judgment = dict(c["judgment"])
+            judgment["_corr_timestamp"] = c.get("timestamp", "")
+            latest_corr[key] = (c["judge_prompt"], judgment)
 
     # Only show train-split reviews to the improver
     filtered = [r for r in reviews.values() if review_split(r["item_id"]) == "train"]
@@ -635,8 +672,6 @@ def cmd_reviews(
     )
 
     def _prompt_sort_key(key: tuple[str, str]) -> tuple:
-        import re
-
         m = re.search(r"_v(\d+)", key[0])
         return (key[1], int(m.group(1)) if m else 0)
 
@@ -679,12 +714,32 @@ def cmd_reviews(
             )
 
         item = items_by_key.get((r["item_id"], r["iteration"]))
+
+        # Prefer the most recent rejudgment from judge_correlations over the
+        # original item.judgment so the agent sees what the *current* judge
+        # prompt thinks of this item, not what some older prompt thought when
+        # the review was first written.
+        judge_label = "Judge"
+        judge_judgment: dict | None = None
+        diverged_from: str | None = None
+        corr_entry = latest_corr.get((r["item_id"], r["iteration"], group_key[1]))
+        if corr_entry is not None:
+            corr_prompt, corr_judgment = corr_entry
+            judge_judgment = corr_judgment
+            if corr_prompt != group_key[0]:
+                judge_label = f"Judge (latest: {corr_prompt})"
+                diverged_from = group_key[0]
+            else:
+                judge_label = f"Judge ({corr_prompt})"
+        elif item and item.get("judgment"):
+            judge_judgment = item["judgment"]
+            judge_label = f"Judge ({group_key[0]})"
+
         judge_agg = ""
         judge_decision = ""
-        if item and item.get("judgment"):
-            j = item["judgment"]
-            judge_agg = f"{j['aggregate']:.2f}"
-            judge_decision = j["decision"]
+        if judge_judgment:
+            judge_agg = f"{judge_judgment['aggregate']:.2f}"
+            judge_decision = judge_judgment["decision"]
 
         print(
             f"--- {r['item_id'][:16]} iter={r['iteration']} "
@@ -692,7 +747,15 @@ def cmd_reviews(
         )
         print(f"  Human:  decision={r['decision']}  " f"aggregate={r['aggregate']:.2f}")
         if judge_agg:
-            print(f"  Judge:  decision={judge_decision}  aggregate={judge_agg}")
+            print(f"  {judge_label}:  decision={judge_decision}  aggregate={judge_agg}")
+        if diverged_from is not None:
+            print(
+                f"  ⚠ Notes below were written against the OLDER JUDGE "
+                f"{diverged_from} (generator output unchanged). "
+                f'"I agree with the judge" refers to {diverged_from}, not '
+                f"the rejudgment shown. For its reasoning: "
+                f"`reasoning {r['item_id'][:8]} {r['iteration']}`."
+            )
 
         scores = r["scores"]
         is_per_part = scores and isinstance(next(iter(scores.values())), dict)
@@ -700,8 +763,8 @@ def cmd_reviews(
             all_parts = sorted(
                 set(scores.keys())
                 | (
-                    set(_judgment_parts(item["judgment"]).keys())
-                    if item and item.get("judgment")
+                    set(_judgment_parts(judge_judgment).keys())
+                    if judge_judgment
                     else set()
                 )
             )
@@ -712,14 +775,22 @@ def cmd_reviews(
                     else {}
                 )
                 judge_s = {}
-                if item and item.get("judgment"):
-                    judge_s = item["judgment"].get(part, {}).get("scores", {})
+                judge_reasoning = ""
+                if judge_judgment:
+                    part_j = judge_judgment.get(part, {}) or {}
+                    judge_s = part_j.get("scores", {})
+                    judge_reasoning = part_j.get("reasoning", "") or ""
                 dims = sorted(set(human_s) | set(judge_s))
                 pairs = " ".join(
                     f"{d[:3]}={human_s.get(d, '?')}/{judge_s.get(d, '?')}" for d in dims
                 )
                 if dims:
                     print(f"  {part}: {pairs}  (human/judge)")
+                if reasoning_limit > 0 and judge_reasoning:
+                    snippet = judge_reasoning[:reasoning_limit]
+                    if len(judge_reasoning) > reasoning_limit:
+                        snippet += "…"
+                    print(f"    judge reasoning: {snippet}")
         else:
             print(f"  Scores: {scores}")
 
@@ -2396,6 +2467,7 @@ def main():
             judge_prompt=judge_prompt_arg,
             limit=_get_flag_int("--limit", 20),
             offset=_get_flag_int("--offset", 0),
+            reasoning_limit=_get_flag_int("--reasoning-limit", 200),
         )
     elif cmd == "filter":
         _require_positional(
