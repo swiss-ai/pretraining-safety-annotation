@@ -177,10 +177,11 @@ def save_item(record: dict) -> None:
            (item_id, iteration, is_gold, subset, text, reflection_point,
             gen_prompt, model, analysis, preflection, reflection,
             preflection_1p, reflection_3p,
-            charter_elements, raw_response, reasoning, latency_ms,
+            preflection_charter_elements, reflection_charter_elements,
+            raw_response, reasoning, latency_ms,
             timestamp, judgment, input_tokens, output_tokens, reasoning_tokens,
             safety_score, canary)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record["item_id"],
             record["iteration"],
@@ -195,7 +196,8 @@ def save_item(record: dict) -> None:
             record["reflection"],
             record.get("preflection_1p"),
             record.get("reflection_3p"),
-            json.dumps(record["charter_elements"]),
+            json.dumps(record.get("preflection_charter_elements", [])),
+            json.dumps(record.get("reflection_charter_elements", [])),
             record["raw_response"],
             record.get("reasoning"),
             record["latency_ms"],
@@ -466,7 +468,8 @@ def _row_to_run(row) -> dict:
 def _row_to_item(row) -> dict:
     d = dict(row)
     d["is_gold"] = bool(d["is_gold"])
-    d["charter_elements"] = json.loads(d["charter_elements"])
+    d["preflection_charter_elements"] = json.loads(d["preflection_charter_elements"])
+    d["reflection_charter_elements"] = json.loads(d["reflection_charter_elements"])
     d["judgment"] = json.loads(d["judgment"]) if d["judgment"] is not None else None
     return d
 

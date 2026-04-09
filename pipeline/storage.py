@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS items (
     analysis TEXT NOT NULL,
     preflection TEXT NOT NULL,
     reflection TEXT NOT NULL,
-    charter_elements TEXT NOT NULL,
+    preflection_charter_elements TEXT NOT NULL DEFAULT '[]',
+    reflection_charter_elements TEXT NOT NULL DEFAULT '[]',
     raw_response TEXT NOT NULL,
     reasoning TEXT,
     latency_ms INTEGER NOT NULL,
@@ -201,6 +202,57 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Add canary column to items (added 2026-03-26)
     if "canary" not in item_cols:
         conn.execute("ALTER TABLE items ADD COLUMN canary TEXT")
+
+    # Split charter_elements into separate preflection/reflection sets (added 2026-04-09)
+    # Old behaviour: a single `charter_elements` column populated by extracting
+    # from `reflection_1p` only. New behaviour: two columns, each the union of
+    # the citations the model wrote in the 1p and 3p variants of that part.
+    item_cols = {row[1] for row in conn.execute("PRAGMA table_info(items)").fetchall()}
+    if "charter_elements" in item_cols and (
+        "reflection_charter_elements" not in item_cols
+        or "preflection_charter_elements" not in item_cols
+    ):
+        from pipeline.config import union_charter_elements
+
+        if "preflection_charter_elements" not in item_cols:
+            conn.execute(
+                "ALTER TABLE items ADD COLUMN preflection_charter_elements "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "reflection_charter_elements" not in item_cols:
+            conn.execute(
+                "ALTER TABLE items ADD COLUMN reflection_charter_elements "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+
+        rows = conn.execute(
+            "SELECT item_id, iteration, preflection, preflection_1p, "
+            "reflection, reflection_3p, charter_elements FROM items"
+        ).fetchall()
+        for r in rows:
+            refl_union = union_charter_elements(r["reflection"], r["reflection_3p"])
+            pref_union = union_charter_elements(r["preflection"], r["preflection_1p"])
+            # Fall back to legacy column if reflection text yielded nothing
+            # (rare case where the old extractor saw something the new one did not).
+            if not refl_union and r["charter_elements"]:
+                try:
+                    refl_union = json.loads(r["charter_elements"]) or []
+                except (TypeError, ValueError):
+                    refl_union = []
+            conn.execute(
+                "UPDATE items SET reflection_charter_elements = ?, "
+                "preflection_charter_elements = ? "
+                "WHERE item_id = ? AND iteration = ?",
+                (
+                    json.dumps(refl_union),
+                    json.dumps(pref_union),
+                    r["item_id"],
+                    r["iteration"],
+                ),
+            )
+
+        conn.execute("ALTER TABLE items DROP COLUMN charter_elements")
+        conn.commit()
 
     # Add judge_model column to judge_correlations and update PK (added 2026-03-13)
     jc_cols = {

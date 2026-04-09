@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 
+from pipeline.backup import notify_critical_write
 from pipeline.storage import _get_conn
 
 
@@ -20,16 +21,15 @@ def load_latest_annotations() -> dict[tuple[str, str], dict]:
     """
     conn = _get_conn()
     rows = conn.execute("SELECT * FROM annotations").fetchall()
-    return {
-        (r["item_id"], r["annotator_id"]): _row_to_annotation(r)
-        for r in rows
-    }
+    return {(r["item_id"], r["annotator_id"]): _row_to_annotation(r) for r in rows}
 
 
 def load_annotator_ids() -> list[str]:
     """Return sorted list of unique annotator IDs from existing annotations."""
     conn = _get_conn()
-    rows = conn.execute("SELECT DISTINCT annotator_id FROM annotations ORDER BY annotator_id").fetchall()
+    rows = conn.execute(
+        "SELECT DISTINCT annotator_id FROM annotations ORDER BY annotator_id"
+    ).fetchall()
     return [r["annotator_id"] for r in rows]
 
 
@@ -54,14 +54,21 @@ def save_annotation(
             presentation_order, timestamp)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            item_id, annotator_id, subset, text, reflection_point,
-            analysis, preflection, reflection,
+            item_id,
+            annotator_id,
+            subset,
+            text,
+            reflection_point,
+            analysis,
+            preflection,
+            reflection,
             json.dumps(reflection_charter_elements),
             presentation_order,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
     conn.commit()
+    notify_critical_write()
 
 
 def load_annotations_by_item() -> dict[str, list[dict]]:
@@ -75,12 +82,11 @@ def load_annotations_by_item() -> dict[str, list[dict]]:
 
 # --- Comments ---
 
+
 def load_comments_by_annotation() -> dict[tuple[str, str], list[dict]]:
     """Load comments keyed by (item_id, target_annotator_id), sorted by timestamp."""
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM comments ORDER BY timestamp"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM comments ORDER BY timestamp").fetchall()
     by_annotation: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         key = (r["item_id"], r["target_annotator_id"])
@@ -102,12 +108,16 @@ def save_comment(
            (item_id, target_annotator_id, commenter_id, target_part, comment, timestamp)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (
-            item_id, target_annotator_id, commenter_id,
-            target_part, comment,
+            item_id,
+            target_annotator_id,
+            commenter_id,
+            target_part,
+            comment,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
     conn.commit()
+    notify_critical_write()
 
 
 def delete_comment(comment_id: int) -> None:
@@ -115,6 +125,7 @@ def delete_comment(comment_id: int) -> None:
     conn = _get_conn()
     conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
     conn.commit()
+    notify_critical_write()
 
 
 def _row_to_annotation(row: dict) -> dict:

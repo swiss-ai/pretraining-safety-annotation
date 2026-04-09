@@ -1,6 +1,8 @@
 """Background backup of the data/ directory to a HuggingFace dataset repo.
 
-Uploads the entire data/ folder when either:
+Uploads the entire data/ folder when any of:
+- A human-typed write (review, annotation, comment) happened and at least
+  CRITICAL_INTERVAL_S have passed since the last critical-write upload, OR
 - Any file changed and no further changes for 10 minutes, OR
 - force_upload() is called explicitly.
 
@@ -26,7 +28,26 @@ logger = logging.getLogger(__name__)
 BACKUP_STATE_PATH = DATA_DIR / ".backup_state.json"
 IDLE_TIMEOUT_S = 10 * 60  # 10 minutes
 POLL_INTERVAL_S = 30
-IGNORE_PATTERNS = [".backup_state.json", ".cache/", "__pycache__/", "*.db-wal", "*.db-shm"]
+# Min seconds between critical-write-triggered uploads. Bounds the worst-case
+# loss of human-typed work to roughly this much wall-clock time.
+CRITICAL_INTERVAL_S = 60
+IGNORE_PATTERNS = [
+    ".backup_state.json",
+    ".cache/",
+    "__pycache__/",
+    "*.db-wal",
+    "*.db-shm",
+]
+
+# Critical-write tracking. notify_critical_write() is called from storage
+# helpers right after each human-typed save (reviews, annotations, comments)
+# so the backup loop can flush them quickly even when long-running writers
+# (rejudge_all, generation runs) keep the 10-min idle window from ever
+# opening.
+_critical_lock = threading.Lock()
+_critical_pending = False
+_last_critical_upload_at: float | None = None
+_wakeup_event = threading.Event()
 
 
 def _get_repo() -> str | None:
@@ -34,7 +55,12 @@ def _get_repo() -> str | None:
 
 
 def _latest_mtime(directory: Path) -> float:
-    """Return the most recent mtime of any file under directory, or 0.0."""
+    """Return the most recent mtime of any file under directory, or 0.0.
+
+    Skips SQLite WAL/SHM files: they get touched on every read in WAL mode,
+    so including them would prevent the 10-min idle window from ever opening
+    while any background reader (dashboard polling, rejudge_all) is alive.
+    """
     latest = 0.0
     if not directory.exists():
         return latest
@@ -44,6 +70,8 @@ def _latest_mtime(directory: Path) -> float:
         if any(part in {".cache", "__pycache__"} for part in p.parts):
             continue
         if p.name == ".backup_state.json":
+            continue
+        if p.suffix in (".db-wal", ".db-shm"):
             continue
         latest = max(latest, p.stat().st_mtime)
     return latest
@@ -93,6 +121,7 @@ def _download(api: HfApi, repo: str) -> None:
 def _upload(api: HfApi, repo: str) -> None:
     """Upload entire data/ folder to HuggingFace."""
     from pipeline.storage import checkpoint
+
     checkpoint()
     api.upload_folder(
         folder_path=str(DATA_DIR),
@@ -104,17 +133,56 @@ def _upload(api: HfApi, repo: str) -> None:
     _save_state({"last_upload_mtime": _latest_mtime(DATA_DIR)})
 
 
+def notify_critical_write() -> None:
+    """Mark that a human-typed write happened.
+
+    Triggers an HF backup within ~CRITICAL_INTERVAL_S, regardless of whether
+    other writers (rejudge_all, generation) are still hammering the database.
+    Cheap to call from request handlers — just sets a flag and wakes the
+    backup loop.
+    """
+    global _critical_pending
+    with _critical_lock:
+        _critical_pending = True
+    _wakeup_event.set()
+
+
 def check_and_upload(api: HfApi, repo: str) -> bool:
     """Check conditions and upload if needed. Returns True if upload happened."""
+    global _critical_pending, _last_critical_upload_at
+
     state = _load_state()
     current_mtime = _latest_mtime(DATA_DIR)
 
     if current_mtime <= state.get("last_upload_mtime", 0.0):
         return False
 
-    idle_seconds = time.time() - current_mtime
+    now = time.time()
+
+    # Critical-write path: human-typed saves get backed up much sooner than
+    # the 10-min idle case, capped at one upload per CRITICAL_INTERVAL_S.
+    with _critical_lock:
+        critical_pending = _critical_pending
+        last_critical = _last_critical_upload_at
+
+    if critical_pending:
+        elapsed = now - last_critical if last_critical is not None else float("inf")
+        if elapsed >= CRITICAL_INTERVAL_S:
+            # Clear *before* uploading so notifications that race with the
+            # upload itself queue up for the next round instead of being lost.
+            with _critical_lock:
+                _critical_pending = False
+                _last_critical_upload_at = now
+            logger.info("Critical write pending, uploading...")
+            _upload(api, repo)
+            return True
+
+    idle_seconds = now - current_mtime
     if idle_seconds >= IDLE_TIMEOUT_S:
         logger.info("Changes detected (%.0fs idle), uploading...", idle_seconds)
+        with _critical_lock:
+            _critical_pending = False
+            _last_critical_upload_at = now
         _upload(api, repo)
         return True
 
@@ -123,10 +191,15 @@ def check_and_upload(api: HfApi, repo: str) -> bool:
 
 def force_upload() -> bool:
     """Force an immediate upload. Returns True if successful, False if backup is not configured."""
+    global _critical_pending, _last_critical_upload_at
+
     repo = _get_repo()
     if not repo:
         return False
     api = HfApi()
+    with _critical_lock:
+        _critical_pending = False
+        _last_critical_upload_at = time.time()
     _upload(api, repo)
     return True
 
@@ -147,7 +220,9 @@ def start_backup_loop() -> threading.Thread | None:
         user = api.whoami()["name"]
         logger.info("HF backup enabled (user: %s, repo: %s)", user, repo)
     except Exception:
-        logger.warning("HF token not found — backup disabled. Run `huggingface-cli login` to enable.")
+        logger.warning(
+            "HF token not found — backup disabled. Run `huggingface-cli login` to enable."
+        )
         return None
 
     _ensure_repo(api, repo)
@@ -155,11 +230,14 @@ def start_backup_loop() -> threading.Thread | None:
 
     def _loop():
         while True:
+            # Clear before the check so a notification that arrives during
+            # check_and_upload sets the flag again and wakes the next wait.
+            _wakeup_event.clear()
             try:
                 check_and_upload(api, repo)
             except Exception:
                 logger.exception("Backup upload failed")
-            time.sleep(POLL_INTERVAL_S)
+            _wakeup_event.wait(timeout=POLL_INTERVAL_S)
 
     thread = threading.Thread(target=_loop, daemon=True, name="hf-backup")
     thread.start()
