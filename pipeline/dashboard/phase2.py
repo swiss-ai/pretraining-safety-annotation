@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import statistics
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from nicegui import app, ui
+
+logger = logging.getLogger(__name__)
 
 from pipeline.config import AppConfig, load_config, resolve_prompt_path
 from pipeline.backup import force_upload
@@ -1490,7 +1494,7 @@ def _render_judge_judge_correlations(runs: list[dict]) -> None:
             ui.echart(chart_opts).classes("w-full").style("height: 400px;")
 
 
-@ui.page("/pipeline")
+@ui.page("/pipeline", response_timeout=60.0)
 def pipeline_monitoring_page():
     """Pipeline monitoring dashboard: iteration table, trends, calibration."""
     viewer_id = app.storage.user.get("annotator_id", "")
@@ -1552,6 +1556,47 @@ def pipeline_monitoring_page():
                 "calibration": cal_iter,
             }
         )
+
+    # --- Reviews per Reviewer ---
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        ui.label("Reviews per Reviewer").classes("text-h6 text-weight-bold")
+
+        # Dedup to latest review per (item_id, iteration, reviewer_id) so
+        # rescoring an item doesn't double-count.
+        _latest_by_key: dict[tuple[str, int, str], dict] = {}
+        for _r in all_reviews:
+            _latest_by_key[(_r["item_id"], _r["iteration"], _r["reviewer_id"])] = _r
+
+        _per_reviewer: dict[str, int] = {}
+        for _r in _latest_by_key.values():
+            _per_reviewer[_r["reviewer_id"]] = (
+                _per_reviewer.get(_r["reviewer_id"], 0) + 1
+            )
+
+        if not _per_reviewer:
+            ui.label("No reviews yet.").classes("text-caption text-grey-6 q-mt-sm")
+        else:
+            # Sort ascending so the largest bar lands at the top of a
+            # horizontal bar chart (echarts draws category index 0 at bottom).
+            _sorted = sorted(_per_reviewer.items(), key=lambda kv: kv[1])
+            _names = [n for n, _ in _sorted]
+            _counts = [c for _, c in _sorted]
+            ui.echart(
+                {
+                    "grid": {"left": 90, "right": 30, "top": 10, "bottom": 25},
+                    "xAxis": {"type": "value"},
+                    "yAxis": {"type": "category", "data": _names},
+                    "tooltip": {"trigger": "axis"},
+                    "series": [
+                        {
+                            "type": "bar",
+                            "data": _counts,
+                            "itemStyle": {"color": "#5470c6"},
+                            "label": {"show": True, "position": "right"},
+                        }
+                    ],
+                }
+            ).classes("w-full").style(f"height: {max(80, 28 * len(_names) + 50)}px;")
 
     # --- Judge Calibration Panel (latest judge prompt per model) ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
@@ -1716,6 +1761,11 @@ def pipeline_monitoring_page():
     all_gen_models = sorted({s.get("generator_model", "unknown") for s in iter_stats})
 
     if len(iter_stats) >= 2:
+        import re as _re_trend
+
+        def _pv(s: str) -> int:
+            m = _re_trend.search(r"_v(\d+)", s or "")
+            return int(m.group(1)) if m else 0
 
         def _build_trend_chart(gen_filter: str | None) -> dict:
             filtered = (
@@ -1724,14 +1774,16 @@ def pipeline_monitoring_page():
                 else [s for s in iter_stats if s.get("generator_model") == gen_filter]
             )
             labels = [
-                f"Iter {s['iteration']} ({_SOURCE_LABEL.get(s.get('source', 'manual'), '')})"
+                f"J{_pv(s.get('judge_prompt', ''))}/G{_pv(s.get('gen_prompt', ''))}"
                 for s in filtered
             ]
             accept_data = [
                 {
                     "value": s["accept_rate"],
                     "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
-                    "symbolSize": 8,
+                    "symbolSize": 10,
+                    "iter": s["iteration"],
+                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
                 }
                 for s in filtered
             ]
@@ -1739,7 +1791,9 @@ def pipeline_monitoring_page():
                 {
                     "value": round(s["mean_score"], 2),
                     "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
-                    "symbolSize": 8,
+                    "symbolSize": 10,
+                    "iter": s["iteration"],
+                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
                 }
                 for s in filtered
             ]
@@ -1783,6 +1837,41 @@ def pipeline_monitoring_page():
                 "legend": {"bottom": 0},
             }
 
+        def _best_current_gen_model() -> str | None:
+            """Return the generator model with the highest accept rate under
+            the current-best prompt combo: (latest judge prompt, model's own
+            latest gen prompt). Returns None if no judged runs exist yet.
+            """
+            import re as _re_bcg
+
+            def _v(s: str) -> int:
+                m = _re_bcg.search(r"_v(\d+)", s or "")
+                return int(m.group(1)) if m else 0
+
+            judged_stats = [s for s in iter_stats if s["n_acc"] + s["n_rej"] > 0]
+            if not judged_stats:
+                return None
+            latest_judge_v = max(_v(s.get("judge_prompt", "")) for s in judged_stats)
+            latest_gen_v: dict[str, int] = {}
+            for s in judged_stats:
+                gm = s.get("generator_model", "unknown")
+                gv = _v(s.get("gen_prompt", ""))
+                if gv > latest_gen_v.get(gm, -1):
+                    latest_gen_v[gm] = gv
+            # Pool n_acc / n_rej across iterations matching the current combo,
+            # then pick the model with the highest pooled accept rate.
+            pooled: dict[str, list[int]] = {}
+            for s in judged_stats:
+                gm = s.get("generator_model", "unknown")
+                if _v(s.get("judge_prompt", "")) != latest_judge_v:
+                    continue
+                if _v(s.get("gen_prompt", "")) != latest_gen_v.get(gm, -1):
+                    continue
+                acc, rej = pooled.setdefault(gm, [0, 0])
+                pooled[gm] = [acc + s["n_acc"], rej + s["n_rej"]]
+            rates = {gm: a / (a + r) for gm, (a, r) in pooled.items() if (a + r) > 0}
+            return max(rates, key=rates.get) if rates else None
+
         with ui.row().classes("w-full q-mx-md q-mt-md gap-4"):
             with ui.card().classes("flex-1 q-pa-md"):
                 with ui.row().classes("items-center gap-2"):
@@ -1791,7 +1880,7 @@ def pipeline_monitoring_page():
                     )
                     if len(all_gen_models) > 1:
                         gen_options = ["All"] + all_gen_models
-                        default_gen = all_gen_models[0]
+                        default_gen = _best_current_gen_model() or all_gen_models[0]
                     else:
                         gen_options = all_gen_models
                         default_gen = all_gen_models[0] if all_gen_models else None
@@ -2488,7 +2577,7 @@ def pipeline_monitoring_page():
             cross_btn.disable()
 
 
-@ui.page("/pipeline/review")
+@ui.page("/pipeline/review", response_timeout=60.0)
 def pipeline_review_page():
     """Human review of LLM-generated reflections with per-dimension scoring."""
     viewer_id = app.storage.user.get("annotator_id", "")
@@ -2523,6 +2612,21 @@ def pipeline_review_page():
     charter_text = CHARTER_TEXT
     cfg = load_config()
     dimensions = cfg.phase2.scoring.dimensions
+    threshold = cfg.phase2.scoring.accept_threshold
+
+    # Floor rule: any single dimension at or below this forces a reject,
+    # regardless of the average. Mirrors the judge's logic in
+    # pipeline/summaries/tools.py.
+    FLOOR_SCORE = 2
+
+    def _compute_decision(values: list[int]) -> tuple[float, str]:
+        """Apply the floor rule + threshold to a flat list of dimension scores."""
+        if not values:
+            return 0.0, "reject"
+        aggregate = sum(values) / len(values)
+        if any(v <= FLOOR_SCORE for v in values) or aggregate < threshold:
+            return aggregate, "reject"
+        return aggregate, "accept"
 
     def _prompt_version(filename: str) -> str:
         """Extract version from prompt filename, e.g. 'generator_v1.md' -> 'v1'."""
@@ -2655,6 +2759,17 @@ def pipeline_review_page():
             .style("font-size: 0.8em;")
         )
 
+        # Manual queue refresh — the items list is snapshotted at page load
+        # and on filter/sort changes (not on every navigate) so the displayed
+        # item doesn't shift when other reviewers submit. Click this to pick
+        # up new items from background pipeline jobs.
+        refresh_queue_btn = (
+            ui.button(icon="refresh")
+            .props("flat dense size=sm")
+            .tooltip("Refresh review queue (pick up new items)")
+            .style("color:#666;")
+        )
+
     # --- Main split panel ---
     with (
         ui.splitter(value=35)
@@ -2777,6 +2892,12 @@ def pipeline_review_page():
                     )
 
                 # LLM generation display
+                ui.markdown(
+                    "**preflection** = framing placed *before* the text · "
+                    "**reflection** = thoughtful pause inserted *during* the "
+                    'text · **1p** = first-person voice (uses "I") · '
+                    '**3p** = third-person voice (no "I")'
+                ).classes("text-caption text-grey-7").style("margin-top: -4px;")
                 gen_section = ui.column().classes("w-full gap-2")
 
                 ui.separator()
@@ -2794,6 +2915,11 @@ def pipeline_review_page():
                 with ui.row().classes("items-center gap-2"):
                     ui.label("Your Review").classes("text-subtitle2 text-weight-bold")
                     review_existing_badge = ui.badge("").props("outline")
+                ui.markdown(
+                    f"Score each dimension 1–5 per part. **Reject** if any single "
+                    f"score is ≤ {FLOOR_SCORE} (floor rule) **or** the overall "
+                    f"average is < {threshold:g}; **Accept** otherwise."
+                ).classes("text-caption text-grey-7").style("margin-top: -6px;")
 
                 DIM_SHORT = {
                     "relevance": "Rel",
@@ -2844,7 +2970,6 @@ def pipeline_review_page():
                 # gen_section as each text part is rendered.
                 score_inputs: dict[str, dict[str, ui.slider]] = {}
 
-                threshold = cfg.phase2.scoring.accept_threshold
                 review_status_label = ui.label("").classes(
                     "text-caption text-weight-bold"
                 )
@@ -2855,9 +2980,7 @@ def pipeline_review_page():
                         for dims in score_inputs.values()
                         for slider in dims.values()
                     ]
-                    agg = sum(all_vals) / len(all_vals) if all_vals else 0
-                    has_floor = any(v <= 2 for v in all_vals)
-                    decision = "reject" if has_floor or agg < threshold else "accept"
+                    agg, decision = _compute_decision(all_vals)
                     color = "green" if decision == "accept" else "red"
                     review_status_label.set_text(f"Avg: {agg:.2f} → {decision.upper()}")
                     review_status_label.style(f"color: {color};")
@@ -2909,6 +3032,10 @@ def pipeline_review_page():
                                     "update:model-value",
                                     lambda _: _update_review_status(),
                                 )
+                                slider.on(
+                                    "update:model-value",
+                                    lambda _: _save_draft(),
+                                )
                                 score_inputs[part][dim] = slider
 
                 _update_review_status()
@@ -2916,10 +3043,12 @@ def pipeline_review_page():
                 notes_input = (
                     ui.textarea(
                         placeholder="Notes (optional)...",
-                    )
-                    .classes("w-full")
-                    .props("outlined")
+                    ).classes("w-full")
+                    # debounce so on_value_change (and the draft write below)
+                    # fires ~once per typing pause, not on every keystroke.
+                    .props('outlined debounce="400"')
                 )
+                notes_input.on_value_change(lambda _: _save_draft())
 
                 with ui.row().classes("w-full justify-end"):
                     submit_btn = ui.button(
@@ -3091,8 +3220,127 @@ def pipeline_review_page():
                 interleaved.append(q.pop(0))
         return interleaved
 
+    # --- Items list cache ---
+    # The items list is snapshotted (not recomputed on every navigate) so the
+    # displayed item doesn't shift when *other* reviewers submit. Recomputing
+    # the Recommended sort each time would silently swap the current item out
+    # from under the reviewer mid-scoring, which made the UI feel like it was
+    # randomly refreshing. Refreshed only on filter/sort change or via the
+    # manual "Refresh queue" button.
+    _items_cache: list[dict] = []
+
+    def _refresh_items_cache() -> None:
+        nonlocal _items_cache
+        _items_cache = get_sorted_items()
+
     def current_items_list() -> list[dict]:
-        return get_sorted_items()
+        return _items_cache
+
+    # --- In-progress draft persistence ---
+    # Drafts (per-item scores + notes) are persisted to app.storage.user so
+    # they survive websocket reconnects and accidental tab reloads. Keyed by
+    # (item_id, iteration). The TTL prunes drafts older than a week so the
+    # cookie doesn't accumulate forever.
+    DRAFT_TTL_SECONDS = 7 * 24 * 3600
+
+    # Suppresses draft writes while update_display() programmatically calls
+    # slider.set_value(), which would otherwise fire 'update:model-value' and
+    # stomp the just-loaded values with a default-valued draft.
+    _suppress_draft_save = False
+
+    def _draft_key(item_id: str, iteration: int) -> str:
+        return f"{item_id}:{iteration}"
+
+    def _all_drafts() -> dict:
+        # Read a plain copy. Mutations go through _set_drafts so the change
+        # is unambiguously a top-level __setitem__ on app.storage.user, which
+        # always fires backup() (no reliance on nested-dict observation).
+        try:
+            return dict(app.storage.user.get("phase2_drafts") or {})
+        except Exception as e:
+            logger.warning("phase2: _all_drafts read failed: %r", e)
+            return {}
+
+    def _set_drafts(drafts: dict) -> None:
+        try:
+            app.storage.user["phase2_drafts"] = drafts
+        except Exception as e:
+            logger.warning("phase2: _set_drafts write failed: %r", e)
+
+    def _prune_stale_drafts() -> None:
+        drafts = _all_drafts()
+        if not drafts:
+            return
+        cutoff = datetime.now(timezone.utc).timestamp() - DRAFT_TTL_SECONDS
+        kept = {}
+        for k, v in drafts.items():
+            try:
+                ts = datetime.fromisoformat(v.get("ts", "")).timestamp()
+            except (ValueError, TypeError):
+                ts = 0
+            if ts >= cutoff:
+                kept[k] = v
+        if len(kept) != len(drafts):
+            _set_drafts(kept)
+
+    def _current_item() -> dict | None:
+        items = current_items_list()
+        if not items or not (0 <= state["pos"] < len(items)):
+            return None
+        return items[state["pos"]]
+
+    def _save_draft() -> None:
+        if _suppress_draft_save or not score_inputs:
+            return
+        item = _current_item()
+        if item is None:
+            return
+        drafts = _all_drafts()
+        drafts[_draft_key(item["item_id"], item["iteration"])] = {
+            "scores": {
+                part: {dim: int(slider.value) for dim, slider in dims.items()}
+                for part, dims in score_inputs.items()
+            },
+            "notes": notes_input.value or "",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        _set_drafts(drafts)
+
+    def _load_draft(item: dict) -> dict | None:
+        return _all_drafts().get(_draft_key(item["item_id"], item["iteration"]))
+
+    def _clear_draft(item: dict) -> None:
+        drafts = _all_drafts()
+        if drafts.pop(_draft_key(item["item_id"], item["iteration"]), None) is not None:
+            _set_drafts(drafts)
+
+    # Persist the currently-displayed item key so that a genuine reload
+    # (browser refresh or >60s disconnect) restores the same item rather than
+    # jumping to first-unreviewed under a freshly-snapshotted Recommended
+    # queue. Use top-level __setitem__ for the same propagation reasons as
+    # _set_drafts.
+    def _save_position(item: dict | None) -> None:
+        try:
+            if item is None:
+                app.storage.user.pop("phase2_current_item", None)
+            else:
+                app.storage.user["phase2_current_item"] = {
+                    "item_id": item["item_id"],
+                    "iteration": item["iteration"],
+                }
+        except Exception as e:
+            logger.warning("phase2: _save_position failed: %r", e)
+
+    def _load_position() -> tuple[str, int] | None:
+        try:
+            saved = app.storage.user.get("phase2_current_item")
+        except Exception:
+            return None
+        if not saved:
+            return None
+        return (saved.get("item_id"), saved.get("iteration"))
+
+    _prune_stale_drafts()
 
     def _first_unreviewed_pos(items: list[dict]) -> int:
         """Return index of the first item without a review from this viewer."""
@@ -3104,6 +3352,7 @@ def pipeline_review_page():
         return 0
 
     def update_display():
+        nonlocal _suppress_draft_save
         items = current_items_list()
         if not items:
             nav_label.set_text("No judged items for this filter")
@@ -3111,6 +3360,7 @@ def pipeline_review_page():
 
         state["pos"] = max(0, min(state["pos"], len(items) - 1))
         item = items[state["pos"]]
+        _save_position(item)
 
         nav_label.set_text(f"Item {state['pos'] + 1} / {len(items)}")
         subset_badge.set_text(item["subset"])
@@ -3222,32 +3472,50 @@ def pipeline_review_page():
             if item.get("is_gold"):
                 _show_gold_annotation(item["item_id"])
 
-        # Pre-fill from existing review
+        # Restore priority: in-progress draft → existing review → defaults.
+        # Drafts win so reviewers don't lose work after a websocket reconnect.
         latest_reviews = load_latest_reviews()
         existing = latest_reviews.get((item["item_id"], item["iteration"], viewer_id))
-        if existing:
+        draft = _load_draft(item)
+
+        if draft:
+            scores_per_part = draft.get("scores", {}) or {}
+            notes_value = draft.get("notes", "")
+            badge_text = (
+                "Unsaved changes (existing review)" if existing else "Unsaved draft"
+            )
+            badge_color = "amber"
+            btn_text = "Update Review" if existing else "Submit Review"
+        elif existing:
             ex_scores = existing["scores"]
-            # Handle both per-part {part: {dim: int}} and legacy flat {dim: int} formats
+            # Legacy flat-dict reviews stored {dim: int} instead of
+            # {part: {dim: int}}; broadcast the flat values to every part.
             if ex_scores and isinstance(next(iter(ex_scores.values())), dict):
-                for part, dims in score_inputs.items():
-                    for dim, slider in dims.items():
-                        slider.set_value(ex_scores.get(part, {}).get(dim, 3))
+                scores_per_part = ex_scores
             else:
-                for part, dims in score_inputs.items():
-                    for dim, slider in dims.items():
-                        slider.set_value(ex_scores.get(dim, 3))
-            notes_input.set_value(existing.get("notes", ""))
-            review_existing_badge.set_text("Editing existing review")
-            review_existing_badge.props("color=orange")
-            submit_btn.set_text("Update Review")
+                scores_per_part = {part: ex_scores for part in score_inputs}
+            notes_value = existing.get("notes", "")
+            badge_text = "Editing existing review"
+            badge_color = "orange"
+            btn_text = "Update Review"
         else:
-            for dims in score_inputs.values():
-                for slider in dims.values():
-                    slider.set_value(3)
-            notes_input.set_value("")
-            review_existing_badge.set_text("New review")
-            review_existing_badge.props("color=green")
-            submit_btn.set_text("Submit Review")
+            scores_per_part = {}
+            notes_value = ""
+            badge_text = "New review"
+            badge_color = "green"
+            btn_text = "Submit Review"
+
+        _suppress_draft_save = True
+        try:
+            for part, dims in score_inputs.items():
+                for dim, slider in dims.items():
+                    slider.set_value(scores_per_part.get(part, {}).get(dim, 3))
+            notes_input.set_value(notes_value)
+            review_existing_badge.set_text(badge_text)
+            review_existing_badge.props(f"color={badge_color}")
+            submit_btn.set_text(btn_text)
+        finally:
+            _suppress_draft_save = False
         _update_review_status()
 
     def _show_gold_annotation(item_id: str):
@@ -3297,13 +3565,7 @@ def pipeline_review_page():
             for part, dims in score_inputs.items()
         }
         all_vals = [v for part in scores.values() for v in part.values()]
-        aggregate = statistics.mean(all_vals)
-        has_floor = any(v <= 2 for v in all_vals)
-        decision = (
-            "reject"
-            if has_floor or aggregate < cfg.phase2.scoring.accept_threshold
-            else "accept"
-        )
+        aggregate, decision = _compute_decision(all_vals)
         save_review(
             item_id=item["item_id"],
             iteration=item["iteration"],
@@ -3313,12 +3575,14 @@ def pipeline_review_page():
             decision=decision,
             notes=notes_input.value.strip(),
         )
+        _clear_draft(item)
         ui.notify("Review saved!", type="positive")
         navigate(1)
 
     def _on_filter_change():
-        """Re-filter and reset position when any filter changes."""
+        """Re-snapshot the items list and reset position when filters change."""
         state["pos"] = 0
+        _refresh_items_cache()
         items = current_items_list()
         state["pos"] = _first_unreviewed_pos(items) if items else 0
         update_display()
@@ -3341,20 +3605,58 @@ def pipeline_review_page():
 
     def _on_sort_change(_):
         state["pos"] = 0
+        _refresh_items_cache()
         update_display()
+
+    def _on_refresh_queue():
+        """Manual queue refresh — re-snapshot the items list and try to keep
+        the reviewer on the same item if it's still in the queue."""
+        cur = _current_item()
+        cur_key = (cur["item_id"], cur["iteration"]) if cur else None
+        _refresh_items_cache()
+        items = current_items_list()
+        if cur_key and items:
+            for i, it in enumerate(items):
+                if (it["item_id"], it["iteration"]) == cur_key:
+                    state["pos"] = i
+                    break
+            else:
+                state["pos"] = _first_unreviewed_pos(items)
+        elif items:
+            state["pos"] = _first_unreviewed_pos(items)
+        else:
+            state["pos"] = 0
+        update_display()
+        ui.notify("Queue refreshed", type="info")
 
     gen_model_select.on_value_change(_on_gen_model_change)
     gen_prompt_select.on_value_change(_on_gen_prompt_change)
     judge_model_select.on_value_change(_on_judge_model_change)
     judge_prompt_select.on_value_change(_on_judge_prompt_change)
     sort_select.on_value_change(_on_sort_change)
-    # Start at first unreviewed item
+    refresh_queue_btn.on("click", lambda _: _on_refresh_queue())
+    _refresh_items_cache()
     items = current_items_list()
-    state["pos"] = _first_unreviewed_pos(items) if items else 0
+    if items:
+        # Restore the previously-displayed item if it's still in the queue,
+        # otherwise fall back to the first unreviewed.
+        saved_key = _load_position()
+        state["pos"] = 0
+        if saved_key:
+            for i, it in enumerate(items):
+                if (it["item_id"], it["iteration"]) == saved_key:
+                    state["pos"] = i
+                    break
+            else:
+                state["pos"] = _first_unreviewed_pos(items)
+        else:
+            state["pos"] = _first_unreviewed_pos(items)
+    else:
+        state["pos"] = 0
     update_display()
 
 
-@ui.page("/pipeline/reviews")
+@ui.page("/pipeline/reviews", response_timeout=60.0)
 def pipeline_reviews_page():
     """Review overview: browse all reviews, comment on them, delete them."""
     viewer_id = app.storage.user.get("annotator_id", "")
