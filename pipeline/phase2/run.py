@@ -689,6 +689,7 @@ def judge_batch(
 
     async def judge_one(item: dict) -> dict | None:
         parts = _parts_to_judge(item)
+        raw_for_logging: str | dict[str, str] | None = None
         try:
             t0 = time.monotonic()
 
@@ -705,6 +706,7 @@ def judge_batch(
                     writing_guidelines_text=writing_guidelines_text,
                     thinking=thinking,
                 )
+                raw_for_logging = raw
                 judge_latency_ms = int((time.monotonic() - t0) * 1000)
 
                 all_scores = [
@@ -795,6 +797,7 @@ def judge_batch(
                     raw_responses[part] = p_raw
                     for k in total_usage:
                         total_usage[k] += p_usage.get(k, 0)
+                raw_for_logging = raw_responses
 
                 judgment = {
                     **judgment_parts,
@@ -814,7 +817,12 @@ def judge_batch(
                 save_item(judged)
             return judged
         except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
-            logger.warning("Skipping item {} — judging failed: {}", item["item_id"], e)
+            logger.warning(
+                "Skipping item {} — judging failed: {} | Raw response: {}",
+                item["item_id"],
+                e,
+                raw_for_logging,
+            )
             return None
 
     coros = [judge_one(item) for item in items]
