@@ -20,6 +20,15 @@ from pipeline.log import logger
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0
 
+# Default completion-token budget for chat calls. Must be large enough for:
+#   - a combined 4-voice judge response (~500 output tokens observed),
+#   - a full generation response with both voices (~600 output tokens),
+#   - thinking-model reasoning blocks on top of either of the above.
+# When unset, OpenRouter has been observed routing to providers that cap at
+# ~128 tokens, silently truncating judge output to ~500 chars. Always pass
+# an explicit budget.
+DEFAULT_MAX_TOKENS = 8192
+
 # Per-model recommended sampling parameters from HuggingFace model cards.
 # Matched case-insensitively against the model name. First match wins.
 _SAMPLING_DEFAULTS: list[tuple[str, dict[str, float | int]]] = [
@@ -98,12 +107,17 @@ async def api_call(
     thinking: bool = False,
     json_mode: bool = False,
     sampling_params: dict[str, float | int] | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> tuple[str, str | None, dict]:
     """Make a single API call with network-error retry.
 
     Returns (content, reasoning_content, usage_dict). reasoning_content is None
     if the model does not produce reasoning output. usage_dict contains
     input_tokens, output_tokens, reasoning_tokens.
+
+    Passes an explicit max_tokens budget so OpenRouter doesn't silently clamp
+    the output to a provider-specific default (observed: ~128 tokens, i.e.
+    ~500 chars, which truncates the 4-voice judge response mid-reasoning).
     """
     extra_body = None
     if thinking:
@@ -119,7 +133,7 @@ async def api_call(
     # Sampling params: temperature, top_p, presence_penalty are native OpenAI
     # API kwargs; top_k goes into extra_body (sglang/vllm extension).
     sp = sampling_params or {}
-    api_kwargs: dict = {}
+    api_kwargs: dict = {"max_tokens": max_tokens}
     for k in ("temperature", "top_p", "presence_penalty"):
         if k in sp:
             api_kwargs[k] = sp[k]
@@ -149,10 +163,22 @@ async def api_call(
                 raise AssertionError(
                     f"API returned no choices (upstream error: {err!r})"
                 )
-            msg = response.choices[0].message
+            choice = response.choices[0]
+            msg = choice.message
             content = msg.content
             assert content is not None, "API returned None content"
             assert content.strip(), "API returned empty content"
+            # Warn on truncation so the downstream parse-failure warning
+            # points at the right root cause (hit max_tokens) instead of
+            # looking like a model-side JSON bug.
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason == "length":
+                logger.warning(
+                    "Output truncated at max_tokens={} (model={}): {} chars",
+                    max_tokens,
+                    model,
+                    len(content),
+                )
             reasoning = getattr(msg, "reasoning_content", None)
             usage = response.usage
             details = getattr(usage, "completion_tokens_details", None) or {}
