@@ -21,11 +21,23 @@ carry `is_gold` (stable across iterations, used by `diff`), `subset` (data sourc
 `safety_score`, and `canary` (canary id or null).
 
 **Architectural guarantee — reflections cannot foreshadow**: the pipeline issues TWO
-separate API calls per item with the SAME system prompt. The reflection call sends ONLY
-the text up to the reflection point; the preflection call sends the full text. The
-generator literally cannot see post-RP content when producing a reflection, so foreshadowing
-is structurally impossible. Do NOT add prompt instructions warning the generator against
-foreshadowing — they are noise, the architecture handles it.
+separate API calls per item. The reflection call sends ONLY the text up to the reflection
+point; the preflection call sends the full text. The generator literally cannot see
+post-RP content when producing a reflection, so foreshadowing is structurally impossible.
+Do NOT add prompt instructions warning the generator against foreshadowing — they are
+noise, the architecture handles it.
+
+**Mode-specific prompt splitting**: the generator prompt is a single file, but the pipeline
+strips mode-irrelevant sections at runtime using `<!-- mode: reflection -->` /
+`<!-- mode: preflection -->` / `<!-- /mode -->` HTML comment markers. Content inside
+`<!-- mode: reflection -->...<!-- /mode -->` is only sent on the reflection call; content
+inside `<!-- mode: preflection -->...<!-- /mode -->` is only sent on the preflection call.
+Content outside any markers is shared by both calls. When editing the prompt:
+- Keep the markers balanced (every open has a close)
+- Place reflection-only instructions (e.g., "you see ONLY partial text") inside the
+  reflection markers, and preflection-only instructions inside the preflection markers
+- Shared rules (citation format, diversity, output format, charter) stay outside markers
+- If no markers are present the full prompt is sent to both calls (backward compat)
 
 **Length constraint — all four variants ≤ 128 tokens**: the pipeline truncates each of
 `preflection_3p`, `preflection_1p`, `reflection_1p`, and `reflection_3p` at 128 tokens.

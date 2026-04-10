@@ -76,6 +76,21 @@ _FIELD_ALIASES = FIELD_ALIASES
 _GEN_TEXT_FIELDS = GEN_TEXT_FIELDS
 _parse_generation = parse_generation
 
+_MODE_SECTION_RE = re.compile(r"<!-- mode: (\w+) -->.*?<!-- /mode -->", re.DOTALL)
+
+
+def _split_generator_prompt(template: str, mode: str) -> str:
+    """Strip mode-specific sections not matching *mode* ('reflection' or 'preflection').
+
+    Sections are delimited by ``<!-- mode: X -->`` / ``<!-- /mode -->`` markers.
+    If no markers are present the template is returned unchanged (backward compat).
+    """
+
+    def _keep(m: re.Match) -> str:
+        return m.group(0) if m.group(1) == mode else ""
+
+    return _MODE_SECTION_RE.sub(_keep, template).strip()
+
 
 def _load_canaries() -> list[dict]:
     """Load canary quirks from resources/canaries.yaml."""
@@ -290,9 +305,11 @@ def generate_batch(
     Returns the list of completed item records.
     """
     prompt_template = prompt_path.read_text(encoding="utf-8")
-    system_prompt = prompt_template.replace("{charter}", charter_text).replace(
+    base_prompt = prompt_template.replace("{charter}", charter_text).replace(
         "{writing_guidelines}", writing_guidelines_text
     )
+    refl_system_prompt = _split_generator_prompt(base_prompt, "reflection")
+    prefl_system_prompt = _split_generator_prompt(base_prompt, "preflection")
     prompt_filename = prompt_path.name
     canaries = _load_canaries()
 
@@ -328,7 +345,7 @@ def generate_batch(
         refl_user += _REFLECTION_TASK
 
         refl_messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": refl_system_prompt},
             {"role": "user", "content": refl_user},
         ]
 
@@ -398,7 +415,7 @@ def generate_batch(
         prefl_user += _PREFLECTION_TASK
 
         prefl_messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": prefl_system_prompt},
             {"role": "user", "content": prefl_user},
         ]
 

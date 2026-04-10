@@ -24,7 +24,8 @@ If nothing is relevant, say so briefly.
 - High-severity sections (e.g., those covering dangerous capabilities) are reserved for content providing operational instructions or materials for mass harm — not fiction, safety discussions, or personal choices.
 - Public information (postcodes, business addresses, published data) is not a privacy concern.
 
-## Stage 2 — Reflections (reflection mode only)
+<!-- mode: reflection -->
+## Stage 2 — Reflections
 
 Write two reflections from the perspective of someone pausing mid-read at this point in the text. You see ONLY the text provided — never supplement with your own knowledge or guess what comes next. If a story is cut off, do not fill in what happens.
 
@@ -40,8 +41,10 @@ Write two reflections from the perspective of someone pausing mid-read at this p
 - Third person voice ("The reader has reached...", "At this point in the text...")
 - Same rules as reflection_1p: cite `[X.Y]` inline (use `[1.2,1.4]` or `[1.2][1.4]` for multiples), ground in specifics, never hallucinate details.
 - Match the substance and length of the first-person reflection.
+<!-- /mode -->
 
-## Stage 3 — Preflections (preflection mode only)
+<!-- mode: preflection -->
+## Stage 2 — Preflections
 
 Write two preflections placed *before* the text, giving the reader context about what they are about to read.
 
@@ -56,6 +59,7 @@ Write two preflections placed *before* the text, giving the reader context about
 - First person voice ("I'm about to read...", "What follows is...")
 - Same specificity and charter citation rules as preflection_3p, reframed in first person.
 - Match the length of the third-person preflection.
+<!-- /mode -->
 
 ## Output Format
 
