@@ -1,8 +1,8 @@
 """Shared API utilities for the SwissAI inference endpoint.
 
-Provides async API calls with retry, concurrent batch execution,
-JSON extraction, and health checking. Used by phase2, phase3,
-and the summary pipeline.
+Provides async API calls with retry (jittered backoff, rate-limit class
+distinction), concurrent batch execution with tqdm throttling, JSON
+extraction, and health checking. Used by phase 2 and phase 3 runners.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import re
+import sys
 
 import openai
 from tqdm.asyncio import tqdm_asyncio
@@ -18,6 +20,7 @@ from tqdm.asyncio import tqdm_asyncio
 from pipeline.log import logger
 
 MAX_RETRIES = 5
+MAX_RETRIES_RATE_LIMIT = 8
 RETRY_BACKOFF_BASE = 2.0
 
 # Default completion-token budget for chat calls. Needs to cover:
@@ -92,10 +95,17 @@ def run_concurrent(*coros, desc: str) -> list:
 
     Creates a temporary event loop that doesn't touch SIGINT handling,
     so Ctrl+C raises KeyboardInterrupt normally.
+
+    Under a non-tty stderr (e.g. nohup, log file redirection), throttles
+    tqdm's progress prints so multi-hour runs don't fill the log file with
+    hundreds of MB of progress lines.
     """
+    tqdm_kwargs: dict = {"desc": desc}
+    if not sys.stderr.isatty():
+        tqdm_kwargs["mininterval"] = 30
     loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(tqdm_asyncio.gather(*coros, desc=desc))
+        return loop.run_until_complete(tqdm_asyncio.gather(*coros, **tqdm_kwargs))
     finally:
         loop.close()
 
@@ -143,7 +153,9 @@ async def api_call(
         extra_body["top_k"] = sp["top_k"]
 
     last_error = None
-    for attempt in range(MAX_RETRIES):
+    attempt = 0
+    max_attempts = MAX_RETRIES_RATE_LIMIT  # upper bound; per-error class checked below
+    while attempt < max_attempts:
         try:
             async with semaphore:
                 response = await client.chat.completions.create(
@@ -202,12 +214,29 @@ async def api_call(
             AssertionError,
         ) as e:
             last_error = f"{type(e).__name__}: {e}"
-        if attempt < MAX_RETRIES - 1:
+            # Rate-limit and timeout errors get more retries because the
+            # cluster is under transient load and we want to wait it out.
+            # Connection errors and other failures get the standard retry count.
+            if isinstance(e, (openai.RateLimitError, openai.APITimeoutError)):
+                limit_for_this_error = MAX_RETRIES_RATE_LIMIT
+            else:
+                limit_for_this_error = MAX_RETRIES
+            attempt += 1
+            if attempt >= limit_for_this_error:
+                break
             logger.warning(
-                "Retry {}/{} due to: {}", attempt + 2, MAX_RETRIES, last_error
+                "Retry {}/{} due to: {}",
+                attempt + 1,
+                limit_for_this_error,
+                last_error,
             )
-            await asyncio.sleep(RETRY_BACKOFF_BASE**attempt)
-    raise RuntimeError(f"Failed after {MAX_RETRIES} retries: {last_error}")
+            # Jittered exponential backoff: each sleep is in
+            # [0.5 * 2**i, 1.5 * 2**i] where i is the 0-indexed attempt that
+            # just failed. The jitter avoids thundering-herd retries from many
+            # concurrent requests waking up at the same instant.
+            base = RETRY_BACKOFF_BASE ** (attempt - 1)
+            await asyncio.sleep(base * random.uniform(0.5, 1.5))
+    raise RuntimeError(f"Failed after {attempt} retries: {last_error}")
 
 
 def health_check(client: openai.AsyncOpenAI, model: str) -> None:

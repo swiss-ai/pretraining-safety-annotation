@@ -358,8 +358,6 @@ def _snapshot_prompts(cfg: AppConfig) -> dict[str, str]:
     all_aliases = set()
     for m in cfg.phase2.judge_models + cfg.phase2.generator_models:
         all_aliases.add(m.alias)
-    for m in cfg.phase3.target_models:
-        all_aliases.add(m.alias)
     for alias in sorted(all_aliases):
         model_dir = PROMPTS_DIR / alias
         if not model_dir.exists():

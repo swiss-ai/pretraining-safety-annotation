@@ -159,19 +159,96 @@ class DashboardConfig:
 
 
 @dataclass
-class EscalationConfig:
-    max_per_iteration: int = 10
+class CandidateModel:
+    """One candidate model in a phase 3 eval (generator or judge).
+
+    Unlike `ModelConfig`, the prompt filename is explicit (e.g.
+    `judge_v3.md`) — we never auto-pick the latest. This makes evals
+    reproducible across re-runs even if new prompt versions land.
+    """
+
+    alias: str = ""
+    api_name: str = ""
+    prompt: str = ""  # explicit, e.g. "generator_v3.md" — never "_latest"
+    thinking: bool = False
+    json_mode: bool = False
+
+
+@dataclass
+class GeneratorEvalConfig:
+    candidates: list[CandidateModel] = field(default_factory=list)
+    n_items: int = 5000
+    seed: int = 42
+    max_concurrent: int = 50
+    chunk_size: int = 200
+    store_reasoning: bool = False
+    failure_attempt_cap: int = 3
+
+
+@dataclass
+class JudgeEvalConfig:
+    candidates: list[CandidateModel] = field(default_factory=list)
+    generator: CandidateModel = field(default_factory=CandidateModel)
+    n_items: int = 5000
+    seed: int = 42
+    max_concurrent: int = 50
+    chunk_size: int = 200
+    include_reviewed: bool = True
+    reviewer_policy: str = "average"  # "average" | "first" | "all"
+    store_reasoning: bool = False
+    failure_attempt_cap: int = 3
 
 
 @dataclass
 class Phase3Config:
-    gold_judges: list[ModelConfig] = field(default_factory=list)
-    gold_generators: list[ModelConfig] = field(default_factory=list)
-    target_models: list[ModelConfig] = field(default_factory=list)
-    improver: ImproverConfig = field(default_factory=ImproverConfig)
+    endpoint: str = ""
+    eval_dir: str = ""  # root for run dirs; resolves env vars
+    gold_judge: CandidateModel = field(default_factory=CandidateModel)
+    generator_eval: GeneratorEvalConfig = field(default_factory=GeneratorEvalConfig)
+    judge_eval: JudgeEvalConfig = field(default_factory=JudgeEvalConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
-    iteration: IterationConfig = field(default_factory=IterationConfig)
-    escalation: EscalationConfig = field(default_factory=EscalationConfig)
+
+
+@dataclass
+class Phase4SglangConfig:
+    hf_slug: str = ""
+    model_path: str = ""  # local HF cache path on /capstor/, or empty to download
+    tp_size: int = 4
+    dp_size: int = 1
+    port: int = 30000
+    env_toml: str = ""  # path to sglang TOML (selects container image)
+    extra_args: str = ""  # model-specific sglang flags
+    pre_launch_cmds: str = ""  # pip installs inside container
+
+
+@dataclass
+class Phase4SlurmConfig:
+    partition: str = "normal"
+    account: str = "a141"
+    time: str = "24:00:00"
+    cpus_per_task: int = 4
+    mem_per_cpu_gb: int = 8
+    workers: int = -1
+
+
+@dataclass
+class Phase4Config:
+    sidecar_path: str = ""
+    output_dir: str = ""
+    prompt: str = "generator_v1.md"
+    generator_alias: str = "glm-4.5-air"
+    thinking: bool = False
+    json_mode: bool = False
+    max_rows: int = 0  # 0 = all rows
+    rows_per_task: int = 100000
+    max_concurrent_requests: int = 2048
+    save_batch_size: int = 200
+    progress_interval: int = 1000
+    canary_seed: int = 42
+    reflection_seed: int = 42  # independent from canary_seed
+    max_retries_per_doc: int = 5
+    sglang: Phase4SglangConfig = field(default_factory=Phase4SglangConfig)
+    slurm: Phase4SlurmConfig = field(default_factory=Phase4SlurmConfig)
 
 
 @dataclass
@@ -184,6 +261,7 @@ class AppConfig:
     phase1: Phase1Config = field(default_factory=Phase1Config)
     phase2: Phase2Config = field(default_factory=Phase2Config)
     phase3: Phase3Config = field(default_factory=Phase3Config)
+    phase4: Phase4Config = field(default_factory=Phase4Config)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
@@ -220,36 +298,6 @@ def resolve_generator_model(cfg: AppConfig, alias: str) -> ModelConfig:
             return m
     raise ValueError(
         f"No generator model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.generator_models]}"
-    )
-
-
-def resolve_gold_judge(cfg: AppConfig, alias: str) -> ModelConfig:
-    """Find a gold judge model config by alias in phase3 config."""
-    for m in cfg.phase3.gold_judges:
-        if m.alias == alias:
-            return m
-    raise ValueError(
-        f"No gold judge with alias '{alias}'. Available: {[m.alias for m in cfg.phase3.gold_judges]}"
-    )
-
-
-def resolve_gold_generator(cfg: AppConfig, alias: str) -> ModelConfig:
-    """Find a gold generator model config by alias in phase3 config."""
-    for m in cfg.phase3.gold_generators:
-        if m.alias == alias:
-            return m
-    raise ValueError(
-        f"No gold generator with alias '{alias}'. Available: {[m.alias for m in cfg.phase3.gold_generators]}"
-    )
-
-
-def resolve_target_model(cfg: AppConfig, alias: str) -> ModelConfig:
-    """Find a target model config by alias in phase3 config."""
-    for m in cfg.phase3.target_models:
-        if m.alias == alias:
-            return m
-    raise ValueError(
-        f"No target model with alias '{alias}'. Available: {[m.alias for m in cfg.phase3.target_models]}"
     )
 
 
@@ -309,17 +357,27 @@ def _resolve_latest_version(model_dir: Path, filename: str) -> Path:
     return candidates[-1][1]
 
 
+_EXPLICIT_VERSION_RE = re.compile(r"^(generator|judge)_v\d+\.md$")
+
+
 def resolve_prompt_path(filename: str, alias: str) -> Path:
     """Resolve a prompt filename within the model-specific directory.
 
     Prompts live at data/pipeline/prompts/{alias}/{filename}. If the
-    model directory doesn't exist yet, initializes it from init templates.
+    model directory doesn't exist yet AND we're being asked for a
+    `_latest.md` flow, initializes it from init templates.
 
     Supports '_latest.md' suffix (e.g. 'judge_latest.md') which resolves
     to the highest '_vN.md' version found on disk.
+
+    Explicit version filenames (e.g. 'judge_v3.md') do NOT trigger init —
+    they assert that the file already exists, so a typo'd alias surfaces
+    as a missing-file error rather than silently materialising a stub
+    directory.
     """
     model_dir = PROMPTS_DIR / alias
-    if not model_dir.exists():
+    is_explicit_version = bool(_EXPLICIT_VERSION_RE.match(filename))
+    if not model_dir.exists() and not is_explicit_version:
         _init_model_prompts(alias)
     if "_latest.md" in filename:
         return _resolve_latest_version(model_dir, filename)

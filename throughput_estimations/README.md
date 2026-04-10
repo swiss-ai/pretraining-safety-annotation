@@ -8,13 +8,17 @@ Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
 
 ### 4-voice annotation
 
-| Model | Nodes | GPUs (TP×DP) | Concurrency | Samples/sec | Wall time | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
-|-------|-------|--------------|-------------|-------------|-----------|----------------|------------------|-----------------|
-| **gpt-oss-120b** | 1 | 4 (TP1×DP4) | 1024 | 10.55 | ~113 days | 760 | **10,824** | 8.6K - 12.6K |
-| **gpt-oss-120b** | 4 | 16 (TP1×DP4) | 1024 | 28.58 | ~42 days | 762 | **15,981** | 12.6K - 18.6K |
-| **GLM-4.7-Flash** | 1 | 4 (TP1×DP4) | 1024 | 3.95 | ~301 days | 2,782 | **28,884** | 22K - 35K |
-| **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.52 | ~338 days | 3,548 | **32,439** | 10.9K - 46.5K |
-| **Nemotron-3-Super-FP8** | 1 | 4 (TP4×DP1) | 1024 | 2.26 | ~527 days | 1,553 | **50,471** | 34.9K - 58.4K |
+Best result per model (1 node), sorted by GPU-hours.
+
+| Model | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
+|-------|--------------|-------------|-------------|----------------|------------------|-----------------|
+| **gpt-oss-120b** | 4 (TP1×DP4) | 1024 | 10.55 | 760 | **10,824** | 8.6K - 12.6K |
+| **Qwen3.5-9B** | 4 (TP1×DP4) | 1024 | 4.09 | 4,039 | **27,901** | 23.8K - 33.8K |
+| **GLM-4.7-Flash** | 4 (TP1×DP4) | 1024 | 3.95 | 2,782 | **28,884** | 22K - 35K |
+| **GLM-4.5-Air-FP8** | 4 (TP4×DP1) | 1024 | 3.56 | 1,432 | **32,035** | — |
+| **Qwen3.5-35B-A3B-FP8** | 4 (TP1×DP4) | 1024 | 3.52 | 3,548 | **32,439** | 10.9K - 46.5K |
+| **Nemotron-3-Super-FP8** | 4 (TP4×DP1) | 1024 | 2.26 | 1,553 | **50,471** | 34.9K - 58.4K |
+| **Qwen3.5-122B-A10B-FP8** | 4 (TP4×DP1) | 1024 | 0.49 | 1,684 | **234,560** | — |
 
 ### Neutral summary
 
@@ -31,9 +35,10 @@ Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
 - **gpt-oss-120b is the cheapest generator** at ~10.8K GPU-h (1 node). Produces short outputs (~760 tok).
 - **SmolLM3-3B is the cheapest summarizer** at ~3.3K GPU-h. 3x cheaper than next best.
 - **Higher concurrency always helps**: c1024 beats c512 at every configuration.
-- **Nemotron-3-Super at TP4 is 50K GPU-h** — needs TP1×DP4 retest (may not fit on 1 GPU).
-- **GLM-4.5-Air-FP8 does not fit at TP1** — minimum TP2 required. Best single-node config is TP2×DP2.
-- **Sampling params now tracked**: per-model HuggingFace-recommended sampling params added (Apr 3). Qwen3.5 presence_penalty=1.5 reduced output tokens ~15% but sglang still can't separate thinking tokens.
+- **Nemotron-3-Super does not fit at TP1** — minimum TP2 required. TP2×DP2 (~66K GPU-h) is worse than TP4×DP1 (50K GPU-h). EP=2 makes no difference.
+- **GLM-4.5-Air-FP8 does not fit at TP1** — minimum TP2 required. Best single-node config is TP4×DP1 (32K GPU-h).
+- **Qwen3.5-9B** at 28K GPU-h despite ~4K output tokens (unseparated thinking). Fast thanks to tiny model (9B) at TP1×DP4.
+- **Sampling params now tracked**: per-model HuggingFace-recommended sampling params added (Apr 3). Qwen3.5 presence_penalty=1.5 reduced output tokens ~15% but total output remains high due to thinking tokens (real compute, not a labeling issue).
 
 ---
 
@@ -64,12 +69,15 @@ All 10k-sample runs: direct node endpoints, 10 warmup + 10 cooldown, 0 failures.
 |-------|-------|--------------|-------------|-------------|----------------|------------------|-----------------|------|----------|
 | **gpt-oss-120b** | 1 | 4 (TP1×DP4) | 1024 | 10.55 | 760 | **10,824** | 8.6K - 12.6K | Apr 1 | defaults |
 | **gpt-oss-120b** | 4 | 16 (TP1×DP4) | 1024 | 28.58 | 762 | **15,981** | 12.6K - 18.6K | Apr 1 | defaults |
+| **Qwen3.5-9B** | 1 | 4 (TP1×DP4) | 1024 | 4.09 | 4,039 | **27,901** | 23.8K - 33.8K | Apr 3 | correct |
 | **GLM-4.7-Flash** | 1 | 4 (TP1×DP4) | 1024 | 3.95 | 2,782 | **28,884** | 22K - 35K | Apr 1 | defaults |
 | **GLM-4.5-Air-FP8** | 1 | 4 (TP4×DP1) | 1024 | 3.56 | 1,432 | **32,035** | — | Apr 1 | defaults |
 | **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.52 | 3,548 | **32,439** | 10.9K - 46.5K | Apr 2 | correct |
 | **GLM-4.5-Air-FP8** | 1 | 4 (TP2×DP2) | 1024 | 3.11 | 1,413 | **36,737** | — | Apr 1 | defaults |
 | **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.05 | 4,167 | **37,473** | — | Apr 2 | defaults |
 | **Nemotron-3-Super-FP8** | 1 | 4 (TP4×DP1) | 1024 | 2.26 | 1,553 | **50,471** | 34.9K - 58.4K | Apr 2 | defaults |
+| **Nemotron-3-Super-FP8** | 1 | 4 (TP2×EP2×DP2) | 1024 | 1.74 | 1,207 | **65,624** | 39.2K - 77.7K | Apr 3 | correct |
+| **Nemotron-3-Super-FP8** | 1 | 4 (TP2×DP2) | 1024 | 1.73 | 1,186 | **66,027** | 39.5K - 77.1K | Apr 3 | correct |
 | **GLM-4.5-Air-FP8** | 4 | 16 (TP4×DP1) | 1024 | 8.00 | 1,808 | **57,131** | 40K - 68K | Mar 31 | defaults |
 | **GLM-4.5-Air-FP8** | 4 | 16 (TP4×DP1) | 512 | 6.96 | 1,793 | **65,639** | 46K - 78K | Mar 31 | defaults |
 | **GLM-4.7-Flash** | 1 | 4 (TP4×DP1) | 512 | 1.67 | 2,755 | **68,358** | 53K - 83K | Apr 1 | defaults |
@@ -275,7 +283,52 @@ Output tokens increased 1.27x vs 2-voice (1,348 → 1,710). Throughput dropped f
 
 ---
 
-### 4-voice — New Results (2026-04-01)
+### 4-voice — New Results (2026-04-03)
+
+All runs: 10,000 samples + 10 warmup + 10 cooldown, direct node endpoints, 0 failures. Correct sampling params.
+
+#### Nemotron-3-Super-FP8 — 1 node / 4 GPUs (TP2×EP2×DP2) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 5,758s (~96 min) |
+| Samples/sec | 1.74 |
+| Mean input / output tokens | 7,055 / 1,207 |
+| GPU-hours (102M) | **~65,624** (39.2K - 77.7K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=2, EP=2, DP=2. Sampling: `temperature=1.0, top_p=0.95`. Does not fit at TP1 — minimum TP2 required. EP=2 made no meaningful difference vs TP2×DP2 without EP.
+
+Result: `generator_NVIDIA-Nemotron-3-Su_20260403_143226.json`
+
+#### Nemotron-3-Super-FP8 — 1 node / 4 GPUs (TP2×DP2) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 5,794s (~97 min) |
+| Samples/sec | 1.73 |
+| Mean input / output tokens | 7,055 / 1,186 |
+| GPU-hours (102M) | **~66,027** (39.5K - 77.1K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=2, DP=2 (no EP). Virtually identical to EP=2 run. Both TP2 configs (~66K GPU-h) are worse than yesterday's TP4×DP1 (50K GPU-h) — same pattern as GLM-4.5-Air-FP8 where TP4 single-replica beats TP2×DP2.
+
+Result: `generator_NVIDIA-Nemotron-3-Su_20260403_142507.json`
+
+#### Qwen3.5-9B — 1 node / 4 GPUs (TP1×DP4) / c1024
+
+| Metric | Value |
+|--------|-------|
+| Wall time | 2,448s (~41 min) |
+| Samples/sec | 4.09 |
+| Mean input / output tokens | 7,047 / 4,039 |
+| GPU-hours (102M) | **~27,901** (23.8K - 33.8K) |
+
+**Setup**: 1 node, 4 GPUs (GH200), TP=1, DP=4. Sampling: `temperature=1.0, top_p=0.95, top_k=20, presence_penalty=1.5`. Produces ~4K output tokens (includes unseparated thinking — these are real decode steps, not a labeling issue). Despite high token count, the tiny 9B model at TP1×DP4 makes it competitive with GLM-4.7-Flash.
+
+Result: `generator_Qwen3.5-9B-prRC_20260403_125022.json`
+
+---
+
+### 4-voice — Results (2026-04-01)
 
 All runs: 10,000 samples + 10 warmup + 10 cooldown, direct node endpoints, 0 failures.
 

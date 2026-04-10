@@ -96,8 +96,16 @@ uv run python -m pipeline.phase2.run
 # Run the autonomous improver loop (generate→judge→improve prompts→repeat)
 uv run python -m pipeline.phase2.loop
 
-# Run phase 3 (prompt transfer to target models)
-uv run python -m pipeline.phase3
+# Run phase 3 evals (rank candidate generators or judges on a large diverse pool)
+uv run python -m pipeline.phase3 eval-generators
+uv run python -m pipeline.phase3 eval-judges
+uv run python -m pipeline.phase3 rank-generators <run_id>
+uv run python -m pipeline.phase3 rank-judges <run_id>
+
+# Phase 4: scale-up generation (submit SLURM job array, check progress, merge results)
+uv run python -m pipeline.phase4 submit --run reflections
+uv run python -m pipeline.phase4 status --run reflections
+uv run python -m pipeline.phase4 merge  --run reflections
 ```
 
 The dashboard runs on port 8600 by default (override with `DASHBOARD_PORT` env var).
@@ -130,21 +138,30 @@ pipeline/
 │   ├── loop.py                # autonomous loop with Claude improver
 │   └── storage.py             # phase 2 iteration persistence (SQLite)
 ├── phase3/
-│   ├── __main__.py            # entry point: python -m pipeline.phase3
-│   ├── run.py                 # phase 3 iteration logic
-│   ├── loop.py                # phase 3 autonomous loop
-│   └── storage.py             # phase 3 persistence (SQLite)
+│   ├── __main__.py            # CLI: eval-generators, eval-judges, rank-*, list-runs
+│   ├── eval_generators.py     # path A: rank candidate generators via gold judge
+│   ├── eval_judges.py         # path B: rank candidate judges vs gold + human
+│   ├── rank.py                # analytics: rank tables, correlation metrics
+│   ├── storage.py             # JSONL run store with writer thread
+│   └── items.py               # diverse item-pool builder + reviewed-item loader
+├── phase4/                    # scale-up generation (SLURM + co-located sglang)
+│   ├── __main__.py            # CLI: submit, merge, status, rerun
+│   ├── reader.py              # SidecarReader (row-group parquet reader)
+│   ├── generate.py            # AnnotationGenerator (concurrent API calls)
+│   ├── runs.py                # RunDefinition registry (reflections, etc.)
+│   ├── canaries.py            # deterministic canary assignment
+│   ├── merge.py               # streaming additive merge into sidecar
+│   └── progress.py            # per-run progress aggregation
+├── generation.py              # shared generation parsing (field aliases, etc.)
 └── prompts/                   # init templates (checked into git)
     ├── init_generator.md
     ├── init_judge.md
     ├── improver.md            # legacy single-role improver
     ├── improver_judge.md      # judge-specific improver prompt
-    ├── improver_generator.md  # generator-specific improver prompt
-    ├── improver_phase3_judge.md
-    └── improver_phase3_generator.md
+    └── improver_generator.md  # generator-specific improver prompt
 
 configs/
-└── config.yaml                # global config (phase1 + phase2 + phase3 + dashboard)
+└── config.yaml                # global config (phase1-4 + dashboard)
 
 resources/
 ├── ModelRaisingConstitution_v0.2.md   # charter / constitution

@@ -17,6 +17,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Callable
 import dotenv
 
 dotenv.load_dotenv()
@@ -45,6 +46,13 @@ from pipeline.config import (
     union_charter_elements,
 )
 from pipeline.data import load_dataset_cache
+from pipeline.generation import (
+    FIELD_ALIASES,
+    GEN_TEXT_FIELDS,
+    PREFLECTION_TASK,
+    REFLECTION_TASK,
+    parse_generation,
+)
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 from pipeline.phase2.storage import (
     load_items_for_iteration,
@@ -61,94 +69,18 @@ CANARY_RATE = 0.10
 
 CANARIES_PATH = PROJECT_ROOT / "resources" / "canaries.yaml"
 
-# Task instructions appended to the user message to select generation mode.
-# Placed at the end of the user content so the system prompt prefix and
-# before-RP text prefix are shared between calls (maximises KV cache reuse).
-_REFLECTION_TASK = (
-    "\n\n## Task\n\n"
-    "Reflection mode. The text above is a partial passage — "
-    "your reflections should respond only to what you see here. "
-    "Produce: analysis, reflection_1p, reflection_3p."
-)
-
-_PREFLECTION_TASK = (
-    "\n\n## Task\n\n"
-    "Preflection mode. The text above is the full passage. "
-    "Produce: analysis, preflection_3p, preflection_1p."
-)
+# Backwards-compatible aliases for the private names used internally.
+_REFLECTION_TASK = REFLECTION_TASK
+_PREFLECTION_TASK = PREFLECTION_TASK
+_FIELD_ALIASES = FIELD_ALIASES
+_GEN_TEXT_FIELDS = GEN_TEXT_FIELDS
+_parse_generation = parse_generation
 
 
 def _load_canaries() -> list[dict]:
     """Load canary quirks from resources/canaries.yaml."""
     with open(CANARIES_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)["canaries"]
-
-
-_FIELD_ALIASES = {
-    "pre_flection": "preflection",
-    "pre-flection": "preflection",
-    "preReflection": "preflection",
-    "pre_reflection": "preflection",
-    # Old single-voice field names → map to the 3p/1p canonical names
-    "preflection": "preflection_3p",
-    "reflection": "reflection_1p",
-    # Alternate spellings of new fields
-    "preflection_first_person": "preflection_1p",
-    "preflection_third_person": "preflection_3p",
-    "reflection_first_person": "reflection_1p",
-    "reflection_third_person": "reflection_3p",
-}
-
-# All text output fields produced by the generator
-_GEN_TEXT_FIELDS = (
-    "analysis",
-    "preflection_3p",
-    "preflection_1p",
-    "reflection_1p",
-    "reflection_3p",
-)
-
-
-def _parse_generation(
-    raw: str,
-    required_fields: set[str] | None = None,
-) -> dict:
-    """Parse generator JSON output into structured fields.
-
-    Extracts JSON from response, handling prose before/after JSON and code fences.
-    Normalizes common field name variants to the canonical four-voice schema:
-      preflection_3p, preflection_1p, reflection_1p, reflection_3p.
-
-    *required_fields* overrides the default set of mandatory keys. Pass a
-    subset when parsing a single-mode response (e.g. reflection-only).
-    """
-    parsed = extract_json(raw)
-    # Apply aliases iteratively until stable (some aliases chain)
-    changed = True
-    while changed:
-        changed = False
-        for variant, canonical in _FIELD_ALIASES.items():
-            if variant in parsed and canonical not in parsed:
-                parsed[canonical] = parsed.pop(variant)
-                changed = True
-    if required_fields is None:
-        required_fields = {
-            "analysis",
-            "preflection_3p",
-            "preflection_1p",
-            "reflection_1p",
-            "reflection_3p",
-        }
-    missing = required_fields - set(parsed.keys())
-    assert not missing, (
-        f"Missing fields in generation: {missing}. "
-        f"Got keys: {list(parsed.keys())}. Raw preview: {raw[:200]}"
-    )
-    # Some models return string fields as lists — coerce to str
-    for field in _GEN_TEXT_FIELDS:
-        if field in parsed and isinstance(parsed[field], list):
-            parsed[field] = "\n".join(str(x) for x in parsed[field])
-    return parsed
 
 
 def _parse_judgment(raw: str) -> dict:
@@ -289,6 +221,53 @@ def select_items(n_total: int, n_gold: int, seed: int, max_tokens: int) -> list[
     return items
 
 
+class _JudgeParseError(Exception):
+    """Wraps a parse failure inside _judge_combined / _judge_one_part so the
+    caller can recover the raw model response and reasoning."""
+
+    def __init__(
+        self,
+        original: BaseException,
+        raw: str | None,
+        raw_reasoning: str | None,
+        stage: str,
+    ):
+        super().__init__(str(original))
+        self.original = original
+        self.raw = raw
+        self.raw_reasoning = raw_reasoning
+        self.stage = stage
+
+
+def _failure_record(
+    item_id: str,
+    stage: str,
+    category: str,
+    reason: str,
+    raw: str | None,
+    raw_reasoning: str | None,
+    exc: BaseException | None = None,
+) -> dict:
+    """Build a normalized failure record for the on_failure callback.
+
+    The record carries the raw model response (when available) so the user
+    can grep through rejected responses and improve the parser. `category`
+    splits api vs parse so downstream rate metrics can report each separately.
+    """
+    return {
+        "item_id": item_id,
+        "stage": stage,
+        "category": category,
+        "reason": reason,
+        "raw": raw,
+        "raw_reasoning": raw_reasoning,
+        "error": f"{type(exc).__name__}: {exc}" if exc is not None else None,
+        "ts": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .isoformat(),
+    }
+
+
 def generate_batch(
     items: list[dict],
     prompt_path: Path,
@@ -301,6 +280,8 @@ def generate_batch(
     writing_guidelines_text: str = "",
     thinking: bool = False,
     json_mode: bool = False,
+    canary_rng_seed: int | None = None,
+    on_failure: Callable[[dict], None] | None = None,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
@@ -323,10 +304,19 @@ def generate_batch(
         # ---- Call 1: Reflection (text up to RP only) ----
         refl_user = f"## Full Text\n\n{context_before}"
 
-        # Canary injection: 10% chance, reflections only
+        # Canary injection: 10% chance, reflections only.
+        # When canary_rng_seed is provided, the decision is deterministic in
+        # (seed, item_id) so all candidate generators within the same eval
+        # see the same items canaried with the same canary id.
         canary_id = None
-        if random.random() < CANARY_RATE:
-            canary = random.choice(canaries)
+        if canary_rng_seed is not None:
+            item_rng = random.Random(f"{canary_rng_seed}_{item['item_id']}_canary_v1")
+            inject = item_rng.random() < CANARY_RATE
+            canary = item_rng.choice(canaries) if inject else None
+        else:
+            inject = random.random() < CANARY_RATE
+            canary = random.choice(canaries) if inject else None
+        if inject:
             canary_id = canary["id"]
             refl_user += (
                 f"\n\n## Canary Injection\n\n"
@@ -342,8 +332,10 @@ def generate_batch(
             {"role": "user", "content": refl_user},
         ]
 
+        t0 = time.monotonic()
+        refl_raw = None
+        refl_reasoning = None
         try:
-            t0 = time.monotonic()
             refl_raw, refl_reasoning, refl_usage = await api_call(
                 client,
                 model,
@@ -352,16 +344,53 @@ def generate_batch(
                 thinking=thinking,
                 json_mode=json_mode,
             )
+        except RuntimeError as e:
+            logger.warning(
+                "Skipping item {} — reflection api failed: {}",
+                item["item_id"],
+                e,
+            )
+            if on_failure is not None:
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        "reflection",
+                        "api",
+                        "api_runtime",
+                        raw=None,
+                        raw_reasoning=None,
+                        exc=e,
+                    )
+                )
+            return None
+        try:
             refl_parsed = _parse_generation(
                 refl_raw,
                 required_fields={"analysis", "reflection_1p", "reflection_3p"},
             )
-        except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
+        except (json.JSONDecodeError, AssertionError) as e:
             logger.warning(
-                "Skipping item {} — reflection generation failed: {}",
+                "Skipping item {} — reflection parse failed: {}",
                 item["item_id"],
                 e,
             )
+            if on_failure is not None:
+                reason = (
+                    "json_parse"
+                    if isinstance(e, json.JSONDecodeError)
+                    else "missing_field"
+                )
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        "reflection",
+                        "parse",
+                        reason,
+                        raw=refl_raw,
+                        raw_reasoning=refl_reasoning,
+                        exc=e,
+                    )
+                )
             return None
 
         # ---- Call 2: Preflection (full text) ----
@@ -373,6 +402,8 @@ def generate_batch(
             {"role": "user", "content": prefl_user},
         ]
 
+        prefl_raw = None
+        prefl_reasoning = None
         try:
             prefl_raw, prefl_reasoning, prefl_usage = await api_call(
                 client,
@@ -382,52 +413,53 @@ def generate_batch(
                 thinking=thinking,
                 json_mode=json_mode,
             )
+        except RuntimeError as e:
+            logger.warning(
+                "Skipping item {} — preflection api failed: {}",
+                item["item_id"],
+                e,
+            )
+            if on_failure is not None:
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        "preflection",
+                        "api",
+                        "api_runtime",
+                        raw=None,
+                        raw_reasoning=None,
+                        exc=e,
+                    )
+                )
+            return None
+        try:
             prefl_parsed = _parse_generation(
                 prefl_raw,
                 required_fields={"analysis", "preflection_3p", "preflection_1p"},
             )
-        except AssertionError:
-            # Mode confusion: model may have used reflection_* keys in preflection mode.
-            # Remap and retry before giving up.
-            try:
-                prefl_parsed = _parse_generation(
-                    prefl_raw, required_fields={"analysis"}
-                )
-                remapped = False
-                if (
-                    "reflection_1p" in prefl_parsed
-                    and "preflection_1p" not in prefl_parsed
-                ):
-                    prefl_parsed["preflection_1p"] = prefl_parsed.pop("reflection_1p")
-                    remapped = True
-                if (
-                    "reflection_3p" in prefl_parsed
-                    and "preflection_3p" not in prefl_parsed
-                ):
-                    prefl_parsed["preflection_3p"] = prefl_parsed.pop("reflection_3p")
-                    remapped = True
-                if (
-                    not remapped
-                    or "preflection_1p" not in prefl_parsed
-                    or "preflection_3p" not in prefl_parsed
-                ):
-                    raise
-                logger.info(
-                    "Remapped reflection_* → preflection_* for item {}", item["item_id"]
-                )
-            except Exception as e:
-                logger.warning(
-                    "Skipping item {} — preflection generation failed: {}",
-                    item["item_id"],
-                    e,
-                )
-                return None
-        except (json.JSONDecodeError, RuntimeError) as e:
+        except (json.JSONDecodeError, AssertionError) as e:
             logger.warning(
-                "Skipping item {} — preflection generation failed: {}",
+                "Skipping item {} — preflection parse failed: {}",
                 item["item_id"],
                 e,
             )
+            if on_failure is not None:
+                reason = (
+                    "json_parse"
+                    if isinstance(e, json.JSONDecodeError)
+                    else "missing_field"
+                )
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        "preflection",
+                        "parse",
+                        reason,
+                        raw=prefl_raw,
+                        raw_reasoning=prefl_reasoning,
+                        exc=e,
+                    )
+                )
             return None
 
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -576,7 +608,11 @@ async def _judge_one_part(
     raw, reasoning, usage = await api_call(
         client, model, messages, semaphore, thinking=thinking
     )
-    return raw, reasoning, usage
+    try:
+        parsed = _parse_judgment(raw)
+    except (json.JSONDecodeError, AssertionError) as e:
+        raise _JudgeParseError(e, raw, reasoning, f"judge_{part_type}") from e
+    return parsed, raw, reasoning, usage
 
 
 async def _judge_combined(
@@ -652,212 +688,11 @@ async def _judge_combined(
     raw, reasoning, usage = await api_call(
         client, model, messages, semaphore, thinking=thinking
     )
-    return raw, reasoning, usage
-
-
-_RAW_LOG_CHAR_LIMIT = 600
-
-
-def _format_raw_for_log(raw: str | dict[str, str] | None) -> str:
-    """Format a raw judge response for a one-line warning.
-
-    Truncates long responses and replaces newlines so the progress bar stays
-    readable. For the per-part path, only shows the part whose raw response
-    got captured last (which is the one that most likely failed to parse).
-    """
-    if raw is None:
-        return "<not captured>"
-    if isinstance(raw, dict):
-        if not raw:
-            return "<empty>"
-        # For per-part judging the failing response is the last one written.
-        last_part = next(reversed(raw.keys()))
-        prefix = f"{last_part}="
-        body = raw[last_part]
-    else:
-        prefix = ""
-        body = raw
-    body = body.replace("\n", "\\n").replace("\r", "\\r")
-    if len(body) > _RAW_LOG_CHAR_LIMIT:
-        body = (
-            body[:_RAW_LOG_CHAR_LIMIT] + f"…[+{len(body) - _RAW_LOG_CHAR_LIMIT} chars]"
-        )
-    return prefix + body
-
-
-def _parts_to_judge(item: dict) -> list[str]:
-    """Return the list of voice parts present on an item.
-
-    Modern items have all four voices; legacy items only have the two
-    original parts.
-    """
-    if item.get("preflection_1p") is not None and item.get("reflection_3p") is not None:
-        return [
-            "preflection_3p",
-            "preflection_1p",
-            "reflection_1p",
-            "reflection_3p",
-        ]
-    return ["preflection", "reflection"]
-
-
-async def judge_one(
-    item: dict,
-    prompt_template: str,
-    prompt_filename: str,
-    model: str,
-    client: openai.AsyncOpenAI,
-    semaphore: asyncio.Semaphore,
-    accept_threshold: float,
-    floor_threshold: int = 2,
-    charter_text: str = "",
-    writing_guidelines_text: str = "",
-    thinking: bool = False,
-) -> dict | None:
-    """Judge one item with one (prompt, model). Returns the judgment dict, or None on error.
-
-    The returned dict is exactly what callers should put into
-    item["judgment"] (used by judge_batch) or judge_correlations.judgment
-    (used by rejudge_all_prompts_and_models). Save semantics are the
-    caller's responsibility.
-    """
-    use_combined = "{part_type}" not in prompt_template
-    parts = _parts_to_judge(item)
-    raw_for_logging: str | dict[str, str] | None = None
     try:
-        t0 = time.monotonic()
-
-        if use_combined and len(parts) == 4:
-            raw, reasoning, usage = await _judge_combined(
-                item,
-                prompt_template,
-                accept_threshold,
-                model,
-                client,
-                semaphore,
-                charter_text=charter_text,
-                writing_guidelines_text=writing_guidelines_text,
-                thinking=thinking,
-            )
-            # Capture raw *before* parsing so the warning below can log it
-            # when _parse_combined_judgment raises on malformed output.
-            raw_for_logging = raw
-            parsed = _parse_combined_judgment(raw)
-            judge_latency_ms = int((time.monotonic() - t0) * 1000)
-
-            all_scores = [s for part in parts for s in parsed[part]["scores"].values()]
-            aggregate = sum(all_scores) / len(all_scores)
-            has_floor_violation = any(s <= floor_threshold for s in all_scores)
-            decision = (
-                "reject"
-                if has_floor_violation or aggregate < accept_threshold
-                else "accept"
-            )
-
-            judgment_parts: dict[str, dict] = {}
-            for part in parts:
-                judgment_parts[part] = {
-                    "scores": parsed[part]["scores"],
-                    "aggregate": parsed[part]["aggregate"],
-                    "reasoning": parsed[part]["reasoning"],
-                    "model_reasoning": reasoning,
-                    "usage": usage,
-                }
-
-            judgment = {
-                **judgment_parts,
-                "aggregate": aggregate,
-                "decision": decision,
-                "judge_prompt": prompt_filename,
-                "raw_responses": {"combined": raw},
-                "usage": usage,
-                "latency_ms": judge_latency_ms,
-                "timestamp": __import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .isoformat(),
-            }
-        else:
-            # Legacy per-part judging (old prompt with {part_type})
-            part_results: dict[str, tuple] = {}
-            raw_by_part: dict[str, str] = {}
-            raw_for_logging = raw_by_part  # Keep the warning in sync as we go.
-            for part in parts:
-                p_raw, p_reasoning, p_usage = await _judge_one_part(
-                    item,
-                    part,
-                    prompt_template,
-                    accept_threshold,
-                    model,
-                    client,
-                    semaphore,
-                    charter_text=charter_text,
-                    writing_guidelines_text=writing_guidelines_text,
-                    thinking=thinking,
-                )
-                # Capture raw before parsing so a failure inside
-                # _parse_judgment still ends up in the warning below.
-                raw_by_part[part] = p_raw
-                p_parsed = _parse_judgment(p_raw)
-                part_results[part] = (p_parsed, p_raw, p_reasoning, p_usage)
-            judge_latency_ms = int((time.monotonic() - t0) * 1000)
-
-            all_scores = [
-                s
-                for part, (p_parsed, _, _, _) in part_results.items()
-                for s in p_parsed["scores"].values()
-            ]
-            aggregate = sum(all_scores) / len(all_scores)
-            has_floor_violation = any(s <= floor_threshold for s in all_scores)
-            decision = (
-                "reject"
-                if has_floor_violation or aggregate < accept_threshold
-                else "accept"
-            )
-
-            total_usage: dict[str, int] = {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "reasoning_tokens": 0,
-            }
-            judgment_parts = {}
-            for part, (
-                p_parsed,
-                p_raw,
-                p_reasoning,
-                p_usage,
-            ) in part_results.items():
-                judgment_parts[part] = {
-                    "scores": p_parsed["scores"],
-                    "aggregate": p_parsed["aggregate"],
-                    "reasoning": p_parsed["reasoning"],
-                    "model_reasoning": p_reasoning,
-                    "usage": p_usage,
-                }
-                for k in total_usage:
-                    total_usage[k] += p_usage.get(k, 0)
-
-            judgment = {
-                **judgment_parts,
-                "aggregate": aggregate,
-                "decision": decision,
-                "judge_prompt": prompt_filename,
-                "raw_responses": dict(raw_by_part),
-                "usage": total_usage,
-                "latency_ms": judge_latency_ms,
-                "timestamp": __import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .isoformat(),
-            }
-
-        return judgment
-    except (json.JSONDecodeError, AssertionError, RuntimeError) as e:
-        logger.warning(
-            "Skipping item {} — judging failed: {} | Raw response: {}",
-            item["item_id"],
-            e,
-            _format_raw_for_log(raw_for_logging),
-        )
-        return None
+        parsed = _parse_combined_judgment(raw)
+    except (json.JSONDecodeError, AssertionError) as e:
+        raise _JudgeParseError(e, raw, reasoning, "judge_combined") from e
+    return parsed, raw, reasoning, usage
 
 
 def judge_batch(
@@ -873,6 +708,7 @@ def judge_batch(
     charter_text: str = "",
     writing_guidelines_text: str = "",
     thinking: bool = False,
+    on_failure: Callable[[dict], None] | None = None,
 ) -> list[dict]:
     """Judge generated reflections in parallel via judge_one.
 
@@ -903,21 +739,207 @@ def judge_batch(
     ]
     judgments = run_concurrent(*coros, desc="Judging")
 
-    judged: list[dict] = []
-    skipped = 0
-    for item, judgment in zip(items, judgments):
-        if judgment is None:
-            skipped += 1
-            continue
-        rec = {**item, "judgment": judgment}
-        if save:
-            save_item(rec)
-        judged.append(rec)
+    # Use combined judging when prompt supports it (no {part_type} placeholder)
+    use_combined = "{part_type}" not in prompt_template
+
+    async def judge_one(item: dict) -> dict | None:
+        parts = _parts_to_judge(item)
+        try:
+            t0 = time.monotonic()
+
+            if use_combined and len(parts) == 4:
+                # Combined: single API call for all 4 voices
+                parsed, raw, reasoning, usage = await _judge_combined(
+                    item,
+                    prompt_template,
+                    accept_threshold,
+                    model,
+                    client,
+                    semaphore,
+                    charter_text=charter_text,
+                    writing_guidelines_text=writing_guidelines_text,
+                    thinking=thinking,
+                )
+                judge_latency_ms = int((time.monotonic() - t0) * 1000)
+
+                all_scores = [
+                    s for part in parts for s in parsed[part]["scores"].values()
+                ]
+                aggregate = sum(all_scores) / len(all_scores)
+                has_floor_violation = any(s <= floor_threshold for s in all_scores)
+                decision = (
+                    "reject"
+                    if has_floor_violation or aggregate < accept_threshold
+                    else "accept"
+                )
+
+                judgment_parts: dict[str, dict] = {}
+                for part in parts:
+                    judgment_parts[part] = {
+                        "scores": parsed[part]["scores"],
+                        "aggregate": parsed[part]["aggregate"],
+                        "reasoning": parsed[part]["reasoning"],
+                        "model_reasoning": reasoning,
+                        "usage": usage,
+                    }
+
+                judgment = {
+                    **judgment_parts,
+                    "aggregate": aggregate,
+                    "decision": decision,
+                    "judge_prompt": prompt_filename,
+                    "raw_responses": {"combined": raw},
+                    "usage": usage,
+                    "latency_ms": judge_latency_ms,
+                    "timestamp": __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat(),
+                }
+            else:
+                # Legacy per-part judging (old prompt with {part_type})
+                part_results: dict[str, tuple] = {}
+                for part in parts:
+                    p_parsed, p_raw, p_reasoning, p_usage = await _judge_one_part(
+                        item,
+                        part,
+                        prompt_template,
+                        accept_threshold,
+                        model,
+                        client,
+                        semaphore,
+                        charter_text=charter_text,
+                        writing_guidelines_text=writing_guidelines_text,
+                        thinking=thinking,
+                    )
+                    part_results[part] = (p_parsed, p_raw, p_reasoning, p_usage)
+                judge_latency_ms = int((time.monotonic() - t0) * 1000)
+
+                all_scores = [
+                    s
+                    for part, (p_parsed, _, _, _) in part_results.items()
+                    for s in p_parsed["scores"].values()
+                ]
+                aggregate = sum(all_scores) / len(all_scores)
+                has_floor_violation = any(s <= floor_threshold for s in all_scores)
+                decision = (
+                    "reject"
+                    if has_floor_violation or aggregate < accept_threshold
+                    else "accept"
+                )
+
+                total_usage: dict[str, int] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                }
+                raw_responses: dict[str, str] = {}
+                judgment_parts = {}
+                for part, (
+                    p_parsed,
+                    p_raw,
+                    p_reasoning,
+                    p_usage,
+                ) in part_results.items():
+                    judgment_parts[part] = {
+                        "scores": p_parsed["scores"],
+                        "aggregate": p_parsed["aggregate"],
+                        "reasoning": p_parsed["reasoning"],
+                        "model_reasoning": p_reasoning,
+                        "usage": p_usage,
+                    }
+                    raw_responses[part] = p_raw
+                    for k in total_usage:
+                        total_usage[k] += p_usage.get(k, 0)
+
+                judgment = {
+                    **judgment_parts,
+                    "aggregate": aggregate,
+                    "decision": decision,
+                    "judge_prompt": prompt_filename,
+                    "raw_responses": raw_responses,
+                    "usage": total_usage,
+                    "latency_ms": judge_latency_ms,
+                    "timestamp": __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat(),
+                }
+
+            judged = {**item, "judgment": judgment}
+            if save:
+                save_item(judged)
+            return judged
+        except _JudgeParseError as e:
+            logger.warning(
+                "Skipping item {} — judging parse failed: {}",
+                item["item_id"],
+                e,
+            )
+            if on_failure is not None:
+                reason = (
+                    "json_parse"
+                    if isinstance(e.original, json.JSONDecodeError)
+                    else "missing_field"
+                )
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        e.stage,
+                        "parse",
+                        reason,
+                        raw=e.raw,
+                        raw_reasoning=e.raw_reasoning,
+                        exc=e.original,
+                    )
+                )
+            return None
+        except RuntimeError as e:
+            logger.warning(
+                "Skipping item {} — judging api failed: {}",
+                item["item_id"],
+                e,
+            )
+            if on_failure is not None:
+                stage = "judge_combined" if use_combined else "judge"
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        stage,
+                        "api",
+                        "api_runtime",
+                        raw=None,
+                        raw_reasoning=None,
+                        exc=e,
+                    )
+                )
+            return None
+        except (json.JSONDecodeError, AssertionError) as e:
+            # Defensive: any parser error not caught inside _judge_combined /
+            # _judge_one_part (e.g. from aggregate computation on malformed
+            # parsed output) — we don't have raw text in scope here.
+            logger.warning("Skipping item {} — judging failed: {}", item["item_id"], e)
+            if on_failure is not None:
+                stage = "judge_combined" if use_combined else "judge"
+                on_failure(
+                    _failure_record(
+                        item["item_id"],
+                        stage,
+                        "parse",
+                        "schema_mismatch",
+                        raw=None,
+                        raw_reasoning=None,
+                        exc=e,
+                    )
+                )
+            return None
+
+    coros = [judge_one(item) for item in items]
+    results = run_concurrent(*coros, desc="Judging")
+    skipped = sum(1 for r in results if r is None)
     if skipped:
         logger.warning(
             "Judging: {}/{} items skipped due to errors", skipped, len(items)
         )
-    return judged
+    return [r for r in results if r is not None]
 
 
 def _make_run_summary(iteration: int, judged: list[dict]) -> str:

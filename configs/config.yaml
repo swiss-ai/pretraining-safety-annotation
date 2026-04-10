@@ -81,23 +81,37 @@ phase2:
     max_concurrent: 100
   loop: {}
 phase3:
-  gold_judges:
-  - alias: glm-4.5-air
+  endpoint: ${phase2.endpoint}
+  eval_dir: ${oc.env:SCRATCH}/model-raising-data/phase3_eval
+  gold_judge:
+    alias: glm-4.5-air
     api_name: jminder/jZ7aJGjetjNN
-    hf_slug: zai-org/GLM-4.5-Air-FP8
-  gold_generators:
-  - alias: glm-4.5-air
-    api_name: jminder/jZ7aJGjetjNN
-    hf_slug: zai-org/GLM-4.5-Air-FP8
-  target_models:
-  - alias: olmo3-7B-think
-    api_name: jminder/XXXXXXXX
-    hf_slug: olmo-ai/olmo-3-7b-thinking
-  improver:
-    judge_prompt: improver_phase3_judge.md
-    generator_prompt: improver_phase3_generator.md
-    max_batches_per_phase: 5
-    timeout_s: 1800
+    prompt: judge_v1.md
+  generator_eval:
+    n_items: 5000
+    seed: 42
+    max_concurrent: 50
+    chunk_size: 200
+    store_reasoning: false
+    failure_attempt_cap: 3
+    candidates:
+    - alias: glm-4.5-air
+      api_name: jminder/jZ7aJGjetjNN
+      prompt: generator_v1.md
+  judge_eval:
+    n_items: 5000
+    seed: 42
+    max_concurrent: 50
+    chunk_size: 200
+    include_reviewed: true
+    reviewer_policy: average
+    store_reasoning: false
+    failure_attempt_cap: 3
+    generator:
+      alias: glm-4.5-air
+      api_name: jminder/jZ7aJGjetjNN
+      prompt: generator_v1.md
+    candidates: []
   scoring:
     scale_min: 1
     scale_max: 5
@@ -107,11 +121,36 @@ phase3:
     - specificity
     - charter_grounding
     - voice_tone
-  iteration:
-    n_items: 256
-    n_gold: 24
-    max_concurrent: 50
-  escalation:
-    max_per_iteration: 10
+phase4:
+  sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
+  output_dir: ${oc.env:SCRATCH}/model-raising-data/phase4
+  prompt: generator_v1.md
+  generator_alias: glm-4.5-air
+  thinking: false
+  json_mode: false
+  max_rows: 0
+  rows_per_task: 100000
+  max_concurrent_requests: 2048
+  save_batch_size: 200
+  progress_interval: 1000
+  canary_seed: 42
+  reflection_seed: 42
+  max_retries_per_doc: 5
+  sglang:
+    hf_slug: zai-org/GLM-4.5-Air-FP8
+    model_path: ""
+    tp_size: 4
+    dp_size: 1
+    port: 30000
+    env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
+    extra_args: ""
+    pre_launch_cmds: ""
+  slurm:
+    partition: normal
+    account: a141
+    time: "24:00:00"
+    cpus_per_task: 4
+    mem_per_cpu_gb: 8
+    workers: -1
 dashboard:
   port: 8600

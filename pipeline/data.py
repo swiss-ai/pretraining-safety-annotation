@@ -7,6 +7,7 @@ from HuggingFace and text sampling for evaluation pipelines.
 from __future__ import annotations
 
 import json
+import math
 import random
 
 from pipeline.config import PIPELINE_DATA_DIR
@@ -95,3 +96,110 @@ def sample_texts(
         len(items) >= n
     ), f"Could only sample {len(items)}/{n} items (cache has {len(cache)})"
     return items[:n]
+
+
+def _list_dataset_shards() -> list[str]:
+    """List the data shard files in the Dolma3 dataset repo on HuggingFace.
+
+    Returns shard paths within the repo (e.g. "data/shard-00000.parquet").
+    Filters to .parquet / .jsonl files under the data/ or train/ subtree.
+    """
+    import huggingface_hub
+
+    files = huggingface_hub.list_repo_files(DATASET, repo_type="dataset")
+    shards = [
+        f
+        for f in files
+        if (f.endswith(".parquet") or f.endswith(".jsonl"))
+        and (f.startswith("data/") or f.startswith("train/") or "/" not in f)
+    ]
+    if not shards:
+        # Fallback: any parquet/jsonl file in the repo
+        shards = [
+            f for f in files if f.endswith(".parquet") or f.endswith(".jsonl")
+        ]
+    shards.sort()
+    return shards
+
+
+def _reservoir_sample(rows, k: int, rng: random.Random) -> list:
+    """Reservoir-sample k items from an iterable in a single pass.
+
+    O(k) memory, O(len(rows)) time, uniform sampling within the iterable.
+    """
+    reservoir: list = []
+    for i, row in enumerate(rows):
+        if i < k:
+            reservoir.append(row)
+        else:
+            j = rng.randint(0, i)
+            if j < k:
+                reservoir[j] = row
+    return reservoir
+
+
+def sample_diverse(n: int, seed: int, max_tokens: int) -> dict:
+    """Sample n items diversely from the full Dolma3 dataset.
+
+    Bypasses the dolma3_cache.jsonl entirely. Loads each shard one at a time
+    (memory bounded) and reservoir-samples from each, using an RNG seeded
+    with (seed, shard_path) so every shard contributes a stable sample.
+
+    Returns:
+        {"items": [{item_id, text, safety_score}, ...],
+         "dataset_revision": "<sha>"}
+    """
+    import huggingface_hub
+    import datasets as _datasets_mod
+
+    shard_paths = _list_dataset_shards()
+    assert shard_paths, f"No shards found in dataset {DATASET}"
+
+    # Pull a few extra per shard to give the final shuffle headroom and to
+    # offset shards that have fewer than per_shard rows.
+    per_shard = max(1, math.ceil(n / len(shard_paths)) + 4)
+
+    pooled: list[dict] = []
+    for shard in shard_paths:
+        # Stable per-shard RNG: depends on both seed AND shard path so the
+        # sample for a given shard is reproducible but different across shards.
+        shard_rng = random.Random(f"sample_diverse_v1::{seed}::{shard}")
+        ds = _datasets_mod.load_dataset(
+            DATASET, data_files=[shard], split="train"
+        )
+        sampled = _reservoir_sample(iter(ds), per_shard, shard_rng)
+        for row in sampled:
+            pooled.append(
+                {
+                    "text": row["text"],
+                    "safety_score": int(row.get("safety_score", 0))
+                    if row.get("safety_score") is not None
+                    else None,
+                }
+            )
+
+    final_rng = random.Random(f"sample_diverse_final_v1::{seed}")
+    final_rng.shuffle(pooled)
+
+    if len(pooled) < n:
+        raise RuntimeError(
+            f"sample_diverse: only pooled {len(pooled)} rows from "
+            f"{len(shard_paths)} shards, but {n} requested. "
+            f"Increase per_shard buffer or check shard sizes."
+        )
+
+    items: list[dict] = []
+    for row in pooled[:n]:
+        text = truncate_to_max_tokens(row["text"], max_tokens)
+        items.append(
+            {
+                "item_id": compute_item_id(text),
+                "text": text,
+                "safety_score": row.get("safety_score"),
+            }
+        )
+
+    info = huggingface_hub.dataset_info(DATASET)
+    dataset_revision = getattr(info, "sha", None) or ""
+
+    return {"items": items, "dataset_revision": dataset_revision}
