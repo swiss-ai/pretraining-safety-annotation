@@ -38,6 +38,16 @@ FIELD_ALIASES: dict[str, str] = {
     "preflection_third_person": "preflection_3p",
     "reflection_first_person": "reflection_1p",
     "reflection_third_person": "reflection_3p",
+    # Common model typos
+    "reflectio_n_3p": "reflection_3p",
+    "reflecting_3p": "reflection_3p",
+    "reservation_3p": "reflection_3p",
+    "reflectio_n_1p": "reflection_1p",
+    "reflecting_1p": "reflection_1p",
+    "preflectio_n_3p": "preflection_3p",
+    "preflectio_n_1p": "preflection_1p",
+    "preflecting_3p": "preflection_3p",
+    "preflecting_1p": "preflection_1p",
 }
 
 # All text output fields produced by the generator
@@ -48,6 +58,30 @@ GEN_TEXT_FIELDS = (
     "reflection_1p",
     "reflection_3p",
 )
+
+
+_MODE_REMAP = {
+    # preflection mode: model used reflection keys instead
+    ("preflection_3p", "preflection_1p"): {
+        "reflection_3p": "preflection_3p",
+        "reflection_1p": "preflection_1p",
+    },
+    # reflection mode: model used preflection keys instead
+    ("reflection_1p", "reflection_3p"): {
+        "preflection_1p": "reflection_1p",
+        "preflection_3p": "reflection_3p",
+    },
+}
+
+
+def _fix_wrong_mode_keys(parsed: dict, required_fields: set[str]) -> None:
+    """Remap keys when the model used the wrong mode's field names."""
+    for expected_pair, remap in _MODE_REMAP.items():
+        if all(f in required_fields for f in expected_pair):
+            # This is the expected mode — check if wrong keys are present
+            for wrong_key, right_key in remap.items():
+                if wrong_key in parsed and right_key not in parsed:
+                    parsed[right_key] = parsed.pop(wrong_key)
 
 
 def parse_generation(
@@ -64,6 +98,11 @@ def parse_generation(
     subset when parsing a single-mode response (e.g. reflection-only).
     """
     parsed = extract_json(raw)
+    # Unwrap single-key wrappers (e.g. {"key": {...actual...}})
+    if len(parsed) == 1:
+        sole_value = next(iter(parsed.values()))
+        if isinstance(sole_value, dict):
+            parsed = sole_value
     # Apply aliases iteratively until stable (some aliases chain)
     changed = True
     while changed:
@@ -80,6 +119,12 @@ def parse_generation(
             "reflection_1p",
             "reflection_3p",
         }
+    # Handle wrong-mode keys: model produced reflection_* when asked for
+    # preflection_* (or vice versa). Remap if the required fields tell us
+    # the expected mode and the wrong-mode keys are present.
+    if required_fields:
+        _fix_wrong_mode_keys(parsed, required_fields)
+
     missing = required_fields - set(parsed.keys())
     assert not missing, (
         f"Missing fields in generation: {missing}. "

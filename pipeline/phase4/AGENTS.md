@@ -152,4 +152,5 @@ All config lives under `phase4:` in `configs/config.yaml`. See the README for th
 | `max_retries_per_doc` | 5 | Per-document retry cap with exponential backoff |
 | `sglang.tp_size` | 4 | Tensor parallelism. `gpus_per_task = tp_size * dp_size` |
 | `sglang.dp_size` | 1 | Data parallelism. Use DP>1 for models that fit on 1 GPU |
+| `sglang.reasoning_parser` | `glm45` | **Required for thinking models.** Server-side flag that tells sglang how to separate thinking tokens from content. Per model: GLM→`glm45`, Qwen3.5→`kimi_k2`, Kimi→`kimi_k2`, Nemotron→`nano_v3`. Without this, thinking leaks into content. |
 | `sglang.env_toml` | | **Required**: path to container TOML |

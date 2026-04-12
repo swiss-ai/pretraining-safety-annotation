@@ -29,14 +29,16 @@ def _build_env_command(cfg) -> str:
     model_path = sg.model_path or sg.hf_slug
     served_name = sg.hf_slug
 
-    # Detect venv activate path
+    # Detect venv activate path and project root
     venv_activate = str(Path(sys.prefix) / "bin" / "activate")
+    project_root = str(Path(__file__).resolve().parent.parent.parent)
 
     pre_launch = ""
     if sg.pre_launch_cmds:
         pre_launch = sg.pre_launch_cmds + "\n"
 
     extra_args = sg.extra_args or ""
+    reasoning_parser_arg = f"--reasoning-parser {sg.reasoning_parser}" if sg.reasoning_parser else ""
 
     env_command = textwrap.dedent(f"""\
         # Clear inherited CPU binding
@@ -65,14 +67,16 @@ def _build_env_command(cfg) -> str:
             --tp {sg.tp_size} \\
             --dp-size {sg.dp_size} \\
             --trust-remote-code \\
+            {reasoning_parser_arg} \\
             {extra_args}
         " > {output_dir}/sglang_$SLURM_ARRAY_TASK_ID.log 2>&1 &
         SGLANG_PID=$!
 
-        # Cleanup trap
+        # Cleanup trap (|| true prevents set -e from turning a killed
+        # sglang's non-zero wait status into a batch-level failure)
         cleanup() {{
-            kill $SGLANG_PID 2>/dev/null
-            wait $SGLANG_PID 2>/dev/null
+            kill $SGLANG_PID 2>/dev/null || true
+            wait $SGLANG_PID 2>/dev/null || true
             pkill -f "sglang.launch_server" 2>/dev/null || true
         }}
         trap cleanup EXIT SIGTERM SIGINT
@@ -96,6 +100,9 @@ def _build_env_command(cfg) -> str:
 
         # Activate Python venv for the generation pipeline
         source {venv_activate}
+
+        # Add project root to PYTHONPATH so `pipeline` module is importable
+        export PYTHONPATH="{project_root}:${{PYTHONPATH:-}}"
     """)
     return env_command
 

@@ -142,6 +142,13 @@ phase4:
     tp_size: 4
     dp_size: 1
     port: 30000
+    # reasoning_parser per model family:
+    #   GLM-4.5-Air, GLM-4.5-Air-FP8, GLM-4.7-Flash: glm45
+    #   Qwen3.5-* (all sizes):                        kimi_k2
+    #   Kimi-K2.5:                                     kimi_k2
+    #   Nemotron-3-Super:                              nano_v3
+    #   gpt-oss-120b:                                  (none — no thinking)
+    reasoning_parser: glm45
     env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
     extra_args: ""
     pre_launch_cmds: ""

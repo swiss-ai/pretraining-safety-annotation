@@ -108,16 +108,16 @@ def _reflections_post_process(
     (refl_parsed,) = parsed_results
 
     charter_reflection = extract_charter_elements(
-        refl_parsed.get("reflection_1p", "")
+        (refl_parsed.get("reflection_1p") or "")
         + " "
-        + refl_parsed.get("reflection_3p", "")
+        + (refl_parsed.get("reflection_3p") or "")
     )
 
     canary = meta["canary"]
 
     return {
-        "reflection_1p": refl_parsed.get("reflection_1p", ""),
-        "reflection_3p": refl_parsed.get("reflection_3p", ""),
+        "reflection_1p": refl_parsed.get("reflection_1p") or "",
+        "reflection_3p": refl_parsed.get("reflection_3p") or "",
         "reflection_position": meta["reflection_point"],
         "charter_reflection": json.dumps(charter_reflection),
         "canary_type": canary["id"] if canary is not None else None,
@@ -173,14 +173,14 @@ def _preflections_post_process(
     (prefl_parsed,) = parsed_results
 
     charter_preflection = extract_charter_elements(
-        prefl_parsed.get("preflection_1p", "")
+        (prefl_parsed.get("preflection_1p") or "")
         + " "
-        + prefl_parsed.get("preflection_3p", "")
+        + (prefl_parsed.get("preflection_3p") or "")
     )
 
     return {
-        "preflection_1p": prefl_parsed.get("preflection_1p", ""),
-        "preflection_3p": prefl_parsed.get("preflection_3p", ""),
+        "preflection_1p": prefl_parsed.get("preflection_1p") or "",
+        "preflection_3p": prefl_parsed.get("preflection_3p") or "",
         "charter_preflection": json.dumps(charter_preflection),
     }
 

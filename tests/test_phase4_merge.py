@@ -165,6 +165,52 @@ class TestMergeShards:
         with pytest.raises(AssertionError, match="Missing"):
             merge_shards(output_dir, "reflections", sidecar_path, out_path)
 
+    def test_out_of_order_results(self, tmp_path):
+        """Results arrive in async completion order, not row order."""
+        sidecar_path = tmp_path / "sidecar.parquet"
+        table = pa.table({
+            "doc_id": [f"doc_{i:04d}" for i in range(20)],
+            "text": [f"text {i}" for i in range(20)],
+            "token_length": list(range(20)),
+            "safety_score": [0.9] * 20,
+            "reflection": [""] * 20,
+            "preflection": [""] * 20,
+            "reflection_position": [0] * 20,
+            "is_bad": [False] * 20,
+        })
+        pq.write_table(table, str(sidecar_path), row_group_size=10)
+
+        output_dir = tmp_path / "output"
+        # Two shards, each with 10 results in shuffled order
+        for rank, indices in [(0, [7, 2, 9, 0, 4, 8, 1, 5, 3, 6]),
+                              (1, [18, 12, 15, 10, 19, 13, 16, 11, 17, 14])]:
+            rank_dir = output_dir / "reflections" / f"{rank:05d}"
+            rank_dir.mkdir(parents=True)
+            with open(rank_dir / "results.jsonl", "w") as f:
+                for i in indices:
+                    f.write(json.dumps({
+                        "global_row_idx": i,
+                        "doc_id": f"doc_{i:04d}",
+                        "reflection_1p": f"r1p_{i}",
+                        "reflection_3p": f"r3p_{i}",
+                        "preflection_1p": f"p1p_{i}",
+                        "preflection_3p": f"p3p_{i}",
+                        "reflection_position": 100 + i,
+                        "charter_reflection": "[]",
+                        "charter_preflection": "[]",
+                        "canary_type": None,
+                    }) + "\n")
+
+        out_path = str(tmp_path / "merged.parquet")
+        merge_shards(str(output_dir), "reflections", str(sidecar_path), out_path)
+
+        merged = pq.read_table(out_path)
+        assert merged.num_rows == 20
+        # Every row should have data
+        for i in range(20):
+            assert merged.column("reflection_1p")[i].as_py() == f"r1p_{i}"
+            assert merged.column("reflection_position")[i].as_py() == 100 + i
+
     def test_missing_rows_allowed(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
         import pathlib

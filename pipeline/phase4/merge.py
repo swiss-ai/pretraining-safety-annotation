@@ -226,9 +226,11 @@ def _sort_results(output_dir: str, run_name: str) -> tuple[Path, int]:
         sorted_path.touch()
         return sorted_path, 0
 
-    # Each shard's rows are already ordered by global_row_idx (produced
-    # sequentially by SidecarReader). Use heapq.merge to merge them.
-    def _iter_shard(path: Path):
+    # Results within each shard are in completion order (async), not in
+    # global_row_idx order. Load each shard, sort in memory (at most
+    # rows_per_task entries ≈ 100K), then merge-sort across shards.
+    def _load_sorted_shard(path: Path) -> list[tuple[int, str]]:
+        entries: list[tuple[int, str]] = []
         with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -236,14 +238,16 @@ def _sort_results(output_dir: str, run_name: str) -> tuple[Path, int]:
                     continue
                 try:
                     record = json.loads(line)
-                    yield (record["global_row_idx"], line)
+                    entries.append((record["global_row_idx"], line))
                 except (json.JSONDecodeError, KeyError):
                     continue
+        entries.sort(key=lambda x: x[0])
+        return entries
 
-    shard_iters = [_iter_shard(p) for p in shard_files]
+    sorted_shards = [_load_sorted_shard(p) for p in shard_files]
 
     with open(sorted_path, "w", encoding="utf-8") as out:
-        for idx, line in heapq.merge(*shard_iters, key=lambda x: x[0]):
+        for idx, line in heapq.merge(*sorted_shards, key=lambda x: x[0]):
             out.write(line + "\n")
             count += 1
 

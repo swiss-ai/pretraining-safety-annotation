@@ -283,9 +283,11 @@ def extract_json(raw: str) -> dict:
     Tries multiple strategies in order:
     0. Strip <think>...</think> blocks (thinking model output)
     1. Direct parse (response is pure JSON)
-    2. Strip leading code fence (```json ... ```)
-    3. Find a fenced JSON block anywhere in the response
-    4. Find the first { and its matching } via brace counting
+    2. Strip thinking prefix (unseparated reasoning before JSON)
+    3. Strip leading code fence (```json ... ```)
+    4. Find a fenced JSON block anywhere in the response
+    5. Find the LAST balanced { ... } via brace counting (skips thinking)
+    6. Fallback: find the FIRST balanced { ... }
     """
     text = raw.strip()
 
@@ -300,7 +302,15 @@ def extract_json(raw: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # 2. Leading code fence
+    # 2. Strip thinking prefix (models that leak thinking into content)
+    stripped = _strip_thinking(text)
+    if stripped != text:
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Leading code fence
     if text.startswith("```"):
         lines = text.split("\n")
         lines = lines[1:]  # skip ```json
@@ -328,37 +338,81 @@ def extract_json(raw: str) -> dict:
             except json.JSONDecodeError:
                 pass
 
-    # 4. First { to matching } via brace counting
-    start = text.find("{")
-    if start != -1:
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(text)):
-            c = text[i]
-            if escape:
-                escape = False
-                continue
-            if c == "\\":
-                escape = True
-                continue
-            if c == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start : i + 1])
-                    except json.JSONDecodeError:
-                        break
+    # 5. FIRST balanced { ... } (finds outermost object, handles nested JSON)
+    result = _find_first_json_object(text)
+    if result is not None:
+        return result
+
+    # 6. Fallback: LAST balanced { ... } (catches answer after invalid prefix)
+    result = _find_last_json_object(text)
+    if result is not None:
+        return result
 
     raise json.JSONDecodeError(
         f"No valid JSON object found in response ({len(raw)} chars)",
         raw[:200],
         0,
     )
+
+
+def _strip_thinking(text: str) -> str:
+    """Strip ``<think>...</think>`` blocks from model output.
+
+    Only handles explicit think tags. Other thinking formats (e.g.
+    "Thinking Process:" prose) are handled by strategies 5/6 which
+    find JSON objects by brace matching.
+    """
+    stripped = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL)
+    return stripped.strip() if stripped != text else text
+
+
+def _find_json_object_at(text: str, start: int) -> dict | None:
+    """Try to extract a balanced JSON object starting at position start."""
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _find_last_json_object(text: str) -> dict | None:
+    """Find the last balanced JSON object in text."""
+    # Search for { positions from the end
+    pos = len(text)
+    while True:
+        pos = text.rfind("{", 0, pos)
+        if pos == -1:
+            return None
+        result = _find_json_object_at(text, pos)
+        if result is not None:
+            return result
+        # Try earlier positions
+
+
+def _find_first_json_object(text: str) -> dict | None:
+    """Find the first balanced JSON object in text."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    return _find_json_object_at(text, start)

@@ -216,6 +216,7 @@ class Phase4SglangConfig:
     tp_size: int = 4
     dp_size: int = 1
     port: int = 30000
+    reasoning_parser: str = ""  # sglang --reasoning-parser (e.g. glm45, kimi_k2)
     env_toml: str = ""  # path to sglang TOML (selects container image)
     extra_args: str = ""  # model-specific sglang flags
     pre_launch_cmds: str = ""  # pip installs inside container

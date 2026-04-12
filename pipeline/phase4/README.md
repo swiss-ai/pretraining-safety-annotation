@@ -161,6 +161,7 @@ phase4:
     tp_size: 4
     dp_size: 1                  # data parallelism (TP*DP = total GPUs)
     port: 30000
+    reasoning_parser: glm45     # sglang server-side thinking separator
     env_toml: .../sglang.toml   # selects container image
     extra_args: ""              # e.g. "--dp-size 2 --reasoning-parser glm45"
     pre_launch_cmds: ""         # e.g. "pip install blobfile"
