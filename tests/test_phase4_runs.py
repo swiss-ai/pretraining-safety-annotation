@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 
 from pipeline.phase4.canaries import load_canaries
-from pipeline.phase4.runs import get_run, RUNS, _reflections_build_calls, _reflections_post_process
+from pipeline.phase4.runs import (
+    get_run,
+    RUNS,
+    _reflections_build_calls,
+    _reflections_post_process,
+)
 
 
 class TestRunRegistry:
@@ -26,17 +31,17 @@ class TestRunRegistry:
     def test_reflections_output_columns(self):
         run_def = get_run("reflections")
         expected = {
-            "reflection_1p", "reflection_3p",
-            "preflection_1p", "preflection_3p",
+            "reflection_1p",
+            "reflection_3p",
             "reflection_position",
-            "charter_reflection", "charter_preflection",
+            "charter_reflection",
             "canary_type",
         }
         assert set(run_def.output_columns) == expected
 
 
 class TestReflectionsBuildCalls:
-    def test_produces_two_calls(self):
+    def test_produces_one_call(self):
         canaries = load_canaries()
         calls = _reflections_build_calls(
             doc_text="Hello world. " * 100,
@@ -46,9 +51,9 @@ class TestReflectionsBuildCalls:
             canary_seed=42,
             reflection_seed=42,
         )
-        assert len(calls) == 2
+        assert len(calls) == 1
 
-    def test_first_call_is_reflection(self):
+    def test_call_is_reflection(self):
         canaries = load_canaries()
         calls = _reflections_build_calls(
             doc_text="Hello world. " * 100,
@@ -61,22 +66,6 @@ class TestReflectionsBuildCalls:
         messages, required_fields, meta = calls[0]
         assert "reflection_1p" in required_fields
         assert "reflection_3p" in required_fields
-        assert "Reflection mode" in messages[1]["content"]
-
-    def test_second_call_is_preflection(self):
-        canaries = load_canaries()
-        calls = _reflections_build_calls(
-            doc_text="Hello world. " * 100,
-            doc_id="test_doc",
-            system_prompt="System.",
-            canaries=canaries,
-            canary_seed=42,
-            reflection_seed=42,
-        )
-        messages, required_fields, meta = calls[1]
-        assert "preflection_3p" in required_fields
-        assert "preflection_1p" in required_fields
-        assert "Preflection mode" in messages[1]["content"]
 
     def test_reflection_point_in_meta(self):
         canaries = load_canaries()
@@ -97,12 +86,20 @@ class TestReflectionsBuildCalls:
         canaries = load_canaries()
         text = "Hello world. " * 100
         calls1 = _reflections_build_calls(
-            doc_text=text, doc_id="doc1", system_prompt="S.",
-            canaries=canaries, canary_seed=42, reflection_seed=42,
+            doc_text=text,
+            doc_id="doc1",
+            system_prompt="S.",
+            canaries=canaries,
+            canary_seed=42,
+            reflection_seed=42,
         )
         calls2 = _reflections_build_calls(
-            doc_text=text, doc_id="doc1", system_prompt="S.",
-            canaries=canaries, canary_seed=42, reflection_seed=42,
+            doc_text=text,
+            doc_id="doc1",
+            system_prompt="S.",
+            canaries=canaries,
+            canary_seed=42,
+            reflection_seed=42,
         )
         assert calls1[0][2]["reflection_point"] == calls2[0][2]["reflection_point"]
 
@@ -110,12 +107,20 @@ class TestReflectionsBuildCalls:
         canaries = load_canaries()
         text = "Hello world. " * 100
         calls1 = _reflections_build_calls(
-            doc_text=text, doc_id="doc1", system_prompt="S.",
-            canaries=canaries, canary_seed=42, reflection_seed=42,
+            doc_text=text,
+            doc_id="doc1",
+            system_prompt="S.",
+            canaries=canaries,
+            canary_seed=42,
+            reflection_seed=42,
         )
         calls2 = _reflections_build_calls(
-            doc_text=text, doc_id="doc1", system_prompt="S.",
-            canaries=canaries, canary_seed=999, reflection_seed=42,
+            doc_text=text,
+            doc_id="doc1",
+            system_prompt="S.",
+            canaries=canaries,
+            canary_seed=999,
+            reflection_seed=42,
         )
         assert calls1[0][2]["reflection_point"] == calls2[0][2]["reflection_point"]
 
@@ -125,13 +130,10 @@ class TestReflectionsPostProcess:
         meta = {"reflection_point": 100, "canary": None}
         parsed = [
             {"analysis": "a1", "reflection_1p": "r1p", "reflection_3p": "r3p"},
-            {"analysis": "a2", "preflection_1p": "p1p", "preflection_3p": "p3p"},
         ]
         result = _reflections_post_process("doc1", "some text", parsed, meta)
         assert result["reflection_1p"] == "r1p"
         assert result["reflection_3p"] == "r3p"
-        assert result["preflection_1p"] == "p1p"
-        assert result["preflection_3p"] == "p3p"
         assert result["reflection_position"] == 100
         assert result["canary_type"] is None
 
@@ -139,7 +141,6 @@ class TestReflectionsPostProcess:
         meta = {"reflection_point": 50, "canary": {"id": "Q5", "quirk": "test"}}
         parsed = [
             {"analysis": "a", "reflection_1p": "r", "reflection_3p": "r3"},
-            {"analysis": "a", "preflection_1p": "p", "preflection_3p": "p3"},
         ]
         result = _reflections_post_process("doc1", "text", parsed, meta)
         assert result["canary_type"] == "Q5"
@@ -147,11 +148,12 @@ class TestReflectionsPostProcess:
     def test_charter_elements_extracted(self):
         meta = {"reflection_point": 50, "canary": None}
         parsed = [
-            {"analysis": "a", "reflection_1p": "See [1.2] and [3.4]", "reflection_3p": ""},
-            {"analysis": "a", "preflection_1p": "See [2.1]", "preflection_3p": ""},
+            {
+                "analysis": "a",
+                "reflection_1p": "See [1.2] and [3.4]",
+                "reflection_3p": "",
+            },
         ]
         result = _reflections_post_process("doc1", "text", parsed, meta)
         charter_r = json.loads(result["charter_reflection"])
-        charter_p = json.loads(result["charter_preflection"])
         assert "1.2" in charter_r
-        assert "2.1" in charter_p

@@ -39,7 +39,7 @@ from pipeline.config import (
     union_charter_elements,
 )
 from pipeline.api import MAX_RETRIES, RETRY_BACKOFF_BASE, resolve_sampling_params
-from pipeline.phase2.run import _parse_generation, _parse_judgment
+from pipeline.phase2.run import _parse_generation, _parse_mode_judgment
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 
 MAX_TOKENS = 1920  # annotation samples: 2048 seq - 128 reflection budget
@@ -333,23 +333,6 @@ def run_judge_estimation(
     """Run judge API calls on all 4 annotation voices per generation."""
     n_total = len(generations)
 
-    # Determine which parts to judge based on what the item contains
-    def _parts_to_judge(item: dict) -> list[str]:
-        if (
-            item.get("preflection_1p") is not None
-            and item.get("reflection_3p") is not None
-        ):
-            return [
-                "preflection_3p",
-                "preflection_1p",
-                "reflection_1p",
-                "reflection_3p",
-            ]
-        # Legacy items: only two parts
-        return ["preflection", "reflection"]
-
-    # Map part types to the correct source text and item key
-    _PREFLECTION_PARTS = {"preflection", "preflection_3p", "preflection_1p"}
     _PART_KEY_FALLBACK = {
         "preflection_3p": "preflection",
         "reflection_1p": "reflection",
@@ -358,34 +341,30 @@ def run_judge_estimation(
     async def judge_one(idx: int, item: dict) -> dict:
         t0 = time.monotonic()
         try:
-            parts = _parts_to_judge(item)
             total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
 
-            for part_type in parts:
+            # Judge both modes
+            for mode, voices in [
+                ("reflection", ("reflection_1p", "reflection_3p")),
+                ("preflection", ("preflection_3p", "preflection_1p")),
+            ]:
+                source_text = (
+                    item["text"][: item["reflection_point"]]
+                    if mode == "reflection"
+                    else item["text"]
+                )
+                user_content = f"## Source Text\n\n{source_text}\n\n---\n\n"
+                for v in voices:
+                    if v in item and item[v] is not None:
+                        content = item[v]
+                    elif v in _PART_KEY_FALLBACK and _PART_KEY_FALLBACK[v] in item:
+                        content = item[_PART_KEY_FALLBACK[v]]
+                    else:
+                        content = item[v]
+                    user_content += f"## {v}\n\n{content}\n\n"
+
                 system = judge_prompt_template.replace(
-                    "{part_type}", part_type
-                ).replace("{accept_threshold}", str(accept_threshold))
-
-                # Preflection variants use full text; reflection variants use text up to RP
-                if part_type in _PREFLECTION_PARTS:
-                    source_text = item["text"]
-                else:
-                    source_text = item["text"][: item["reflection_point"]]
-
-                # Resolve item key with fallback for legacy data
-                if part_type in item and item[part_type] is not None:
-                    content = item[part_type]
-                elif (
-                    part_type in _PART_KEY_FALLBACK
-                    and _PART_KEY_FALLBACK[part_type] in item
-                ):
-                    content = item[_PART_KEY_FALLBACK[part_type]]
-                else:
-                    content = item[part_type]
-
-                user_content = (
-                    f"## Source Text\n\n{source_text}\n\n"
-                    f"## {part_type.title()} to Judge\n\n{content}"
+                    "{accept_threshold}", str(accept_threshold)
                 )
                 raw, reasoning, usage = await _api_call(
                     client,
@@ -399,7 +378,7 @@ def run_judge_estimation(
                     max_tokens=max_tokens,
                     sampling_params=sampling_params,
                 )
-                _parse_judgment(raw)
+                _parse_mode_judgment(raw, mode)
 
                 for k in total_usage:
                     total_usage[k] += usage[k]
@@ -730,12 +709,12 @@ def main() -> None:
         writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
         if args.model_alias:
             prompt_path = resolve_prompt_path(
-                "generator_latest.md", alias=args.model_alias
+                "generator_reflection_latest.md", alias=args.model_alias
             )
         else:
             from pipeline.config import _INIT_PROMPTS_DIR
 
-            prompt_path = _INIT_PROMPTS_DIR / "init_generator.md"
+            prompt_path = _INIT_PROMPTS_DIR / "init_generator_reflection.md"
         prompt_template = prompt_path.read_text(encoding="utf-8")
         system_prompt = prompt_template.replace("{charter}", charter_text).replace(
             "{writing_guidelines}", writing_guidelines_text
@@ -759,12 +738,12 @@ def main() -> None:
 
         if args.model_alias:
             judge_prompt_path = resolve_prompt_path(
-                "judge_latest.md", alias=args.model_alias
+                "judge_reflection_latest.md", alias=args.model_alias
             )
         else:
             from pipeline.config import _INIT_PROMPTS_DIR
 
-            judge_prompt_path = _INIT_PROMPTS_DIR / "init_judge.md"
+            judge_prompt_path = _INIT_PROMPTS_DIR / "init_judge_reflection.md"
         judge_template = judge_prompt_path.read_text(encoding="utf-8")
 
     # ---- Wait for API to become ready (poll with backoff) ----

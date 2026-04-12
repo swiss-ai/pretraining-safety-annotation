@@ -235,7 +235,8 @@ class Phase4SlurmConfig:
 class Phase4Config:
     sidecar_path: str = ""
     output_dir: str = ""
-    prompt: str = "generator_v1.md"
+    reflection_prompt: str = "generator_reflection_v1.md"
+    preflection_prompt: str = "generator_preflection_v1.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False
     json_mode: bool = False
@@ -319,8 +320,11 @@ def load_config(overrides: list[str] | None = None) -> AppConfig:
 def _init_model_prompts(alias: str) -> None:
     """Initialize a model's prompt directory from the init templates.
 
-    Copies pipeline/prompts/init_generator.md -> data/.../generator_v1.md and
-    pipeline/prompts/init_judge.md -> data/.../judge_v1.md.
+    Copies init templates to versioned v1 files for each role+mode combination:
+    - init_generator_reflection.md -> generator_reflection_v1.md
+    - init_generator_preflection.md -> generator_preflection_v1.md
+    - init_judge_reflection.md -> judge_reflection_v1.md
+    - init_judge_preflection.md -> judge_preflection_v1.md
     Only runs once per model (skips if dir already exists).
     """
     import shutil
@@ -330,8 +334,10 @@ def _init_model_prompts(alias: str) -> None:
         return
     model_dir.mkdir(parents=True)
     for init_name, v1_name in [
-        ("init_generator.md", "generator_v1.md"),
-        ("init_judge.md", "judge_v1.md"),
+        ("init_generator_reflection.md", "generator_reflection_v1.md"),
+        ("init_generator_preflection.md", "generator_preflection_v1.md"),
+        ("init_judge_reflection.md", "judge_reflection_v1.md"),
+        ("init_judge_preflection.md", "judge_preflection_v1.md"),
     ]:
         src = _INIT_PROMPTS_DIR / init_name
         assert src.exists(), f"Init template not found: {src}"
@@ -341,7 +347,7 @@ def _init_model_prompts(alias: str) -> None:
 def _resolve_latest_version(model_dir: Path, filename: str) -> Path:
     """Resolve a 'latest' prompt filename to the highest versioned file.
 
-    E.g. 'judge_latest.md' finds the highest 'judge_vN.md' in model_dir.
+    E.g. 'judge_reflection_latest.md' finds the highest 'judge_reflection_vN.md' in model_dir.
     """
     import re
 
@@ -357,7 +363,9 @@ def _resolve_latest_version(model_dir: Path, filename: str) -> Path:
     return candidates[-1][1]
 
 
-_EXPLICIT_VERSION_RE = re.compile(r"^(generator|judge)_v\d+\.md$")
+_EXPLICIT_VERSION_RE = re.compile(
+    r"^(generator|judge)_(reflection|preflection)_v\d+\.md$"
+)
 
 
 def resolve_prompt_path(filename: str, alias: str) -> Path:

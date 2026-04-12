@@ -155,8 +155,13 @@ def cmd_submit(args, overrides):
     run_def = get_run(run_name)
 
     total_rows, n_tasks = _compute_n_tasks(cfg)
-    logger.info("Run '{}': {} rows, {} tasks (rows_per_task={})",
-                run_name, total_rows, n_tasks, cfg.phase4.rows_per_task)
+    logger.info(
+        "Run '{}': {} rows, {} tasks (rows_per_task={})",
+        run_name,
+        total_rows,
+        n_tasks,
+        cfg.phase4.rows_per_task,
+    )
 
     # Ensure output directory exists
     Path(cfg.phase4.output_dir).mkdir(parents=True, exist_ok=True)
@@ -171,19 +176,26 @@ def cmd_submit(args, overrides):
             logger.error(
                 "rows_per_task changed ({} -> {}). This would break resume. "
                 "Delete {} to force a fresh start.",
-                prev["rows_per_task"], cfg.phase4.rows_per_task, run_config_path,
+                prev["rows_per_task"],
+                cfg.phase4.rows_per_task,
+                run_config_path,
             )
             sys.exit(1)
     else:
         with open(run_config_path, "w") as f:
-            json.dump({
-                "run_name": run_name,
-                "rows_per_task": cfg.phase4.rows_per_task,
-                "sidecar_path": cfg.phase4.sidecar_path,
-                "generator_alias": cfg.phase4.generator_alias,
-                "prompt": cfg.phase4.prompt,
-                "hf_slug": cfg.phase4.sglang.hf_slug,
-            }, f, indent=2)
+            json.dump(
+                {
+                    "run_name": run_name,
+                    "rows_per_task": cfg.phase4.rows_per_task,
+                    "sidecar_path": cfg.phase4.sidecar_path,
+                    "generator_alias": cfg.phase4.generator_alias,
+                    "reflection_prompt": cfg.phase4.reflection_prompt,
+                    "preflection_prompt": cfg.phase4.preflection_prompt,
+                    "hf_slug": cfg.phase4.sglang.hf_slug,
+                },
+                f,
+                indent=2,
+            )
 
     # Build pipeline
     pipeline = [
@@ -194,7 +206,11 @@ def cmd_submit(args, overrides):
         AnnotationGenerator(
             run_name=run_name,
             generator_alias=cfg.phase4.generator_alias,
-            prompt_filename=cfg.phase4.prompt,
+            prompt_filename=(
+                cfg.phase4.reflection_prompt
+                if run_name == "reflections"
+                else cfg.phase4.preflection_prompt
+            ),
             output_dir=cfg.phase4.output_dir,
             max_concurrent_requests=cfg.phase4.max_concurrent_requests,
             save_batch_size=cfg.phase4.save_batch_size,
@@ -265,7 +281,9 @@ def cmd_status(args, overrides):
     )
 
     print(f"Run: {progress.run_name}")
-    print(f"Tasks: {progress.completed_tasks}/{progress.total_tasks} ({progress.pct_tasks:.1f}%)")
+    print(
+        f"Tasks: {progress.completed_tasks}/{progress.total_tasks} ({progress.pct_tasks:.1f}%)"
+    )
     print(f"Docs done: {progress.total_docs_done}")
     print(f"Docs failed: {progress.total_docs_failed}")
 
@@ -328,7 +346,9 @@ def main():
     # rerun
     p_rerun = sub.add_parser("rerun", help="Re-submit failed/incomplete ranks")
     p_rerun.add_argument("--run", required=True)
-    p_rerun.add_argument("--force", action="store_true", help="Force resubmit even if no failures found")
+    p_rerun.add_argument(
+        "--force", action="store_true", help="Force resubmit even if no failures found"
+    )
 
     # Parse known args, pass rest as config overrides
     args, remaining = parser.parse_known_args()

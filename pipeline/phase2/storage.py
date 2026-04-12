@@ -17,6 +17,9 @@ def review_split(item_id: str) -> str:
     return "validation" if h % 4 == 0 else "train"
 
 
+_EXCLUDED_REVIEWERS = {"Bob"}
+
+
 def build_review_lookup(
     split: str | None = None,
 ) -> dict[tuple[str, int], dict]:
@@ -28,6 +31,8 @@ def build_review_lookup(
     reviews = load_latest_reviews()
     lookup: dict[tuple[str, int], dict] = {}
     for (item_id, iteration, _reviewer), rev in reviews.items():
+        if _reviewer in _EXCLUDED_REVIEWERS:
+            continue
         if split and review_split(item_id) != split:
             continue
         key = (item_id, iteration)
@@ -85,23 +90,36 @@ def save_run(
     source: str = "manual",
     group_id: str | None = None,
     phase: str = "phase2",
+    gen_reflection_prompt: str | None = None,
+    gen_preflection_prompt: str | None = None,
+    judge_reflection_prompt: str | None = None,
+    judge_preflection_prompt: str | None = None,
 ) -> None:
     """Append a completed iteration run record.
 
     source: one of "manual", "improve_judge", "improve_generator".
     group_id: shared UUID linking cross-iteration runs in the same batch.
     phase: pipeline phase ("phase2" or "phase3").
+    gen_reflection_prompt / gen_preflection_prompt: per-mode generator prompts.
+    judge_reflection_prompt / judge_preflection_prompt: per-mode judge prompts.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT INTO runs
-           (iteration, gen_prompt, judge_prompt, generator_model, judge_model,
+           (iteration, gen_prompt, judge_prompt,
+            gen_reflection_prompt, gen_preflection_prompt,
+            judge_reflection_prompt, judge_preflection_prompt,
+            generator_model, judge_model,
             n_items, n_gold, config, analysis, timestamp, source, group_id, phase)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             iteration,
             gen_prompt,
             judge_prompt,
+            gen_reflection_prompt,
+            gen_preflection_prompt,
+            judge_reflection_prompt,
+            judge_preflection_prompt,
             generator_model,
             judge_model,
             n_items,
@@ -191,14 +209,14 @@ def save_item(record: dict) -> None:
             record["reflection_point"],
             record["gen_prompt"],
             record["model"],
-            record["analysis"],
-            record["preflection"],
-            record["reflection"],
+            record.get("analysis"),
+            record.get("preflection"),
+            record.get("reflection"),
             record.get("preflection_1p"),
             record.get("reflection_3p"),
             json.dumps(record.get("preflection_charter_elements", [])),
             json.dumps(record.get("reflection_charter_elements", [])),
-            record["raw_response"],
+            record.get("raw_response"),
             record.get("reasoning"),
             record["latency_ms"],
             record["timestamp"],
@@ -254,16 +272,25 @@ def save_review(
     aggregate: float,
     decision: str,
     notes: str,
+    reflection_decision: str | None = None,
+    preflection_decision: str | None = None,
+    reflection_aggregate: float | None = None,
+    preflection_aggregate: float | None = None,
 ) -> None:
     """Upsert a human review record.
 
     scores is keyed by part: {"preflection": {dim: int}, "reflection": {dim: int}}.
+    reflection_decision / preflection_decision: per-mode accept/reject decisions.
+    reflection_aggregate / preflection_aggregate: per-mode aggregate scores.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT OR REPLACE INTO reviews
-           (item_id, iteration, reviewer_id, scores, aggregate, decision, notes, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           (item_id, iteration, reviewer_id, scores, aggregate, decision, notes,
+            reflection_decision, preflection_decision,
+            reflection_aggregate, preflection_aggregate,
+            timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             item_id,
             iteration,
@@ -272,6 +299,10 @@ def save_review(
             aggregate,
             decision,
             notes,
+            reflection_decision,
+            preflection_decision,
+            reflection_aggregate,
+            preflection_aggregate,
             datetime.now(timezone.utc).isoformat(),
         ),
     )

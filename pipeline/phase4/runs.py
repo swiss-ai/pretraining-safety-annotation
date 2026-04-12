@@ -18,7 +18,6 @@ from pipeline.generation import (
     PREFLECTION_TASK,
     REFLECTION_TASK,
     parse_generation,
-    split_generator_prompt,
 )
 from pipeline.phase4.canaries import assign_canary
 from pipeline.tokenizer import compute_reflection_point
@@ -39,17 +38,14 @@ class RunDefinition:
 
 
 # ---------------------------------------------------------------------------
-# reflections run
+# reflections run  (partial text up to reflection point)
 # ---------------------------------------------------------------------------
 
 _REFLECTIONS_COLUMNS = [
     "reflection_1p",
     "reflection_3p",
-    "preflection_1p",
-    "preflection_3p",
     "reflection_position",
     "charter_reflection",
-    "charter_preflection",
     "canary_type",
 ]
 
@@ -62,10 +58,10 @@ def _reflections_build_calls(
     canary_seed: int,
     reflection_seed: int,
 ) -> list[tuple[list[dict], set[str], dict]]:
-    """Build the two API calls for the reflections run.
+    """Build a single API call for the reflections run.
 
     Returns list of (messages, required_fields, metadata) tuples.
-    metadata carries reflection_point and canary info for post_process.
+    The system_prompt is the already-resolved reflection-specific prompt.
     """
     # Compute reflection point (deterministic in reflection_seed + doc_id)
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
@@ -76,10 +72,7 @@ def _reflections_build_calls(
     # Canary assignment
     canary = assign_canary(doc_id, canary_seed, canaries)
 
-    refl_system = split_generator_prompt(system_prompt, "reflection")
-    prefl_system = split_generator_prompt(system_prompt, "preflection")
-
-    # Call 1: Reflection (text up to RP only)
+    # Build user message with text up to RP
     refl_user = f"## Full Text\n\n{context_before}"
     if canary is not None:
         refl_user += (
@@ -91,17 +84,8 @@ def _reflections_build_calls(
     refl_user += REFLECTION_TASK
 
     refl_messages = [
-        {"role": "system", "content": refl_system},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": refl_user},
-    ]
-
-    # Call 2: Preflection (full text)
-    prefl_user = f"## Full Text\n\n{doc_text}"
-    prefl_user += PREFLECTION_TASK
-
-    prefl_messages = [
-        {"role": "system", "content": prefl_system},
-        {"role": "user", "content": prefl_user},
     ]
 
     meta = {
@@ -111,7 +95,6 @@ def _reflections_build_calls(
 
     return [
         (refl_messages, {"analysis", "reflection_1p", "reflection_3p"}, meta),
-        (prefl_messages, {"analysis", "preflection_3p", "preflection_1p"}, meta),
     ]
 
 
@@ -121,18 +104,13 @@ def _reflections_post_process(
     parsed_results: list[dict],
     meta: dict,
 ) -> dict:
-    """Merge parsed reflection + preflection results into the final output row."""
-    refl_parsed, prefl_parsed = parsed_results
+    """Extract reflection fields from the single parsed result."""
+    (refl_parsed,) = parsed_results
 
     charter_reflection = extract_charter_elements(
         refl_parsed.get("reflection_1p", "")
         + " "
         + refl_parsed.get("reflection_3p", "")
-    )
-    charter_preflection = extract_charter_elements(
-        prefl_parsed.get("preflection_1p", "")
-        + " "
-        + prefl_parsed.get("preflection_3p", "")
     )
 
     canary = meta["canary"]
@@ -140,12 +118,70 @@ def _reflections_post_process(
     return {
         "reflection_1p": refl_parsed.get("reflection_1p", ""),
         "reflection_3p": refl_parsed.get("reflection_3p", ""),
-        "preflection_1p": prefl_parsed.get("preflection_1p", ""),
-        "preflection_3p": prefl_parsed.get("preflection_3p", ""),
         "reflection_position": meta["reflection_point"],
         "charter_reflection": json.dumps(charter_reflection),
-        "charter_preflection": json.dumps(charter_preflection),
         "canary_type": canary["id"] if canary is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# preflections run  (full text)
+# ---------------------------------------------------------------------------
+
+_PREFLECTIONS_COLUMNS = [
+    "preflection_1p",
+    "preflection_3p",
+    "charter_preflection",
+]
+
+
+def _preflections_build_calls(
+    doc_text: str,
+    doc_id: str,
+    system_prompt: str,
+    canaries: list[dict],
+    canary_seed: int,
+    reflection_seed: int,
+) -> list[tuple[list[dict], set[str], dict]]:
+    """Build a single API call for the preflections run.
+
+    Returns list of (messages, required_fields, metadata) tuples.
+    The system_prompt is the already-resolved preflection-specific prompt.
+    """
+    prefl_user = f"## Full Text\n\n{doc_text}"
+    prefl_user += PREFLECTION_TASK
+
+    prefl_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prefl_user},
+    ]
+
+    meta: dict = {}
+
+    return [
+        (prefl_messages, {"analysis", "preflection_3p", "preflection_1p"}, meta),
+    ]
+
+
+def _preflections_post_process(
+    doc_id: str,
+    doc_text: str,
+    parsed_results: list[dict],
+    meta: dict,
+) -> dict:
+    """Extract preflection fields from the single parsed result."""
+    (prefl_parsed,) = parsed_results
+
+    charter_preflection = extract_charter_elements(
+        prefl_parsed.get("preflection_1p", "")
+        + " "
+        + prefl_parsed.get("preflection_3p", "")
+    )
+
+    return {
+        "preflection_1p": prefl_parsed.get("preflection_1p", ""),
+        "preflection_3p": prefl_parsed.get("preflection_3p", ""),
+        "charter_preflection": json.dumps(charter_preflection),
     }
 
 
@@ -159,6 +195,12 @@ RUNS: dict[str, RunDefinition] = {
         output_columns=_REFLECTIONS_COLUMNS,
         build_calls=_reflections_build_calls,
         post_process=_reflections_post_process,
+    ),
+    "preflections": RunDefinition(
+        name="preflections",
+        output_columns=_PREFLECTIONS_COLUMNS,
+        build_calls=_preflections_build_calls,
+        post_process=_preflections_post_process,
     ),
 }
 

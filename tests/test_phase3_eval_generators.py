@@ -39,7 +39,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -117,7 +116,8 @@ def _make_fake_generate(
 
     def _fake(
         items,
-        prompt_path,
+        refl_prompt_path,
+        prefl_prompt_path,
         charter_text,
         model,
         iteration,
@@ -129,6 +129,7 @@ def _make_fake_generate(
         json_mode=False,
         canary_rng_seed=None,
         on_failure=None,
+        mode=None,
         **kw,
     ):
         captured_canary_seeds.append(canary_rng_seed)
@@ -186,7 +187,8 @@ def _make_fake_judge(
 
     def _fake(
         items,
-        prompt_path,
+        refl_prompt_path,
+        prefl_prompt_path,
         model,
         iteration,
         accept_threshold,
@@ -202,7 +204,7 @@ def _make_fake_judge(
                 if on_failure is not None:
                     fr = {
                         "item_id": it["item_id"],
-                        "stage": "judge_combined",
+                        "stage": "judge_reflection",
                         "category": "parse",
                         "reason": "missing_field",
                         "raw": "judge raw text",
@@ -235,7 +237,7 @@ def _make_fake_judge(
                 },
                 "aggregate": 4.0,
                 "decision": "accept",
-                "judge_prompt": Path(prompt_path).name,
+                "judge_prompt": Path(refl_prompt_path).name,
                 "raw_responses": {"combined": "raw"},
                 "usage": {
                     "input_tokens": 1,
@@ -435,31 +437,31 @@ class TestRunGeneratorEval:
 
         gen_rows_0 = _read_jsonl(run_dir / self._gen_rel(g0))
         gen_rows_1 = _read_jsonl(run_dir / self._gen_rel(g1))
-        assert len(gen_rows_0) == 5, (
-            f"expected 5 gen rows for g0, got {len(gen_rows_0)}"
-        )
-        assert len(gen_rows_1) == 5, (
-            f"expected 5 gen rows for g1, got {len(gen_rows_1)}"
-        )
+        assert (
+            len(gen_rows_0) == 5
+        ), f"expected 5 gen rows for g0, got {len(gen_rows_0)}"
+        assert (
+            len(gen_rows_1) == 5
+        ), f"expected 5 gen rows for g1, got {len(gen_rows_1)}"
 
         jud_rows_0 = _read_jsonl(run_dir / self._jud_rel(gold, g0))
         jud_rows_1 = _read_jsonl(run_dir / self._jud_rel(gold, g1))
-        assert len(jud_rows_0) == 5, (
-            f"expected 5 judgment rows for g0, got {len(jud_rows_0)}"
-        )
-        assert len(jud_rows_1) == 5, (
-            f"expected 5 judgment rows for g1, got {len(jud_rows_1)}"
-        )
+        assert (
+            len(jud_rows_0) == 5
+        ), f"expected 5 judgment rows for g0, got {len(jud_rows_0)}"
+        assert (
+            len(jud_rows_1) == 5
+        ), f"expected 5 judgment rows for g1, got {len(jud_rows_1)}"
 
         meta_path = run_dir / "metadata.json"
         assert meta_path.exists(), "metadata.json missing"
         meta = json.loads(meta_path.read_text())
-        assert meta.get("status") == "done", (
-            f"metadata.status should be 'done', got {meta.get('status')!r}"
-        )
-        assert meta.get("finished_at"), (
-            f"metadata.finished_at should be set, got {meta.get('finished_at')!r}"
-        )
+        assert (
+            meta.get("status") == "done"
+        ), f"metadata.status should be 'done', got {meta.get('status')!r}"
+        assert meta.get(
+            "finished_at"
+        ), f"metadata.finished_at should be set, got {meta.get('finished_at')!r}"
 
     def test_resume_skips_done_items(self, patched_runner):
         cfg = patched_runner.cfg
@@ -492,9 +494,9 @@ class TestRunGeneratorEval:
         # Every invocation of generate_batch during the second run must
         # receive an empty items list — everything is already done.
         for items_list in patched_runner.captured_gen_items:
-            assert items_list == [], (
-                f"resume leaked un-done items to generate_batch: {items_list}"
-            )
+            assert (
+                items_list == []
+            ), f"resume leaked un-done items to generate_batch: {items_list}"
 
         # File row counts unchanged.
         assert _read_jsonl(run_dir / self._gen_rel(g0)) == first_gen0
@@ -521,9 +523,10 @@ class TestRunGeneratorEval:
         cfg = patched_runner.cfg
         cfg.phase3.generator_eval.seed = 999
         patched_runner.run(cfg, "run-canary-999")
-        assert patched_runner.captured_canary_seeds == [999, 999], (
-            f"expected [999, 999], got {patched_runner.captured_canary_seeds}"
-        )
+        assert patched_runner.captured_canary_seeds == [
+            999,
+            999,
+        ], f"expected [999, 999], got {patched_runner.captured_canary_seeds}"
 
     def test_failure_records_written_with_raw(self, patched_runner):
         cfg = patched_runner.cfg
@@ -545,32 +548,31 @@ class TestRunGeneratorEval:
 
         fail_rows = _read_jsonl(run_dir / self._fail_gen_rel(g0))
         assert len(fail_rows) == 2, (
-            f"expected 2 failure rows for g0, got {len(fail_rows)}: "
-            f"{fail_rows}"
+            f"expected 2 failure rows for g0, got {len(fail_rows)}: " f"{fail_rows}"
         )
         fail_ids = {r["item_id"] for r in fail_rows}
         assert fail_ids == {"i1", "i3"}, f"unexpected failure ids: {fail_ids}"
 
         for row in fail_rows:
-            assert row.get("category") == "parse", (
-                f"failure row missing/wrong category: {row}"
-            )
+            assert (
+                row.get("category") == "parse"
+            ), f"failure row missing/wrong category: {row}"
             assert "reason" in row, f"failure row missing reason: {row}"
-            assert row.get("raw") == "raw response text", (
-                f"failure row must preserve raw response text: {row}"
-            )
+            assert (
+                row.get("raw") == "raw response text"
+            ), f"failure row must preserve raw response text: {row}"
             assert "attempt" in row, f"failure row missing attempt: {row}"
             assert row["attempt"] >= 1, f"attempt must be >=1: {row}"
 
         gen_rows = _read_jsonl(run_dir / self._gen_rel(g0))
-        assert len(gen_rows) == 3, (
-            f"generations should have 5-2=3 rows, got {len(gen_rows)}"
-        )
+        assert (
+            len(gen_rows) == 3
+        ), f"generations should have 5-2=3 rows, got {len(gen_rows)}"
 
         jud_rows = _read_jsonl(run_dir / self._jud_rel(gold, g0))
-        assert len(jud_rows) == 3, (
-            f"judgments should only cover succeeded items (3), got {len(jud_rows)}"
-        )
+        assert (
+            len(jud_rows) == 3
+        ), f"judgments should only cover succeeded items (3), got {len(jud_rows)}"
 
     def test_judge_failures_recorded(self, patched_runner):
         cfg = patched_runner.cfg
@@ -588,14 +590,13 @@ class TestRunGeneratorEval:
 
         for cand in (g0, g1):
             gen_rows = _read_jsonl(run_dir / self._gen_rel(cand))
-            assert len(gen_rows) == 5, (
-                f"gen rows for {cand.alias} should be 5, got {len(gen_rows)}"
-            )
+            assert (
+                len(gen_rows) == 5
+            ), f"gen rows for {cand.alias} should be 5, got {len(gen_rows)}"
 
             jud_rows = _read_jsonl(run_dir / self._jud_rel(gold, cand))
             assert len(jud_rows) == 4, (
-                f"judgments should be 5-1=4 for {cand.alias}, "
-                f"got {len(jud_rows)}"
+                f"judgments should be 5-1=4 for {cand.alias}, " f"got {len(jud_rows)}"
             )
 
             jud_fail_rows = _read_jsonl(run_dir / self._fail_jud_rel(gold, cand))
@@ -630,9 +631,9 @@ class TestRunGeneratorEval:
 
         # Each generator candidate should see at least one call whose items
         # list is observed. i0 must not appear in ANY of those items lists.
-        assert patched_runner.captured_gen_items, (
-            "expected generate_batch to be invoked on the 4th run"
-        )
+        assert (
+            patched_runner.captured_gen_items
+        ), "expected generate_batch to be invoked on the 4th run"
         for items_list in patched_runner.captured_gen_items:
             assert "i0" not in items_list, (
                 f"i0 exceeded failure_attempt_cap but was still submitted: "
@@ -645,9 +646,9 @@ class TestRunGeneratorEval:
         patched_runner.run(cfg, run_id)
 
         expected = Path(cfg.phase3.eval_dir) / run_id
-        assert expected.exists(), (
-            f"run dir was not created under cfg.phase3.eval_dir: {expected}"
-        )
+        assert (
+            expected.exists()
+        ), f"run dir was not created under cfg.phase3.eval_dir: {expected}"
 
         # Also sanity-check that the runner did NOT create the run under the
         # default data/pipeline/phase3_eval path.
@@ -670,18 +671,19 @@ class TestRunGeneratorEval:
         meta = json.loads(meta_path.read_text())
 
         cands = meta.get("candidates")
-        assert isinstance(cands, list), (
-            f"metadata.candidates should be a list, got {type(cands).__name__}"
-        )
-        assert len(cands) == 2, (
-            f"metadata.candidates should list both generators, got {cands}"
-        )
+        assert isinstance(
+            cands, list
+        ), f"metadata.candidates should be a list, got {type(cands).__name__}"
+        assert (
+            len(cands) == 2
+        ), f"metadata.candidates should list both generators, got {cands}"
         aliases = {c.get("alias") for c in cands}
-        assert aliases == {g0.alias, g1.alias}, (
-            f"metadata.candidates aliases mismatch: {aliases}"
-        )
+        assert aliases == {
+            g0.alias,
+            g1.alias,
+        }, f"metadata.candidates aliases mismatch: {aliases}"
         for c in cands:
             assert "prompt" in c, f"candidate metadata missing prompt: {c}"
-            assert "prompt_sha256" in c, (
-                f"candidate metadata missing prompt_sha256: {c}"
-            )
+            assert (
+                "prompt_sha256" in c
+            ), f"candidate metadata missing prompt_sha256: {c}"

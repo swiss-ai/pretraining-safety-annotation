@@ -104,6 +104,30 @@ def _judgment_decision(row: dict) -> str | None:
     return j.get("decision")
 
 
+def _judgment_mode_aggregate(row: dict, mode: str) -> float | None:
+    """Return the per-mode aggregate (e.g. ``reflection_aggregate``) from a judgment row.
+
+    Uses ``.get()`` so old data without per-mode keys returns ``None``.
+    """
+    j = row.get("judgment") or {}
+    key = f"{mode}_aggregate"
+    agg = j.get(key)
+    if isinstance(agg, (int, float)) and not (
+        isinstance(agg, float) and math.isnan(agg)
+    ):
+        return float(agg)
+    return None
+
+
+def _judgment_mode_decision(row: dict, mode: str) -> str | None:
+    """Return the per-mode decision (e.g. ``reflection_decision``) from a judgment row.
+
+    Uses ``.get()`` so old data without per-mode keys returns ``None``.
+    """
+    j = row.get("judgment") or {}
+    return j.get(f"{mode}_decision")
+
+
 def _per_voice_dim_scores(row: dict) -> dict[str, list[float]]:
     """Return {dim → [score across the 4 voices]} for one judgment row."""
     j = row.get("judgment") or {}
@@ -117,9 +141,7 @@ def _per_voice_dim_scores(row: dict) -> dict[str, list[float]]:
     return out
 
 
-def rank_generators(
-    run_id: str, *, eval_dir: Path | str | None = None
-) -> list[dict]:
+def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[dict]:
     """Per-generator rank table for a phase 3 generator-eval run.
 
     See module docstring for the returned dict shape.
@@ -164,6 +186,13 @@ def rank_generators(
         accepts = 0
         per_dim_sums: dict[str, list[float]] = defaultdict(list)
         accept_by_safety: dict[str, dict] = {}
+
+        # Per-mode accumulators (use .get() to handle old data gracefully).
+        refl_aggregates: list[float] = []
+        refl_accepts = 0
+        prefl_aggregates: list[float] = []
+        prefl_accepts = 0
+
         for row in judgment_rows:
             agg = _judgment_aggregate(row)
             if agg is not None:
@@ -181,6 +210,21 @@ def rank_generators(
                 bucket["n"] += 1
                 if is_accept:
                     bucket["accepts"] += 1
+
+            # Per-mode metrics
+            refl_agg = _judgment_mode_aggregate(row, "reflection")
+            if refl_agg is not None:
+                refl_aggregates.append(refl_agg)
+            refl_dec = _judgment_mode_decision(row, "reflection")
+            if refl_dec == "accept":
+                refl_accepts += 1
+
+            prefl_agg = _judgment_mode_aggregate(row, "preflection")
+            if prefl_agg is not None:
+                prefl_aggregates.append(prefl_agg)
+            prefl_dec = _judgment_mode_decision(row, "preflection")
+            if prefl_dec == "accept":
+                prefl_accepts += 1
 
         for key, bucket in accept_by_safety.items():
             n = bucket["n"]
@@ -212,20 +256,48 @@ def rank_generators(
             "total_dropped": (n_pool - n_succeeded) / denom,
         }
 
-        out.append(
-            {
-                "generator": gen_name,
-                "n_pool": n_pool,
-                "n_succeeded": n_succeeded,
-                "mean_aggregate": (
-                    sum(aggregates) / len(aggregates) if aggregates else 0.0
-                ),
-                "accept_rate": accepts / n_succeeded if n_succeeded else 0.0,
-                "per_dim_mean": per_dim_mean,
-                "accept_by_safety_score": accept_by_safety,
-                "failure_rates": failure_rates,
-            }
-        )
+        entry: dict = {
+            "generator": gen_name,
+            "n_pool": n_pool,
+            "n_succeeded": n_succeeded,
+            "mean_aggregate": (
+                sum(aggregates) / len(aggregates) if aggregates else 0.0
+            ),
+            "accept_rate": accepts / n_succeeded if n_succeeded else 0.0,
+            "per_dim_mean": per_dim_mean,
+            "accept_by_safety_score": accept_by_safety,
+            "failure_rates": failure_rates,
+        }
+
+        # Add per-mode metrics only when data is available (new judgment format).
+        if refl_aggregates:
+            entry["reflection_mean_aggregate"] = sum(refl_aggregates) / len(
+                refl_aggregates
+            )
+        if n_succeeded:
+            # Only include if at least one row had a per-mode decision.
+            refl_dec_count = sum(
+                1
+                for r in judgment_rows
+                if _judgment_mode_decision(r, "reflection") is not None
+            )
+            if refl_dec_count:
+                entry["reflection_accept_rate"] = refl_accepts / refl_dec_count
+
+        if prefl_aggregates:
+            entry["preflection_mean_aggregate"] = sum(prefl_aggregates) / len(
+                prefl_aggregates
+            )
+        if n_succeeded:
+            prefl_dec_count = sum(
+                1
+                for r in judgment_rows
+                if _judgment_mode_decision(r, "preflection") is not None
+            )
+            if prefl_dec_count:
+                entry["preflection_accept_rate"] = prefl_accepts / prefl_dec_count
+
+        out.append(entry)
 
     out.sort(key=lambda r: r["mean_aggregate"], reverse=True)
     return out
@@ -330,6 +402,72 @@ def _judgment_per_dim_for_pairs(rows: list[dict]) -> dict[str, list[float]]:
     return out
 
 
+def _per_mode_correlation(
+    cand_rows: list[dict],
+    ref_rows_or_index: dict | list[dict],
+    ref_agg_fn,
+    ref_dec_fn,
+    key="item_id",
+) -> dict[str, dict]:
+    """Compute per-mode (reflection/preflection) correlation metrics.
+
+    Returns a dict like::
+
+        {
+            "reflection": {"spearman": ..., "kappa": ...},
+            "preflection": {"spearman": ..., "kappa": ...},
+        }
+
+    Uses ``.get()`` everywhere; returns empty sub-dicts when per-mode data
+    is not present (old format).
+    """
+    # Build index from ref rows if needed.
+    if isinstance(ref_rows_or_index, list):
+        if isinstance(key, tuple):
+            ref_index = {
+                tuple(r.get(k) for k in key): r
+                for r in ref_rows_or_index
+                if all(k in r for k in key)
+            }
+        else:
+            ref_index = {r[key]: r for r in ref_rows_or_index if key in r}
+    else:
+        ref_index = ref_rows_or_index
+
+    result: dict[str, dict] = {}
+    for mode in ("reflection", "preflection"):
+        xs: list[float] = []
+        ys: list[float] = []
+        decs_a: list[str] = []
+        decs_b: list[str] = []
+        for row in cand_rows:
+            if isinstance(key, tuple):
+                k = tuple(row.get(k_) for k_ in key)
+            else:
+                k = row.get(key)
+            ref = ref_index.get(k)
+            if ref is None:
+                continue
+            cand_agg = _judgment_mode_aggregate(row, mode)
+            ref_agg = ref_agg_fn(ref, mode)
+            if cand_agg is None or ref_agg is None:
+                continue
+            xs.append(cand_agg)
+            ys.append(ref_agg)
+            cand_dec = _judgment_mode_decision(row, mode)
+            ref_dec = ref_dec_fn(ref, mode)
+            if cand_dec is not None and ref_dec is not None:
+                decs_a.append(cand_dec)
+                decs_b.append(ref_dec)
+
+        if xs:
+            result[mode] = {
+                "spearman": _safe_spearman(xs, ys),
+                "kappa": _cohens_kappa(decs_a, decs_b),
+            }
+    return result
+
+
 def _human_review_aggregate(row: dict) -> float | None:
     hr = row.get("human_review") or {}
     if "aggregate" in hr and isinstance(hr["aggregate"], (int, float)):
@@ -361,9 +499,7 @@ def _human_review_per_dim(row: dict) -> dict[str, float]:
     return {dim: sum(v) / len(v) for dim, v in out.items() if v}
 
 
-def rank_judges(
-    run_id: str, *, eval_dir: Path | str | None = None
-) -> dict:
+def rank_judges(run_id: str, *, eval_dir: Path | str | None = None) -> dict:
     """Per-judge rank tables for a phase 3 judge-eval run."""
     run_dir = _resolve_run_dir(run_id, eval_dir)
     meta_path = run_dir / "metadata.json"
@@ -451,19 +587,33 @@ def rank_judges(
                 dim: _safe_spearman(paired_per_dim_x[dim], paired_per_dim_y[dim])
                 for dim in paired_per_dim_x
             }
-            vs_human.append(
-                {
-                    "judge": judge_label,
-                    "n_reviewed": n_reviewed,
-                    "n_succeeded": len(paired_xs),
-                    "spearman": _safe_spearman(paired_xs, paired_ys),
-                    "pearson": _safe_pearson(paired_xs, paired_ys),
-                    "concordance": _decision_concordance(paired_decs_a, paired_decs_b),
-                    "kappa": _cohens_kappa(paired_decs_a, paired_decs_b),
-                    "per_dim": per_dim_corr,
-                    "failure_rates": failure_rates,
-                }
+
+            # Per-mode correlation vs human reviews (new judgment format).
+            # Human reviews don't have per-mode aggregates/decisions in the same
+            # shape, so we only compute per-mode correlation when judgments have
+            # the new per-mode keys.
+            per_mode = _per_mode_correlation(
+                cand_rows,
+                reviewed_index,
+                ref_agg_fn=lambda r, mode: _judgment_mode_aggregate(r, mode),
+                ref_dec_fn=lambda r, mode: _judgment_mode_decision(r, mode),
+                key=("item_id", "iteration"),
             )
+
+            entry = {
+                "judge": judge_label,
+                "n_reviewed": n_reviewed,
+                "n_succeeded": len(paired_xs),
+                "spearman": _safe_spearman(paired_xs, paired_ys),
+                "pearson": _safe_pearson(paired_xs, paired_ys),
+                "concordance": _decision_concordance(paired_decs_a, paired_decs_b),
+                "kappa": _cohens_kappa(paired_decs_a, paired_decs_b),
+                "per_dim": per_dim_corr,
+                "failure_rates": failure_rates,
+            }
+            if per_mode:
+                entry["per_mode"] = per_mode
+            vs_human.append(entry)
             continue
 
         # vs_gold path: file is "<judge_alias>__<judge_prompt>__on__<gen>__<gen_prompt>.jsonl"
@@ -519,18 +669,29 @@ def rank_judges(
             dim: _safe_spearman(paired_per_dim_x[dim], paired_per_dim_y[dim])
             for dim in paired_per_dim_x
         }
-        vs_gold.append(
-            {
-                "judge": name,
-                "n_pool": n_pool,
-                "n_succeeded": len(paired_xs),
-                "spearman": _safe_spearman(paired_xs, paired_ys),
-                "pearson": _safe_pearson(paired_xs, paired_ys),
-                "concordance": _decision_concordance(paired_decs_a, paired_decs_b),
-                "kappa": _cohens_kappa(paired_decs_a, paired_decs_b),
-                "per_dim": per_dim_corr,
-                "failure_rates": failure_rates,
-            }
+
+        # Per-mode correlation (new judgment format).
+        per_mode = _per_mode_correlation(
+            cand_rows,
+            gold_index,
+            ref_agg_fn=_judgment_mode_aggregate,
+            ref_dec_fn=_judgment_mode_decision,
+            key="item_id",
         )
+
+        entry = {
+            "judge": name,
+            "n_pool": n_pool,
+            "n_succeeded": len(paired_xs),
+            "spearman": _safe_spearman(paired_xs, paired_ys),
+            "pearson": _safe_pearson(paired_xs, paired_ys),
+            "concordance": _decision_concordance(paired_decs_a, paired_decs_b),
+            "kappa": _cohens_kappa(paired_decs_a, paired_decs_b),
+            "per_dim": per_dim_corr,
+            "failure_rates": failure_rates,
+        }
+        if per_mode:
+            entry["per_mode"] = per_mode
+        vs_gold.append(entry)
 
     return {"vs_gold": vs_gold, "vs_human": vs_human}

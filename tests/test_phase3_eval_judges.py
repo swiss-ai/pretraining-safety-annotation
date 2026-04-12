@@ -32,7 +32,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fake implementations of generate_batch / judge_batch
 # ---------------------------------------------------------------------------
@@ -43,7 +42,8 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
 
     def _fake(
         items,
-        prompt_path,
+        refl_prompt_path,
+        prefl_prompt_path,
         charter_text,
         model,
         iteration,
@@ -55,6 +55,7 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
         json_mode=False,
         canary_rng_seed=None,
         on_failure=None,
+        mode=None,
         **kw,
     ):
         captured_seeds.append(canary_rng_seed)
@@ -99,7 +100,8 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
 
     def _fake(
         items,
-        prompt_path,
+        refl_prompt_path,
+        prefl_prompt_path,
         model,
         iteration,
         accept_threshold,
@@ -112,9 +114,11 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
             captured_calls.append(
                 {
                     "model": model,
-                    "prompt": prompt_path.name
-                    if hasattr(prompt_path, "name")
-                    else str(prompt_path),
+                    "prompt": (
+                        refl_prompt_path.name
+                        if hasattr(refl_prompt_path, "name")
+                        else str(refl_prompt_path)
+                    ),
                     "n_items": len(items),
                 }
             )
@@ -126,7 +130,7 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
                     on_failure(
                         {
                             "item_id": it["item_id"],
-                            "stage": "judge_combined",
+                            "stage": "judge_reflection",
                             "category": "parse",
                             "reason": "missing_field",
                             "raw": "raw judge text",
@@ -157,7 +161,9 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
                 },
                 "aggregate": 4.0,
                 "decision": "accept",
-                "judge_prompt": getattr(prompt_path, "name", str(prompt_path)),
+                "judge_prompt": getattr(
+                    refl_prompt_path, "name", str(refl_prompt_path)
+                ),
                 "raw_responses": {"combined": "raw"},
                 "usage": {
                     "input_tokens": 1,
@@ -276,9 +282,7 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
         mod.run_judge_eval(cfg, "run-full")
@@ -288,9 +292,7 @@ class TestRunJudgeEval:
         assert len(gens) == 5
 
         j_gold = _read_jsonl(
-            run_dir
-            / "judgments"
-            / "gold__judge_v1.md__on__genA__generator_v1.md.jsonl"
+            run_dir / "judgments" / "gold__judge_v1.md__on__genA__generator_v1.md.jsonl"
         )
         j_c1 = _read_jsonl(
             run_dir
@@ -323,19 +325,13 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
         # Include a candidate whose (alias, prompt) duplicates the gold judge.
         cfg.phase3.judge_eval.candidates = [
-            CandidateModel(
-                alias="gold", api_name="gold-api", prompt="judge_v1.md"
-            ),
-            CandidateModel(
-                alias="cand1", api_name="cand1-api", prompt="judge_v2.md"
-            ),
+            CandidateModel(alias="gold", api_name="gold-api", prompt="judge_v1.md"),
+            CandidateModel(alias="cand1", api_name="cand1-api", prompt="judge_v2.md"),
         ]
 
         mod.run_judge_eval(cfg, "run-dedup")
@@ -352,9 +348,7 @@ class TestRunJudgeEval:
         # And only one gold judgment file should exist.
         run_dir = tmp_path / "phase3_eval" / "run-dedup"
         judgments_dir = run_dir / "judgments"
-        gold_files = [
-            p for p in judgments_dir.glob("gold__judge_v1.md__on__*.jsonl")
-        ]
+        gold_files = [p for p in judgments_dir.glob("gold__judge_v1.md__on__*.jsonl")]
         assert len(gold_files) == 1
 
     def test_canary_seed_passed_to_generator(self, tmp_path, monkeypatch):
@@ -370,9 +364,7 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
         cfg.phase3.judge_eval.seed = 999
@@ -383,9 +375,7 @@ class TestRunJudgeEval:
         assert 999 in captured_seeds
         assert captured_seeds.count(999) == 1
 
-    def test_judge_batch_called_with_each_judge_model(
-        self, tmp_path, monkeypatch
-    ):
+    def test_judge_batch_called_with_each_judge_model(self, tmp_path, monkeypatch):
         from pipeline.phase3 import eval_judges as mod
 
         _install_common_patches(monkeypatch, tmp_path)
@@ -398,9 +388,7 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
         mod.run_judge_eval(cfg, "run-models")
@@ -436,13 +424,9 @@ class TestRunJudgeEval:
         mod.run_judge_eval(cfg, "run-resume")
 
         for c in second_calls:
-            assert c["n_items"] == 0, (
-                f"Expected resume to skip all items, got call {c}"
-            )
+            assert c["n_items"] == 0, f"Expected resume to skip all items, got call {c}"
 
-    def test_include_reviewed_path_judges_reviewed_items(
-        self, tmp_path, monkeypatch
-    ):
+    def test_include_reviewed_path_judges_reviewed_items(self, tmp_path, monkeypatch):
         from pipeline.phase3 import eval_judges as mod
 
         _install_common_patches(monkeypatch, tmp_path)
@@ -455,9 +439,7 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         reviewed_rows = [
             {
@@ -600,9 +582,7 @@ class TestRunJudgeEval:
         mod.run_judge_eval(cfg, "run-reviewed-resume")
 
         for c in second_calls:
-            assert c["n_items"] == 0, (
-                f"Expected resume to skip all items, got call {c}"
-            )
+            assert c["n_items"] == 0, f"Expected resume to skip all items, got call {c}"
 
     def test_failures_recorded_per_judge(self, tmp_path, monkeypatch):
         from pipeline.phase3 import eval_judges as mod
@@ -621,7 +601,8 @@ class TestRunJudgeEval:
         # Dispatch: gold judge fails on i0/i1; candidates never fail.
         def _judge_dispatcher(
             items,
-            prompt_path,
+            refl_prompt_path,
+            prefl_prompt_path,
             model,
             iteration,
             accept_threshold,
@@ -638,7 +619,8 @@ class TestRunJudgeEval:
                 fake = make_fake_judge(captured_judge_calls)
             return fake(
                 items,
-                prompt_path,
+                refl_prompt_path,
+                prefl_prompt_path,
                 model,
                 iteration,
                 accept_threshold,
@@ -666,9 +648,7 @@ class TestRunJudgeEval:
             assert row.get("raw") == "raw judge text"
 
         j_gold = _read_jsonl(
-            run_dir
-            / "judgments"
-            / "gold__judge_v1.md__on__genA__generator_v1.md.jsonl"
+            run_dir / "judgments" / "gold__judge_v1.md__on__genA__generator_v1.md.jsonl"
         )
         assert len(j_gold) == 3
 
@@ -698,9 +678,7 @@ class TestRunJudgeEval:
             "generate_batch",
             make_fake_generate(captured_seeds, captured_failures),
         )
-        monkeypatch.setattr(
-            mod, "judge_batch", make_fake_judge(captured_judge_calls)
-        )
+        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
         mod.run_judge_eval(cfg, "run-x")

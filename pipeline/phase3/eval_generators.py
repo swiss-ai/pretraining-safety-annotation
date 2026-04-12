@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -25,6 +26,48 @@ from pipeline.log import logger
 from pipeline.phase2.run import generate_batch, judge_batch
 from pipeline.phase3.items import ensure_item_pool
 from pipeline.phase3.storage import JsonlRunStore
+
+# Regex to extract the version number from mode-specific prompt filenames.
+# Matches e.g. "generator_reflection_v3.md" -> ("generator", "reflection", "3")
+# Also matches old format "generator_v3.md" -> ("generator", None, "3")
+_MODE_PROMPT_RE = re.compile(
+    r"^(generator|judge)_(?:(reflection|preflection)_)?v(\d+)\.md$"
+)
+
+
+def _resolve_both_prompt_paths(
+    prompt: str,
+    alias: str,
+    kind: str,
+    resolve_fn=None,
+) -> tuple[Path | None, Path | None]:
+    """Derive both reflection and preflection prompt paths from a single prompt field.
+
+    If the prompt is mode-specific (e.g. ``generator_reflection_v3.md``), the
+    counterpart is derived automatically.  If it's the old combined format
+    (``generator_v3.md``), both paths point to the same file.
+
+    Returns ``(refl_prompt_path, prefl_prompt_path)``.
+    """
+    if resolve_fn is None:
+        resolve_fn = resolve_prompt_path
+
+    m = _MODE_PROMPT_RE.match(prompt)
+    if m:
+        prefix, mode, version = m.group(1), m.group(2), m.group(3)
+        if mode is None:
+            # Old combined format: both point to the same file.
+            path = resolve_fn(prompt, alias)
+            return path, path
+        refl_name = f"{prefix}_reflection_v{version}.md"
+        prefl_name = f"{prefix}_preflection_v{version}.md"
+        refl_path = resolve_fn(refl_name, alias)
+        prefl_path = resolve_fn(prefl_name, alias)
+        return refl_path, prefl_path
+
+    # Fallback: not a recognized pattern, pass the single file for both.
+    path = resolve_fn(prompt, alias)
+    return path, path
 
 
 def _eval_root(cfg: AppConfig) -> Path:
@@ -136,6 +179,7 @@ def _generate_with_resume(
     store_reasoning: bool,
     generate_batch_fn=None,
     resolve_prompt_path_fn=None,
+    mode=None,
 ) -> None:
     if generate_batch_fn is None:
         generate_batch_fn = generate_batch
@@ -144,9 +188,16 @@ def _generate_with_resume(
 
     done = store.done_keys(rel_path)
     capped = _failures_done_keys(store, failures_name, failure_attempt_cap)
-    todo = [it for it in items if it["item_id"] not in done and it["item_id"] not in capped]
+    todo = [
+        it for it in items if it["item_id"] not in done and it["item_id"] not in capped
+    ]
 
-    prompt_path = resolve_prompt_path_fn(candidate.prompt, candidate.alias)
+    refl_path, prefl_path = _resolve_both_prompt_paths(
+        candidate.prompt,
+        candidate.alias,
+        "generator",
+        resolve_fn=resolve_prompt_path_fn,
+    )
     on_failure = _make_on_failure(store, failures_name)
 
     # Always make at least one generate_batch call so callers can observe
@@ -160,7 +211,8 @@ def _generate_with_resume(
     for chunk_start, chunk in enumerate(chunked):
         results = generate_batch_fn(
             chunk,
-            prompt_path,
+            refl_path,
+            prefl_path,
             charter_text,
             candidate.api_name,
             iteration=0,
@@ -172,6 +224,7 @@ def _generate_with_resume(
             json_mode=candidate.json_mode,
             canary_rng_seed=canary_rng_seed,
             on_failure=on_failure,
+            mode=mode,
         )
         for row in results:
             if not store_reasoning:
@@ -211,6 +264,7 @@ def _judge_with_resume(
     resume_key: str | tuple[str, ...] = "item_id",
     judge_batch_fn=None,
     resolve_prompt_path_fn=None,
+    mode=None,
 ) -> None:
     if judge_batch_fn is None:
         judge_batch_fn = judge_batch
@@ -235,7 +289,12 @@ def _judge_with_resume(
             continue
         todo.append(it)
 
-    prompt_path = resolve_prompt_path_fn(judge.prompt, judge.alias)
+    refl_path, prefl_path = _resolve_both_prompt_paths(
+        judge.prompt,
+        judge.alias,
+        "judge",
+        resolve_fn=resolve_prompt_path_fn,
+    )
     on_failure = _make_on_failure(store, failures_name)
 
     # Always make at least one judge_batch call so callers can observe the
@@ -249,7 +308,8 @@ def _judge_with_resume(
     for chunk_start, chunk in enumerate(chunked):
         results = judge_batch_fn(
             chunk,
-            prompt_path,
+            refl_path,
+            prefl_path,
             judge.api_name,
             iteration=0,
             accept_threshold=accept_threshold,
@@ -260,6 +320,7 @@ def _judge_with_resume(
             writing_guidelines_text=writing_guidelines_text,
             thinking=judge.thinking,
             on_failure=on_failure,
+            mode=mode,
         )
         for row in results:
             if not store_reasoning:

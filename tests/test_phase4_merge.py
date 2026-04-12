@@ -16,40 +16,59 @@ def sidecar_and_results(tmp_path):
     """Create a sidecar parquet and matching results JSONL."""
     # Create sidecar with 20 rows, 2 row groups of 10
     sidecar_path = tmp_path / "sidecar.parquet"
-    table = pa.table({
-        "doc_id": [f"doc_{i:04d}" for i in range(20)],
-        "text": [f"text {i}" for i in range(20)],
-        "token_length": list(range(20)),
-        "safety_score": [0.9] * 20,
-        "reflection": [""] * 20,        # placeholder to be renamed
-        "preflection": [""] * 20,       # placeholder to be renamed
-        "reflection_position": [0] * 20,
-        "is_bad": [False] * 20,
-    })
+    table = pa.table(
+        {
+            "doc_id": [f"doc_{i:04d}" for i in range(20)],
+            "text": [f"text {i}" for i in range(20)],
+            "token_length": list(range(20)),
+            "safety_score": [0.9] * 20,
+            "reflection": [""] * 20,  # placeholder to be renamed
+            "preflection": [""] * 20,  # placeholder to be renamed
+            "reflection_position": [0] * 20,
+            "is_bad": [False] * 20,
+        }
+    )
     pq.write_table(table, str(sidecar_path), row_group_size=10)
 
-    # Create results
+    # Create results for both runs
     output_dir = tmp_path / "output"
-    run_dir = output_dir / "reflections" / "00000"
-    run_dir.mkdir(parents=True)
 
-    results = []
+    # Reflections run
+    refl_run_dir = output_dir / "reflections" / "00000"
+    refl_run_dir.mkdir(parents=True)
+    refl_results = []
     for i in range(20):
-        results.append({
-            "global_row_idx": i,
-            "doc_id": f"doc_{i:04d}",
-            "reflection_1p": f"r1p_{i}",
-            "reflection_3p": f"r3p_{i}",
-            "preflection_1p": f"p1p_{i}",
-            "preflection_3p": f"p3p_{i}",
-            "reflection_position": 100 + i,
-            "charter_reflection": json.dumps(["1.1"]),
-            "charter_preflection": json.dumps(["2.1"]),
-            "canary_type": "Q1" if i % 10 == 0 else None,
-        })
+        refl_results.append(
+            {
+                "global_row_idx": i,
+                "doc_id": f"doc_{i:04d}",
+                "reflection_1p": f"r1p_{i}",
+                "reflection_3p": f"r3p_{i}",
+                "reflection_position": 100 + i,
+                "charter_reflection": json.dumps(["1.1"]),
+                "canary_type": "Q1" if i % 10 == 0 else None,
+            }
+        )
+    with open(refl_run_dir / "results.jsonl", "w") as f:
+        for r in refl_results:
+            f.write(json.dumps(r) + "\n")
 
-    with open(run_dir / "results.jsonl", "w") as f:
-        for r in results:
+    # Preflections run
+    prefl_run_dir = output_dir / "preflections" / "00000"
+    prefl_run_dir.mkdir(parents=True)
+    prefl_results = []
+    for i in range(20):
+        prefl_results.append(
+            {
+                "global_row_idx": i,
+                "doc_id": f"doc_{i:04d}",
+                "preflection_1p": f"p1p_{i}",
+                "preflection_3p": f"p3p_{i}",
+                "charter_preflection": json.dumps(["2.1"]),
+            }
+        )
+    with open(prefl_run_dir / "results.jsonl", "w") as f:
+        for r in prefl_results:
             f.write(json.dumps(r) + "\n")
 
     return str(sidecar_path), str(output_dir)
@@ -63,24 +82,37 @@ class TestMergeShards:
         merge_shards(output_dir, "reflections", sidecar_path, out_path)
 
         merged = pq.read_table(out_path)
-        # Should have the new columns
+        # Should have reflection columns
         assert "reflection_1p" in merged.column_names
         assert "reflection_3p" in merged.column_names
-        assert "preflection_1p" in merged.column_names
-        assert "preflection_3p" in merged.column_names
         assert "charter_reflection" in merged.column_names
         assert "canary_type" in merged.column_names
 
-    def test_old_placeholders_dropped(self, sidecar_and_results, tmp_path):
+    def test_merge_preflections(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
         out_path = str(tmp_path / "merged.parquet")
 
-        merge_shards(output_dir, "reflections", sidecar_path, out_path)
+        merge_shards(output_dir, "preflections", sidecar_path, out_path)
 
         merged = pq.read_table(out_path)
-        # Old placeholder columns should be gone
-        assert "reflection" not in merged.column_names
-        assert "preflection" not in merged.column_names
+        assert "preflection_1p" in merged.column_names
+        assert "preflection_3p" in merged.column_names
+        assert "charter_preflection" in merged.column_names
+
+    def test_old_placeholders_dropped(self, sidecar_and_results, tmp_path):
+        sidecar_path, output_dir = sidecar_and_results
+
+        # Reflections merge drops old "reflection" placeholder
+        out_refl = str(tmp_path / "merged_refl.parquet")
+        merge_shards(output_dir, "reflections", sidecar_path, out_refl)
+        merged_refl = pq.read_table(out_refl)
+        assert "reflection" not in merged_refl.column_names
+
+        # Preflections merge drops old "preflection" placeholder
+        out_prefl = str(tmp_path / "merged_prefl.parquet")
+        merge_shards(output_dir, "preflections", sidecar_path, out_prefl)
+        merged_prefl = pq.read_table(out_prefl)
+        assert "preflection" not in merged_prefl.column_names
 
     def test_existing_columns_preserved(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
@@ -120,7 +152,10 @@ class TestMergeShards:
         sidecar_path, output_dir = sidecar_and_results
         # Delete some results
         import pathlib
-        results_file = pathlib.Path(output_dir) / "reflections" / "00000" / "results.jsonl"
+
+        results_file = (
+            pathlib.Path(output_dir) / "reflections" / "00000" / "results.jsonl"
+        )
         with open(results_file) as f:
             lines = f.readlines()
         with open(results_file, "w") as f:
@@ -133,14 +168,19 @@ class TestMergeShards:
     def test_missing_rows_allowed(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
         import pathlib
-        results_file = pathlib.Path(output_dir) / "reflections" / "00000" / "results.jsonl"
+
+        results_file = (
+            pathlib.Path(output_dir) / "reflections" / "00000" / "results.jsonl"
+        )
         with open(results_file) as f:
             lines = f.readlines()
         with open(results_file, "w") as f:
             f.writelines(lines[:10])
 
         out_path = str(tmp_path / "merged.parquet")
-        merge_shards(output_dir, "reflections", sidecar_path, out_path, allow_missing=True)
+        merge_shards(
+            output_dir, "reflections", sidecar_path, out_path, allow_missing=True
+        )
 
         merged = pq.read_table(out_path)
         assert merged.num_rows == 20

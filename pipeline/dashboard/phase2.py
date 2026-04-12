@@ -68,6 +68,12 @@ def _compute_calibration(reviews: list[dict], items_by_key: dict) -> dict:
             "usage",
             "latency_ms",
             "timestamp",
+            "reflection_aggregate",
+            "reflection_decision",
+            "preflection_aggregate",
+            "preflection_decision",
+            "judge_prompt_reflection",
+            "judge_prompt_preflection",
         }
         for part, part_j in judgment.items():
             if part in _NON_PART_KEYS or not isinstance(part_j, dict):
@@ -80,8 +86,8 @@ def _compute_calibration(reviews: list[dict], items_by_key: dict) -> dict:
                         (part_scores[dim], human_score)
                     )
 
-        aggregate_pairs.append((judgment["aggregate"], review["aggregate"]))
-        decision_pairs.append((judgment["decision"], review["decision"]))
+        aggregate_pairs.append((judgment.get("aggregate", 0), review["aggregate"]))
+        decision_pairs.append((judgment.get("decision", ""), review["decision"]))
 
     dim_corr = {dim: _pearson(pairs) for dim, pairs in paired_scores.items()}
     agg_corr = _pearson(aggregate_pairs)
@@ -270,20 +276,45 @@ def _compute_correlation_by_judge_version(
 
 def _render_judge_scores(judgment: dict, judge_model: str = "") -> None:
     """Render judge score details for a single judgment dict."""
+    overall_agg = judgment.get("aggregate", 0)
+    overall_dec = judgment.get("decision", "reject")
     with ui.row().classes("gap-4"):
         ui.badge(
-            f"Aggregate: {judgment['aggregate']:.1f}",
-            color="green" if judgment["decision"] == "accept" else "red",
+            f"Aggregate: {overall_agg:.1f}",
+            color="green" if overall_dec == "accept" else "red",
         )
         ui.badge(
-            judgment["decision"].upper(),
-            color="green" if judgment["decision"] == "accept" else "red",
+            overall_dec.upper(),
+            color="green" if overall_dec == "accept" else "red",
         )
         if judge_model:
             ui.badge(judge_model, color="teal").props("outline")
         jp = judgment.get("judge_prompt", "")
         if jp:
             ui.badge(jp, color="blue-grey").props("outline")
+
+    # Show per-mode decisions if available
+    for mode, mode_label in (
+        ("reflection", "Reflection"),
+        ("preflection", "Preflection"),
+    ):
+        mode_dec = judgment.get(f"{mode}_decision")
+        mode_agg = judgment.get(f"{mode}_aggregate")
+        if mode_dec is not None:
+            dec_color = "green" if mode_dec == "accept" else "red"
+            with ui.row().classes("gap-2 q-mt-xs"):
+                ui.badge(
+                    (
+                        f"{mode_label}: {mode_agg:.1f}"
+                        if mode_agg is not None
+                        else mode_label
+                    ),
+                    color=dec_color,
+                ).props("outline")
+                ui.badge(f"{mode_dec.upper()}", color=dec_color)
+                jp_mode = judgment.get(f"judge_prompt_{mode}", "")
+                if jp_mode:
+                    ui.badge(jp_mode, color="blue-grey").props("outline")
 
     _NON_PART_KEYS = {
         "aggregate",
@@ -293,6 +324,12 @@ def _render_judge_scores(judgment: dict, judge_model: str = "") -> None:
         "usage",
         "latency_ms",
         "timestamp",
+        "reflection_aggregate",
+        "reflection_decision",
+        "preflection_aggregate",
+        "preflection_decision",
+        "judge_prompt_reflection",
+        "judge_prompt_preflection",
     }
     for part, part_j in judgment.items():
         if part in _NON_PART_KEYS or not isinstance(part_j, dict):
@@ -569,9 +606,14 @@ def _render_loop_history():
                 run_logs = run.get("logs", {})
                 with ui.row().classes("w-full gap-4 q-mt-sm flex-wrap"):
                     for key, data in improvers.items():
-                        parts = key.split("_", 1)
-                        imp_role = parts[0] if len(parts) == 2 else "?"
-                        imp_alias = parts[1] if len(parts) == 2 else key
+                        parts = key.split("_", 2)
+                        if len(parts) == 3:
+                            imp_role, imp_mode, imp_alias = parts
+                        elif len(parts) == 2:
+                            imp_role, imp_alias = parts
+                            imp_mode = ""
+                        else:
+                            imp_role, imp_mode, imp_alias = "?", "", key
                         imp_status = data.get("status", "pending")
                         label, color = _status_badge(imp_status)
                         with (
@@ -580,7 +622,11 @@ def _render_loop_history():
                             .style("min-width: 300px;")
                         ):
                             with ui.row().classes("items-center gap-2"):
-                                ui.label(f"{imp_role.title()}: {imp_alias}").classes(
+                                _imp_display = f"{imp_role.title()}"
+                                if imp_mode:
+                                    _imp_display += f" ({imp_mode})"
+                                _imp_display += f": {imp_alias}"
+                                ui.label(_imp_display).classes(
                                     "text-subtitle2 text-weight-bold"
                                 )
                                 ui.badge(label, color=color)
@@ -656,7 +702,9 @@ def _render_acceptance_rate_chart(
     import re as _re_ar
 
     def _prompt_version(prompt_str: str) -> int:
-        m = _re_ar.search(r"_v(\d+)", prompt_str)
+        m = _re_ar.search(r"_v(\d+)\.md", prompt_str)
+        if not m:
+            m = _re_ar.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
 
     if not iter_stats:
@@ -868,7 +916,9 @@ def _render_generator_stats_panel(runs: list[dict], iter_stats: list[dict]) -> N
     import re as _re_gs
 
     def _prompt_version(prompt_str: str) -> int:
-        m = _re_gs.search(r"_v(\d+)", prompt_str)
+        m = _re_gs.search(r"_v(\d+)\.md", prompt_str)
+        if not m:
+            m = _re_gs.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
 
     if not iter_stats:
@@ -1225,6 +1275,12 @@ def _render_role_stats_judge(
                 "usage",
                 "latency_ms",
                 "timestamp",
+                "reflection_aggregate",
+                "reflection_decision",
+                "preflection_aggregate",
+                "preflection_decision",
+                "judge_prompt_reflection",
+                "judge_prompt_preflection",
             }
             for part, part_j in j.items():
                 if part in _NON_PART_KEYS or not isinstance(part_j, dict):
@@ -1537,8 +1593,8 @@ def pipeline_monitoring_page():
         it = run["iteration"]
         items = load_items_for_iteration(it)
         judged = [i for i in items if i.get("judgment")]
-        n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-        scores = [i["judgment"]["aggregate"] for i in judged]
+        n_acc = sum(1 for i in judged if i["judgment"].get("decision") == "accept")
+        scores = [i["judgment"].get("aggregate", 0) for i in judged]
         mean_s = statistics.mean(scores) if scores else 0
         accept_rate = round(n_acc / len(judged) * 100, 1) if judged else 0
 
@@ -2139,8 +2195,8 @@ def pipeline_monitoring_page():
             it = run["iteration"]
             items = load_items_for_iteration(it)
             judged = [i for i in items if i.get("judgment")]
-            n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-            scores = [i["judgment"]["aggregate"] for i in judged]
+            n_acc = sum(1 for i in judged if i["judgment"].get("decision") == "accept")
+            scores = [i["judgment"].get("aggregate", 0) for i in judged]
             mean_s = statistics.mean(scores) if scores else 0
             accept_rate = round(n_acc / len(judged) * 100, 1) if judged else 0
             fresh_stats.append(
@@ -2326,16 +2382,25 @@ def pipeline_monitoring_page():
             with improver_cards_container:
                 with ui.row().classes("w-full gap-4 flex-wrap"):
                     for key in improvers:
-                        parts = key.split("_", 1)
-                        imp_role = parts[0] if len(parts) == 2 else "?"
-                        imp_alias = parts[1] if len(parts) == 2 else key
+                        parts = key.split("_", 2)
+                        if len(parts) == 3:
+                            imp_role, imp_mode, imp_alias = parts
+                        elif len(parts) == 2:
+                            imp_role, imp_alias = parts
+                            imp_mode = ""
+                        else:
+                            imp_role, imp_mode, imp_alias = "?", "", key
                         with (
                             ui.card()
                             .classes("flex-1 q-pa-sm")
                             .style("min-width: 280px;")
                         ):
                             with ui.row().classes("items-center gap-2"):
-                                ui.label(f"{imp_role.title()}: {imp_alias}").classes(
+                                _imp_display = f"{imp_role.title()}"
+                                if imp_mode:
+                                    _imp_display += f" ({imp_mode})"
+                                _imp_display += f": {imp_alias}"
+                                ui.label(_imp_display).classes(
                                     "text-subtitle2 text-weight-bold"
                                 )
                                 badge_el = ui.badge("pending", color="grey")
@@ -2364,9 +2429,13 @@ def pipeline_monitoring_page():
                 els["badge"]._props["color"] = color
                 els["badge"].update()
 
-                parts = key.split("_", 1)
-                imp_role = parts[0] if len(parts) == 2 else "?"
-                imp_alias = parts[1] if len(parts) == 2 else key
+                parts = key.split("_", 2)
+                if len(parts) == 3:
+                    imp_role, _imp_mode, imp_alias = parts
+                elif len(parts) == 2:
+                    imp_role, imp_alias = parts
+                else:
+                    imp_role, imp_alias = "?", key
                 log_p = _log_path(imp_role, imp_alias)
 
                 if imp_status == "running":
@@ -2395,9 +2464,13 @@ def pipeline_monitoring_page():
                 first_tab = next(iter(tab_map.values())) if tab_map else None
                 with ui.tab_panels(tabs, value=first_tab).classes("w-full"):
                     for key in improvers:
-                        parts = key.split("_", 1)
-                        imp_role = parts[0] if len(parts) == 2 else "?"
-                        imp_alias = parts[1] if len(parts) == 2 else key
+                        parts = key.split("_", 2)
+                        if len(parts) == 3:
+                            imp_role, _imp_mode, imp_alias = parts
+                        elif len(parts) == 2:
+                            imp_role, imp_alias = parts
+                        else:
+                            imp_role, imp_alias = "?", key
                         with ui.tab_panel(tab_map[key]):
                             log_p = _log_path(imp_role, imp_alias)
                             code_el = (
@@ -2416,9 +2489,13 @@ def pipeline_monitoring_page():
             for key in improvers:
                 if key not in _log_els:
                     continue
-                parts = key.split("_", 1)
-                imp_role = parts[0] if len(parts) == 2 else "?"
-                imp_alias = parts[1] if len(parts) == 2 else key
+                parts = key.split("_", 2)
+                if len(parts) == 3:
+                    imp_role, _imp_mode, imp_alias = parts
+                elif len(parts) == 2:
+                    imp_role, imp_alias = parts
+                else:
+                    imp_role, imp_alias = "?", key
                 log_p = _log_path(imp_role, imp_alias)
                 _log_els[key].set_content(_tail_log(log_p))
 
@@ -2629,7 +2706,12 @@ def pipeline_review_page():
         return aggregate, "accept"
 
     def _prompt_version(filename: str) -> str:
-        """Extract version from prompt filename, e.g. 'generator_v1.md' -> 'v1'."""
+        """Extract version from prompt filename.
+
+        Handles both old names (e.g. 'judge_v3.md') and new per-mode names
+        (e.g. 'judge_reflection_v3.md', 'judge_preflection_v2.md').
+        Returns e.g. 'v3'.
+        """
         import re
 
         m = re.search(r"(v\d+)", filename)
@@ -2982,7 +3064,21 @@ def pipeline_review_page():
                     ]
                     agg, decision = _compute_decision(all_vals)
                     color = "green" if decision == "accept" else "red"
-                    review_status_label.set_text(f"Avg: {agg:.2f} → {decision.upper()}")
+                    # Per-mode breakdown
+                    parts_text = f"Avg: {agg:.2f} → {decision.upper()}"
+                    for mode_name in ("reflection", "preflection"):
+                        mode_vals = [
+                            int(slider.value)
+                            for part, dims in score_inputs.items()
+                            if part.startswith(mode_name)
+                            for slider in dims.values()
+                        ]
+                        if mode_vals:
+                            m_agg, m_dec = _compute_decision(mode_vals)
+                            parts_text += (
+                                f"  |  {mode_name}: {m_agg:.2f} → {m_dec.upper()}"
+                            )
+                    review_status_label.set_text(parts_text)
                     review_status_label.style(f"color: {color};")
 
                 def _build_part_sliders(part: str) -> None:
@@ -3132,9 +3228,9 @@ def pipeline_review_page():
             #   1. Very highly accepted  2. Medium-high accepted
             #   3. Borderline            4. Rejected
             # Within each bucket, prioritise bad safety scores (2 bad : 1 good).
-            rejected = [i for i in judged if i["judgment"]["decision"] != "accept"]
-            accepted = [i for i in judged if i["judgment"]["decision"] == "accept"]
-            accepted.sort(key=lambda i: i["judgment"]["aggregate"])
+            rejected = [i for i in judged if i["judgment"].get("decision") != "accept"]
+            accepted = [i for i in judged if i["judgment"].get("decision") == "accept"]
+            accepted.sort(key=lambda i: i["judgment"].get("aggregate", 0))
             # Split accepted into thirds by rank
             n = len(accepted)
             borderline = accepted[: n // 3]
@@ -3185,9 +3281,9 @@ def pipeline_review_page():
                     if b:
                         judged.append(b.pop(0))
         elif sort == "Low judge score":
-            judged.sort(key=lambda i: i["judgment"]["aggregate"])
+            judged.sort(key=lambda i: i["judgment"].get("aggregate", 0))
         elif sort == "High judge score":
-            judged.sort(key=lambda i: -i["judgment"]["aggregate"])
+            judged.sort(key=lambda i: -i["judgment"].get("aggregate", 0))
         elif sort == "Low safety score":
             judged.sort(
                 key=lambda i: (i.get("safety_score") is None, i.get("safety_score", 0))
@@ -3570,6 +3666,25 @@ def pipeline_review_page():
         }
         all_vals = [v for part in scores.values() for v in part.values()]
         aggregate, decision = _compute_decision(all_vals)
+
+        # Compute per-mode decisions (reflection / preflection)
+        refl_vals = [
+            v
+            for part, part_scores in scores.items()
+            if part.startswith("reflection")
+            for v in part_scores.values()
+        ]
+        prefl_vals = [
+            v
+            for part, part_scores in scores.items()
+            if part.startswith("preflection")
+            for v in part_scores.values()
+        ]
+        refl_agg, refl_dec = _compute_decision(refl_vals) if refl_vals else (None, None)
+        prefl_agg, prefl_dec = (
+            _compute_decision(prefl_vals) if prefl_vals else (None, None)
+        )
+
         save_review(
             item_id=item["item_id"],
             iteration=item["iteration"],
@@ -3578,6 +3693,10 @@ def pipeline_review_page():
             aggregate=aggregate,
             decision=decision,
             notes=notes_input.value.strip(),
+            reflection_decision=refl_dec,
+            preflection_decision=prefl_dec,
+            reflection_aggregate=refl_agg,
+            preflection_aggregate=prefl_agg,
         )
         _clear_draft(item)
         ui.notify("Review saved!", type="positive")
@@ -3785,6 +3904,29 @@ def pipeline_reviews_page():
                     }
                     vals = [v for part in new_scores.values() for v in part.values()]
                     agg, dec = _rv_compute_decision(vals)
+
+                    # Per-mode decisions
+                    _refl_vals = [
+                        v
+                        for p, ps in new_scores.items()
+                        if p.startswith("reflection")
+                        for v in ps.values()
+                    ]
+                    _prefl_vals = [
+                        v
+                        for p, ps in new_scores.items()
+                        if p.startswith("preflection")
+                        for v in ps.values()
+                    ]
+                    _r_agg, _r_dec = (
+                        _rv_compute_decision(_refl_vals) if _refl_vals else (None, None)
+                    )
+                    _p_agg, _p_dec = (
+                        _rv_compute_decision(_prefl_vals)
+                        if _prefl_vals
+                        else (None, None)
+                    )
+
                     save_review(
                         item_id=review["item_id"],
                         iteration=review["iteration"],
@@ -3793,6 +3935,10 @@ def pipeline_reviews_page():
                         aggregate=agg,
                         decision=dec,
                         notes=edit_notes.value.strip(),
+                        reflection_decision=_r_dec,
+                        preflection_decision=_p_dec,
+                        reflection_aggregate=_r_agg,
+                        preflection_aggregate=_p_agg,
                     )
                     dlg.close()
                     ui.notify("Review updated", type="positive")

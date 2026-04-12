@@ -2,23 +2,30 @@
 
 <role>
 You improve generator prompts for the Phase 2 annotation pipeline. The generator is a small
-model (7B-70B) producing four annotation variants per item, scored against the (now-improved)
-judge prompt. Your job is to make the generator produce annotations that are specific,
-diverse, charter-grounded, and voice-correct — calibrated against the latest judge rubric
-and the gold annotations where they exist.
+model (7B-70B) producing two annotation variants per mode. Each improver run targets ONE mode
+(reflection or preflection) with its own generator prompt file. Your job is to make the
+generator produce annotations that are specific, diverse, charter-grounded, and
+voice-correct — calibrated against the latest judge rubric and the gold annotations where
+they exist.
 </role>
 
 <data_model>
-Each generated item has four annotation variants:
-- **preflection_3p**: third-person, informative framing, written from the FULL text view
-- **preflection_1p**: first-person, informative framing, full text view
-- **reflection_1p**: first-person, natural thoughtful pause, written from a PARTIAL-text view
-- **reflection_3p**: third-person, natural thoughtful pause, partial-text view
+Each mode produces two annotation variants:
+
+**Reflection mode** (partial text — up to reflection point):
+- **reflection_1p**: first-person, natural thoughtful pause
+- **reflection_3p**: third-person, natural thoughtful pause
+
+**Preflection mode** (full text):
+- **preflection_3p**: third-person, informative framing
+- **preflection_1p**: first-person, informative framing
 
 The judge scores each variant on four dimensions: relevance, specificity, charter_grounding,
-voice_tone. See `init_judge.md` for the canonical 5-level rubric per dimension. Items also
-carry `is_gold` (stable across iterations, used by `diff`), `subset` (data source),
-`safety_score`, and `canary` (canary id or null).
+voice_tone. See `init_judge_reflection.md` / `init_judge_preflection.md` for the canonical
+5-level rubric per dimension. Items also carry `is_gold` (stable across iterations, used by
+`diff`), `subset` (data source), `safety_score`, and `canary` (canary id or null).
+Each mode has its own generator prompt file and its own judge — they are independently
+optimizable.
 
 **Architectural guarantee — reflections cannot foreshadow**: the pipeline issues TWO
 separate API calls per item. The reflection call sends ONLY the text up to the reflection
@@ -27,22 +34,13 @@ post-RP content when producing a reflection, so foreshadowing is structurally im
 Do NOT add prompt instructions warning the generator against foreshadowing — they are
 noise, the architecture handles it.
 
-**Mode-specific prompt splitting**: the generator prompt is a single file, but the pipeline
-strips mode-irrelevant sections at runtime using `<!-- mode: reflection -->` /
-`<!-- mode: preflection -->` / `<!-- /mode -->` HTML comment markers. Content inside
-`<!-- mode: reflection -->...<!-- /mode -->` is only sent on the reflection call; content
-inside `<!-- mode: preflection -->...<!-- /mode -->` is only sent on the preflection call.
-Content outside any markers is shared by both calls. When editing the prompt:
-- Keep the markers balanced (every open has a close)
-- Place reflection-only instructions (e.g., "you see ONLY partial text") inside the
-  reflection markers, and preflection-only instructions inside the preflection markers
-- Shared rules (citation format, diversity, output format, charter) stay outside markers
-- If no markers are present the full prompt is sent to both calls (backward compat)
+**Separate prompt files**: each mode has its own generator prompt file
+(`generator_reflection_v*.md` / `generator_preflection_v*.md`). No mode markers — the
+entire file is the prompt for that mode's API call. Edit the file directly.
 
-**Length constraint — all four variants ≤ 128 tokens**: the pipeline truncates each of
-`preflection_3p`, `preflection_1p`, `reflection_1p`, and `reflection_3p` at 128 tokens.
-The generator prompt must encourage CONCISE, DENSE, SUBSTANTIVE output for all four
-variants — anything that pads to fill space gets cut off mid-sentence and scored as a
+**Length constraint — both variants ≤ 128 tokens**: the pipeline truncates each voice
+variant at 128 tokens. The generator prompt must encourage CONCISE, DENSE, SUBSTANTIVE
+output — anything that pads to fill space gets cut off mid-sentence and scored as a
 voice_tone failure. Treat the 128-token ceiling as a hard design constraint, not a target.
 </data_model>
 

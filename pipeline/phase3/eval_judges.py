@@ -29,6 +29,7 @@ from pipeline.phase3.eval_generators import (
     _judge_with_resume,
     _now_iso,
     _open_and_stamp,
+    _resolve_both_prompt_paths,
 )
 from pipeline.phase3.items import ensure_item_pool, load_reviewed_items
 from pipeline.phase3.storage import JsonlRunStore
@@ -168,9 +169,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
         # Step 3: optional reviewed-items path (vs-human signal)
         if je.include_reviewed:
             reviewed = _ensure_reviewed_items_jsonl(store, je.reviewer_policy)
-            logger.info(
-                "phase3 judge-eval: reviewed pool has {} items", len(reviewed)
-            )
+            logger.info("phase3 judge-eval: reviewed pool has {} items", len(reviewed))
             for jud in judges:
                 _judge_with_resume(
                     store,

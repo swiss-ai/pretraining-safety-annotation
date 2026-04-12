@@ -41,6 +41,32 @@ def test_save_and_load_run():
     assert "timestamp" in runs[0]
 
 
+def test_save_run_with_mode_prompts():
+    from pipeline.phase2.storage import load_runs, save_run
+
+    save_run(
+        iteration=1,
+        gen_prompt="gen_v1.md",
+        judge_prompt="judge_v1.md",
+        generator_model="glm45",
+        judge_model="glm45",
+        n_items=50,
+        n_gold=12,
+        config={"accept_threshold": 4},
+        analysis="test with mode prompts",
+        gen_reflection_prompt="generator_reflection_v1.md",
+        gen_preflection_prompt="generator_preflection_v1.md",
+        judge_reflection_prompt="judge_reflection_v1.md",
+        judge_preflection_prompt="judge_preflection_v1.md",
+    )
+    runs = load_runs()
+    assert len(runs) == 1
+    assert runs[0]["gen_reflection_prompt"] == "generator_reflection_v1.md"
+    assert runs[0]["gen_preflection_prompt"] == "generator_preflection_v1.md"
+    assert runs[0]["judge_reflection_prompt"] == "judge_reflection_v1.md"
+    assert runs[0]["judge_preflection_prompt"] == "judge_preflection_v1.md"
+
+
 def test_save_and_load_item():
     from pipeline.phase2.storage import load_items, load_latest_items, save_item
 

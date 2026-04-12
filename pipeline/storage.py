@@ -51,12 +51,12 @@ CREATE TABLE IF NOT EXISTS items (
     reflection_point INTEGER NOT NULL,
     gen_prompt TEXT NOT NULL,
     model TEXT NOT NULL,
-    analysis TEXT NOT NULL,
-    preflection TEXT NOT NULL,
-    reflection TEXT NOT NULL,
+    analysis TEXT,
+    preflection TEXT,
+    reflection TEXT,
     preflection_charter_elements TEXT NOT NULL DEFAULT '[]',
     reflection_charter_elements TEXT NOT NULL DEFAULT '[]',
-    raw_response TEXT NOT NULL,
+    raw_response TEXT,
     reasoning TEXT,
     latency_ms INTEGER NOT NULL,
     timestamp TEXT NOT NULL,
@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS reviews (
     aggregate REAL NOT NULL,
     decision TEXT NOT NULL,
     notes TEXT NOT NULL,
+    reflection_decision TEXT,
+    preflection_decision TEXT,
+    reflection_aggregate REAL,
+    preflection_aggregate REAL,
     timestamp TEXT NOT NULL,
     PRIMARY KEY (item_id, iteration, reviewer_id)
 );
@@ -94,6 +98,10 @@ CREATE TABLE IF NOT EXISTS runs (
     iteration INTEGER NOT NULL,
     gen_prompt TEXT NOT NULL,
     judge_prompt TEXT NOT NULL,
+    gen_reflection_prompt TEXT,
+    gen_preflection_prompt TEXT,
+    judge_reflection_prompt TEXT,
+    judge_preflection_prompt TEXT,
     generator_model TEXT NOT NULL,
     judge_model TEXT NOT NULL,
     n_items INTEGER NOT NULL,
@@ -319,6 +327,31 @@ def _migrate(conn: sqlite3.Connection) -> None:
             )
         """)
 
+    # Add per-mode review columns (added 2026-04-12)
+    review_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()
+    }
+    for col, coltype in [
+        ("reflection_decision", "TEXT"),
+        ("preflection_decision", "TEXT"),
+        ("reflection_aggregate", "REAL"),
+        ("preflection_aggregate", "REAL"),
+    ]:
+        if col not in review_cols:
+            conn.execute(f"ALTER TABLE reviews ADD COLUMN {col} {coltype}")
+
+    # Add per-mode prompt columns to runs (added 2026-04-12)
+    # Re-fetch cols since we may have added 'source'/'group_id'/'phase' above.
+    run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    for col in (
+        "gen_reflection_prompt",
+        "gen_preflection_prompt",
+        "judge_reflection_prompt",
+        "judge_preflection_prompt",
+    ):
+        if col not in run_cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
+
 
 def _get_conn() -> sqlite3.Connection:
     """Return a thread-local SQLite connection with WAL mode and Row factory.
@@ -392,9 +425,16 @@ def bump_cache_version() -> None:
 
 
 def checkpoint() -> None:
-    """Flush WAL to main database file for backup consistency."""
+    """Best-effort WAL flush for backup consistency.
+
+    Uses PASSIVE mode so we never block or require exclusive access — critical
+    when the dashboard (Docker) and pipeline (host) share the DB via a bind
+    mount, because TRUNCATE checkpoints can corrupt WAL state across the mount
+    boundary.  PASSIVE may leave some pages in the WAL, but the backup already
+    tolerates a slightly-behind snapshot.
+    """
     conn = _get_conn()
-    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
 
 def compute_item_id(text: str) -> str:

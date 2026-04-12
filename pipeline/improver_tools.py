@@ -19,9 +19,9 @@ Usage (via Bash tool):
     python -m pipeline.improver_tools diagnose <group_id>
     python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]
     python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2,...] [--n N] [--role judge|generator]
-    python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator]
+    python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator] [--mode reflection|preflection]
     python -m pipeline.improver_tools run_batch [--role judge|generator]
-    python -m pipeline.improver_tools run_cross_batch --role judge|generator --target <alias>
+    python -m pipeline.improver_tools run_cross_batch --role judge|generator --target <alias> [--mode reflection|preflection]
     python -m pipeline.improver_tools cross_summary <group_id>
     python -m pipeline.improver_tools test_results [--role judge|generator] [--type generate|judge|batch]
     python -m pipeline.improver_tools correlations
@@ -48,10 +48,16 @@ _JUDGMENT_NON_PART_KEYS = {
     "aggregate",
     "decision",
     "judge_prompt",
+    "judge_prompt_reflection",
+    "judge_prompt_preflection",
     "raw_responses",
     "usage",
     "latency_ms",
     "timestamp",
+    "reflection_aggregate",
+    "reflection_decision",
+    "preflection_aggregate",
+    "preflection_decision",
 }
 
 
@@ -112,21 +118,34 @@ def cmd_summary(iteration: int) -> None:
     print(f"  Mean score: {statistics.mean(scores):.2f}")
     print(f"  Score range: {min(scores):.2f} – {max(scores):.2f}")
 
+    # Per-pipeline accept rates (new split judgment format)
+    refl_decisions = [
+        i["judgment"].get("reflection_decision")
+        for i in judged
+        if i["judgment"].get("reflection_decision")
+    ]
+    prefl_decisions = [
+        i["judgment"].get("preflection_decision")
+        for i in judged
+        if i["judgment"].get("preflection_decision")
+    ]
+    if refl_decisions:
+        refl_acc = sum(1 for d in refl_decisions if d == "accept")
+        print(
+            f"  Reflection accept: {refl_acc}/{len(refl_decisions)} "
+            f"({refl_acc/len(refl_decisions)*100:.0f}%)"
+        )
+    if prefl_decisions:
+        prefl_acc = sum(1 for d in prefl_decisions if d == "accept")
+        print(
+            f"  Preflection accept: {prefl_acc}/{len(prefl_decisions)} "
+            f"({prefl_acc/len(prefl_decisions)*100:.0f}%)"
+        )
+
     # Per-dimension breakdown across all judgment parts (supports both old 2-part and new 4-part)
-    _NON_PART_KEYS = {
-        "aggregate",
-        "decision",
-        "judge_prompt",
-        "raw_responses",
-        "usage",
-        "latency_ms",
-        "timestamp",
-    }
     dim_scores: dict[str, list[float]] = {}
     for item in judged:
-        for part, part_j in item["judgment"].items():
-            if part in _NON_PART_KEYS or not isinstance(part_j, dict):
-                continue
+        for part, part_j in _judgment_parts(item["judgment"]).items():
             for dim, score in part_j.get("scores", {}).items():
                 dim_scores.setdefault(f"{part}_{dim}", []).append(score)
 
@@ -218,18 +237,7 @@ def _print_judged_items(items: list[dict], reasoning_limit: int) -> None:
             f"  Charter elements: pref={item.get('preflection_charter_elements', [])} "
             f"refl={item.get('reflection_charter_elements', [])}"
         )
-        _NON_PART_KEYS = {
-            "aggregate",
-            "decision",
-            "judge_prompt",
-            "raw_responses",
-            "usage",
-            "latency_ms",
-            "timestamp",
-        }
-        for part, pj in j.items():
-            if part in _NON_PART_KEYS or not isinstance(pj, dict):
-                continue
+        for part, pj in _judgment_parts(j).items():
             print(f"  {part} scores: {pj.get('scores', {})}")
             print(f"  {part} reasoning: {pj.get('reasoning', '')[:reasoning_limit]}")
         print()
@@ -428,8 +436,16 @@ def cmd_scores(iteration: int) -> None:
             for part, part_j in _judgment_parts(j).items()
         )
         gold = "G" if item.get("is_gold") else " "
+        # Per-mode decisions (new split format)
+        mode_dec = ""
+        refl_dec = j.get("reflection_decision")
+        prefl_dec = j.get("preflection_decision")
+        if refl_dec or prefl_dec:
+            r_str = refl_dec[:3] if refl_dec else "---"
+            p_str = prefl_dec[:3] if prefl_dec else "---"
+            mode_dec = f" r={r_str} p={p_str}"
         print(
-            f"{gold} {j['decision'][:3]:>3} {j['aggregate']:4.1f} | "
+            f"{gold} {j['decision'][:3]:>3} {j['aggregate']:4.1f}{mode_dec} | "
             f"{parts_str} | {item['item_id'][:12]}"
         )
 
@@ -601,6 +617,7 @@ def cmd_reviews(
     import re
 
     from pipeline.phase2.storage import (
+        _EXCLUDED_REVIEWERS,
         load_judge_correlations,
         load_latest_reviews,
         load_review_comments,
@@ -636,8 +653,13 @@ def cmd_reviews(
             judgment["_corr_timestamp"] = c.get("timestamp", "")
             latest_corr[key] = (c["judge_prompt"], judgment)
 
-    # Only show train-split reviews to the improver
-    filtered = [r for r in reviews.values() if review_split(r["item_id"]) == "train"]
+    # Only show train-split reviews to the improver; exclude blocklisted reviewers
+    filtered = [
+        r
+        for r in reviews.values()
+        if review_split(r["item_id"]) == "train"
+        and r.get("reviewer_id") not in _EXCLUDED_REVIEWERS
+    ]
 
     # Build iteration -> (judge_prompt, judge_model) lookup
     runs = load_runs()
@@ -1055,6 +1077,10 @@ def cmd_correlations() -> None:
         dim_diffs: dict[str, list[float]] = {}
         matched = 0
 
+        # Per-mode decision tracking
+        refl_decision_pairs: list[tuple[str, str]] = []
+        prefl_decision_pairs: list[tuple[str, str]] = []
+
         for c in entries:
             key = (c["item_id"], c["iteration"])
             review = review_by_item.get(key)
@@ -1069,6 +1095,14 @@ def cmd_correlations() -> None:
             decision_pairs.append((judge_decision, human_decision))
             if judge_decision == human_decision:
                 decision_matches += 1
+
+            # Per-mode decision agreement
+            refl_dec = j.get("reflection_decision")
+            prefl_dec = j.get("preflection_decision")
+            if refl_dec and human_decision:
+                refl_decision_pairs.append((refl_dec, human_decision))
+            if prefl_dec and human_decision:
+                prefl_decision_pairs.append((prefl_dec, human_decision))
 
             # Score diff
             judge_agg = j.get("aggregate", 0)
@@ -1110,6 +1144,26 @@ def cmd_correlations() -> None:
         kappa_str = f"{kappa:.3f}" if kappa is not None else "n/a"
         print(f"  Cohen's κ:          {kappa_str}")
         print(f"  Mean |score diff|:  {mean_diff:.2f}")
+
+        # Per-mode decision agreement & kappa
+        if refl_decision_pairs:
+            refl_agree = sum(1 for a, b in refl_decision_pairs if a == b)
+            refl_kappa = _cohens_kappa(refl_decision_pairs)
+            refl_kappa_str = f"{refl_kappa:.3f}" if refl_kappa is not None else "n/a"
+            print(
+                f"  Reflection agreement:  {refl_agree}/{len(refl_decision_pairs)} "
+                f"({refl_agree / len(refl_decision_pairs) * 100:.0f}%)  "
+                f"κ={refl_kappa_str}"
+            )
+        if prefl_decision_pairs:
+            prefl_agree = sum(1 for a, b in prefl_decision_pairs if a == b)
+            prefl_kappa = _cohens_kappa(prefl_decision_pairs)
+            prefl_kappa_str = f"{prefl_kappa:.3f}" if prefl_kappa is not None else "n/a"
+            print(
+                f"  Preflection agreement: {prefl_agree}/{len(prefl_decision_pairs)} "
+                f"({prefl_agree / len(prefl_decision_pairs) * 100:.0f}%)  "
+                f"κ={prefl_kappa_str}"
+            )
 
         if dim_diffs:
             print("  Per-dimension mean |diff|:")
@@ -1192,10 +1246,30 @@ def cmd_test_generate(
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
+    # Resolve both mode-specific prompt paths from the given prompt
+    prompt_name = prompt.name
+    prompt_dir = prompt.parent
+    if "reflection" in prompt_name:
+        refl_prompt = prompt
+        prefl_name = prompt_name.replace("reflection", "preflection")
+        prefl_prompt = prompt_dir / prefl_name
+        if not prefl_prompt.exists():
+            prefl_prompt = None
+    elif "preflection" in prompt_name:
+        prefl_prompt = prompt
+        refl_name = prompt_name.replace("preflection", "reflection")
+        refl_prompt = prompt_dir / refl_name
+        if not refl_prompt.exists():
+            refl_prompt = None
+    else:
+        refl_prompt = prompt
+        prefl_prompt = prompt
+
     print(f"Test generating {len(items)} items with {prompt.name} (model={alias})...")
     generated = generate_batch(
         items,
-        prompt,
+        refl_prompt,
+        prefl_prompt,
         charter_text,
         gen_model_cfg.api_name,
         iteration=latest_iter,
@@ -1250,23 +1324,36 @@ def cmd_test_judge(
     n: int = 3,
     role: str = "judge",
     model_alias: str | None = None,
+    mode: str | None = None,
 ) -> None:
     """Judge items with a prompt file without saving to main items table.
 
     Loads generated items from specified iteration, runs judge_batch(save=False),
     saves a test_results entry.
+
+    mode: "reflection" or "preflection" to test only one pipeline, or None for both.
+
+    prompt_path resolution:
+      - If the path points to a specific file (e.g. judge_reflection_v3.md), uses
+        it directly for that mode and auto-discovers the counterpart file for the
+        other mode (unless --mode restricts to one pipeline).
+      - If the path points to a directory, discovers the latest
+        judge_reflection_vN.md and judge_preflection_vN.md in that directory.
     """
+    import re as _re
+
     from pipeline.api import make_api_client
     from pipeline.config import load_config, resolve_judge_model
     from pipeline.phase2.run import judge_batch
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
-    client, semaphore = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
-    )
     alias = model_alias or cfg.phase2.judge_models[0].alias
     jdg_model_cfg = resolve_judge_model(cfg, alias)
+    endpoint = jdg_model_cfg.endpoint or cfg.phase2.endpoint
+    client, semaphore = make_api_client(
+        endpoint, cfg.phase2.iteration.max_concurrent, api_keys=cfg.api_keys
+    )
 
     runs = load_runs()
     assert runs, "No iterations yet — run at least one iteration first"
@@ -1289,15 +1376,76 @@ def cmd_test_judge(
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
+    # Resolve reflection / preflection prompt paths.
+    # If a specific file is given, infer the counterpart from the same directory.
+    refl_prompt: Path | None = None
+    prefl_prompt: Path | None = None
+
+    if prompt.is_dir():
+        # Directory mode: discover latest judge_reflection_vN / judge_preflection_vN
+        def _latest_in_dir(directory: Path, prefix: str) -> Path | None:
+            pat = _re.compile(rf"^{_re.escape(prefix)}_v(\d+)\.md$")
+            cands = []
+            for p in directory.iterdir():
+                m = pat.match(p.name)
+                if m:
+                    cands.append((int(m.group(1)), p))
+            return max(cands)[1] if cands else None
+
+        refl_prompt = _latest_in_dir(prompt, "judge_reflection")
+        prefl_prompt = _latest_in_dir(prompt, "judge_preflection")
+    elif "judge_reflection" in prompt.name:
+        refl_prompt = prompt
+        # Auto-discover counterpart
+        m = _re.search(r"_v(\d+)\.md$", prompt.name)
+        if m:
+            prefl_name = f"judge_preflection_v{m.group(1)}.md"
+            prefl_candidate = prompt.parent / prefl_name
+            if prefl_candidate.exists():
+                prefl_prompt = prefl_candidate
+    elif "judge_preflection" in prompt.name:
+        prefl_prompt = prompt
+        # Auto-discover counterpart
+        m = _re.search(r"_v(\d+)\.md$", prompt.name)
+        if m:
+            refl_name = f"judge_reflection_v{m.group(1)}.md"
+            refl_candidate = prompt.parent / refl_name
+            if refl_candidate.exists():
+                refl_prompt = refl_candidate
+    else:
+        # Legacy single-file judge prompt — treat as both
+        refl_prompt = prompt
+        prefl_prompt = prompt
+
+    # Validate required prompts for the requested mode
+    if mode == "reflection":
+        assert refl_prompt, f"No judge_reflection prompt found for {prompt}"
+        prefl_prompt = None
+    elif mode == "preflection":
+        assert prefl_prompt, f"No judge_preflection prompt found for {prompt}"
+        refl_prompt = None
+    else:
+        assert (
+            refl_prompt or prefl_prompt
+        ), f"No judge_reflection or judge_preflection prompt found for {prompt}"
+
     from pipeline.config import CHARTER_PATH, WRITING_GUIDELINES_PATH
 
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
     writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
-    print(f"Test judging {len(items)} items with {prompt.name} (model={alias})...")
+    prompt_label = (
+        f"refl={refl_prompt.name if refl_prompt else 'none'} "
+        f"prefl={prefl_prompt.name if prefl_prompt else 'none'}"
+    )
+    mode_label = f" mode={mode}" if mode else ""
+    print(
+        f"Test judging {len(items)} items with {prompt_label}{mode_label} (model={alias})..."
+    )
     judged = judge_batch(
         items,
-        prompt,
+        refl_prompt,
+        prefl_prompt,
         jdg_model_cfg.api_name,
         iteration=iter_num,
         accept_threshold=cfg.phase2.scoring.accept_threshold,
@@ -1307,6 +1455,7 @@ def cmd_test_judge(
         floor_threshold=cfg.phase2.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
+        mode=mode,
     )
 
     scores = [j["judgment"]["aggregate"] for j in judged]
@@ -1405,11 +1554,13 @@ def cmd_run_batch(role: str = "judge") -> None:
     print(f"\nBatch {test_id} complete. group_id={results[0]['group_id']}")
 
 
-def cmd_run_cross_batch(role: str, target: str) -> None:
+def cmd_run_cross_batch(role: str, target: str, mode: str | None = None) -> None:
     """Run a cross-iteration batch for a specific (role, target) pair.
 
     Judge cross-iteration: generate with ALL generators, judge with target.
     Generator cross-iteration: generate with target, judge with ALL judges.
+
+    mode: "reflection" or "preflection" to run only one pipeline, or None for both.
     """
     from pipeline.config import load_config
     from pipeline.phase2.run import (
@@ -1420,9 +1571,13 @@ def cmd_run_cross_batch(role: str, target: str) -> None:
     cfg = load_config()
 
     if role == "judge":
-        results = run_judge_cross_iteration(cfg, target, source="improve_judge")
+        results = run_judge_cross_iteration(
+            cfg, target, source="improve_judge", mode=mode
+        )
     else:
-        results = run_generator_cross_iteration(cfg, target, source="improve_generator")
+        results = run_generator_cross_iteration(
+            cfg, target, source="improve_generator", mode=mode
+        )
 
     group_id = results[0]["group_id"] if results else "none"
     print(f"\nCross-iteration complete (group_id={group_id}):")
@@ -1557,9 +1712,9 @@ def cmd_diagnose(group_id: str) -> None:
 
     print(
         f"{'Iter':>6} {'Generator':>20} {'Judge':>20} "
-        f"{'Items':>6} {'Acc%':>6} {'Mean':>6} {'Floor':>6}"
+        f"{'Items':>6} {'Acc%':>6} {'Refl%':>6} {'Prefl%':>7} {'Mean':>6} {'Floor':>6}"
     )
-    print("-" * 82)
+    print("-" * 100)
     for r in group_runs:
         it = r["iteration"]
         judged = _collect_judged(it)
@@ -1570,6 +1725,28 @@ def cmd_diagnose(group_id: str) -> None:
         scores = [i["judgment"]["aggregate"] for i in judged]
         mean_s = statistics.mean(scores) if scores else 0.0
         acc_pct = n_acc / len(judged) * 100 if judged else 0
+
+        # Per-pipeline accept rates
+        refl_decs = [
+            i["judgment"].get("reflection_decision")
+            for i in judged
+            if i["judgment"].get("reflection_decision")
+        ]
+        prefl_decs = [
+            i["judgment"].get("preflection_decision")
+            for i in judged
+            if i["judgment"].get("preflection_decision")
+        ]
+        refl_pct_str = (
+            f"{sum(1 for d in refl_decs if d == 'accept') / len(refl_decs) * 100:5.0f}%"
+            if refl_decs
+            else "   n/a"
+        )
+        prefl_pct_str = (
+            f"{sum(1 for d in prefl_decs if d == 'accept') / len(prefl_decs) * 100:5.0f}%"
+            if prefl_decs
+            else "    n/a"
+        )
 
         n_floor = sum(
             1
@@ -1583,7 +1760,8 @@ def cmd_diagnose(group_id: str) -> None:
 
         print(
             f"{it:>6} {r['generator_model']:>20} {r['judge_model']:>20} "
-            f"{len(judged):>6} {acc_pct:>5.0f}% {mean_s:>6.2f} {n_floor:>6}"
+            f"{len(judged):>6} {acc_pct:>5.0f}% {refl_pct_str:>6} {prefl_pct_str:>7} "
+            f"{mean_s:>6.2f} {n_floor:>6}"
         )
 
     # --- 2. Per-dimension means per iteration ---
@@ -2009,6 +2187,7 @@ def main():
         "--type",
         "--reason",
         "--status",
+        "--mode",
     }
 
     positional: list[str] = []
@@ -2139,10 +2318,16 @@ def main():
     elif cmd == "test_judge":
         _require_positional(
             1,
-            "test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator] [--model ALIAS]",
+            "test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator] [--model ALIAS] [--mode reflection|preflection]",
         )
         item_ids_str = _get_flag("--items")
         item_ids = item_ids_str.split(",") if item_ids_str else None
+        mode_arg = _get_flag("--mode")
+        if mode_arg:
+            assert mode_arg in (
+                "reflection",
+                "preflection",
+            ), f"--mode must be 'reflection' or 'preflection', got '{mode_arg}'"
         cmd_test_judge(
             positional[0],
             item_ids=item_ids,
@@ -2150,15 +2335,26 @@ def main():
             n=_get_flag_int("--n", 3),
             role=_get_flag("--role", _get_flag("--phase", "judge")),
             model_alias=_get_flag("--model"),
+            mode=mode_arg,
         )
     elif cmd == "run_batch":
         cmd_run_batch(role=_get_flag("--role", _get_flag("--phase", "judge")))
     elif cmd == "run_cross_batch":
         role = _get_flag("--role")
         target = _get_flag("--target")
-        assert role, "Usage: run_cross_batch --role judge|generator --target <alias>"
-        assert target, "Usage: run_cross_batch --role judge|generator --target <alias>"
-        cmd_run_cross_batch(role=role, target=target)
+        assert (
+            role
+        ), "Usage: run_cross_batch --role judge|generator --target <alias> [--mode reflection|preflection]"
+        assert (
+            target
+        ), "Usage: run_cross_batch --role judge|generator --target <alias> [--mode reflection|preflection]"
+        mode_arg = _get_flag("--mode")
+        if mode_arg:
+            assert mode_arg in (
+                "reflection",
+                "preflection",
+            ), f"--mode must be 'reflection' or 'preflection', got '{mode_arg}'"
+        cmd_run_cross_batch(role=role, target=target, mode=mode_arg)
     elif cmd == "cross_summary":
         _require_positional(1, "cross_summary <group_id>")
         cmd_cross_summary(positional[0])

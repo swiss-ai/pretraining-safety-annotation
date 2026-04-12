@@ -18,9 +18,9 @@ phase2:
       endpoint: https://openrouter.ai/api/v1
 
   generator_models:
-    # - alias: glm-4.5-air
-    #   api_name: jminder/pZcWDUxqEQ
-    #   hf_slug: zai-org/GLM-4.5-Air-FP8
+    - alias: glm-4.5-air
+      api_name: jminder/pZcWDUxqEQ
+      hf_slug: zai-org/GLM-4.5-Air-FP8
     # - alias: olmo3-32B-think
     #   api_name: jminder/UqFTpAeJcvV4
     #   hf_slug: olmo-ai/olmo-3-32b-thinking
@@ -28,26 +28,25 @@ phase2:
     #   api_name: jkminder/lAiFTaihSJ
     #   hf_slug: moonshotai/Kimi-K2.5
     - alias: gpt-oss-120b
-      api_name: openai/gpt-oss-120b
+      api_name: openai/gpt-oss-120b-YvBL
       hf_slug: openai/gpt-oss-120b
-      endpoint: https://openrouter.ai/api/v1
+      # endpoint: https://openrouter.ai/api/v1
       # api_name: openai/gpt-oss-120b-SfWS
       # hf_slug: openai/gpt-oss-120b
-    # - alias: glm-4.7-flash
-    #   api_name: zai-org/GLM-4.7-Flash
-    #   hf_slug: zai-org/GLM-4.7-Flash
+    - alias: glm-4.7-flash
+      api_name: zai-org/GLM-4.7-Flash
+      hf_slug: zai-org/GLM-4.7-Flash
     - alias: qwen3.5-35b-a3b
-      api_name: qwen/qwen3.5-35b-a3b
+      api_name: Qwen/Qwen3.5-35B-A3B-FP8-zviA
       hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-      endpoint: https://openrouter.ai/api/v1
     # - alias: qwen3.5-9b
     #   api_name: Qwen/Qwen3.5-9B-hFgU
     #   hf_slug: Qwen/Qwen3.5-9B
     - alias: nemotron-3-super-120b-a12b
-      api_name: nvidia/nemotron-3-super-120b-a12b
+      api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-eJjf
       # api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-KRHT
       hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-      endpoint: https://openrouter.ai/api/v1
+      # endpoint: https://openrouter.ai/api/v1
     # - alias: smollm3-3b
     #   api_name: HuggingFaceTB/SmolLM3-3B-uDyM
     #   hf_slug: HuggingFaceTB/SmolLM3-3B
@@ -124,7 +123,8 @@ phase3:
 phase4:
   sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
   output_dir: ${oc.env:SCRATCH}/model-raising-data/phase4
-  prompt: generator_v1.md
+  reflection_prompt: generator_reflection_v1.md
+  preflection_prompt: generator_preflection_v1.md
   generator_alias: glm-4.5-air
   thinking: false
   json_mode: false

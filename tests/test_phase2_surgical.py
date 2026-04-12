@@ -23,7 +23,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Shared storage isolation (so generate_batch/judge_batch tests don't touch
 # the real SQLite DB).
@@ -56,6 +55,7 @@ class TestS1SampleDiverse:
         The returned object supports iteration (like a Dataset) so the
         implementation can loop over it.
         """
+
         class _FakeDS(list):
             def __init__(self, rows):
                 super().__init__(rows)
@@ -108,12 +108,14 @@ class TestS1SampleDiverse:
             load_dataset_calls.append(shard)
             return self._make_fake_ds(shard_rows[shard])
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="deadbeef"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_dataset):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="deadbeef"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_dataset),
+        ):
             result = data_mod.sample_diverse(n=20, seed=42, max_tokens=1000)
 
         # Every shard must have been loaded (maybe more than once, but at
@@ -129,9 +131,9 @@ class TestS1SampleDiverse:
         shards_represented = {
             next(p for p in shard_paths if p in it["text"]) for it in items
         }
-        assert len(shards_represented) >= 2, (
-            f"Samples not drawn from multiple shards: {shards_represented}"
-        )
+        assert (
+            len(shards_represented) >= 2
+        ), f"Samples not drawn from multiple shards: {shards_represented}"
 
     def test_sample_diverse_deterministic(self):
         from pipeline import data as data_mod
@@ -147,12 +149,14 @@ class TestS1SampleDiverse:
                 shard = data_files
             return self._make_fake_ds(rows_by_shard[shard])
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="abc"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_dataset):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="abc"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_dataset),
+        ):
             result1 = data_mod.sample_diverse(n=10, seed=123, max_tokens=500)
             result2 = data_mod.sample_diverse(n=10, seed=123, max_tokens=500)
 
@@ -169,12 +173,14 @@ class TestS1SampleDiverse:
         def fake_load_dataset(*args, **kwargs):
             return self._make_fake_ds(rows)
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="abc123"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_dataset):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="abc123"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_dataset),
+        ):
             result = data_mod.sample_diverse(n=5, seed=1, max_tokens=500)
 
         assert result["dataset_revision"] == "abc123"
@@ -196,13 +202,14 @@ class TestS1SampleDiverse:
             seen_max["val"] = max_tokens
             return text[: max_tokens * 4]  # rough proxy
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="x"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_dataset), patch(
-            "pipeline.data.truncate_to_max_tokens", side_effect=fake_truncate
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="x"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_dataset),
+            patch("pipeline.data.truncate_to_max_tokens", side_effect=fake_truncate),
         ):
             result = data_mod.sample_diverse(n=5, seed=7, max_tokens=50)
 
@@ -220,12 +227,14 @@ class TestS1SampleDiverse:
         def fake_load_dataset(*args, **kwargs):
             return self._make_fake_ds(rows)
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="x"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_dataset):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="x"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_dataset),
+        ):
             with pytest.raises((AssertionError, ValueError, RuntimeError)):
                 data_mod.sample_diverse(n=50, seed=1, max_tokens=500)
 
@@ -255,20 +264,22 @@ class TestS1SampleDiverse:
         def fake_load_A(*args, **kwargs):
             return self._make_fake_ds(list(rows_A))
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths_A
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="x"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_A):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths_A),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="x"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_A),
+        ):
             r_seed1 = data_mod.sample_diverse(n=10, seed=1, max_tokens=500)
             r_seed2 = data_mod.sample_diverse(n=10, seed=2, max_tokens=500)
 
         ids_seed1 = {it["item_id"] for it in r_seed1["items"]}
         ids_seed2 = {it["item_id"] for it in r_seed2["items"]}
-        assert ids_seed1 != ids_seed2, (
-            "Changing only seed did not change per-shard samples"
-        )
+        assert (
+            ids_seed1 != ids_seed2
+        ), "Changing only seed did not change per-shard samples"
 
         # Case B: different shard paths, same seed — per-shard sample should
         # differ because shard_path is part of the per-shard RNG seed.
@@ -284,27 +295,31 @@ class TestS1SampleDiverse:
         def fake_load_B(*args, **kwargs):
             return self._make_fake_ds(list(common_rows))
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths_B1
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="x"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_B):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths_B1),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="x"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_B),
+        ):
             r_shardA = data_mod.sample_diverse(n=10, seed=42, max_tokens=500)
 
-        with patch(
-            "huggingface_hub.list_repo_files", return_value=shard_paths_B2
-        ), patch(
-            "huggingface_hub.dataset_info",
-            return_value=SimpleNamespace(sha="x"),
-        ), patch("datasets.load_dataset", side_effect=fake_load_B):
+        with (
+            patch("huggingface_hub.list_repo_files", return_value=shard_paths_B2),
+            patch(
+                "huggingface_hub.dataset_info",
+                return_value=SimpleNamespace(sha="x"),
+            ),
+            patch("datasets.load_dataset", side_effect=fake_load_B),
+        ):
             r_shardB = data_mod.sample_diverse(n=10, seed=42, max_tokens=500)
 
         ids_A = [it["item_id"] for it in r_shardA["items"]]
         ids_B = [it["item_id"] for it in r_shardB["items"]]
-        assert ids_A != ids_B, (
-            "Changing only shard path did not change per-shard samples"
-        )
+        assert (
+            ids_A != ids_B
+        ), "Changing only shard path did not change per-shard samples"
 
 
 # ===========================================================================
@@ -423,6 +438,7 @@ class TestS2CanaryRngSeed:
         return generate_batch(
             items,
             prompt_path,
+            prompt_path,
             "charter text",
             "test-model",
             iteration=1,
@@ -437,9 +453,7 @@ class TestS2CanaryRngSeed:
         prompt.write_text("Generate. Charter: {charter}")
         return prompt
 
-    def test_generate_batch_canary_seed_deterministic(
-        self, isolated_storage, tmp_path
-    ):
+    def test_generate_batch_canary_seed_deterministic(self, isolated_storage, tmp_path):
         items = self._make_items(30)  # need enough items so some get canaries
         prompt = self._make_prompt(tmp_path)
 
@@ -447,25 +461,21 @@ class TestS2CanaryRngSeed:
         captured_1: list[str] = []
         client_1 = self._build_mock_client(captured_1)
         self._run_generate(items, client_1, prompt, canary_rng_seed=42)
-        injected_1, canaries_1 = self._extract_injected_item_ids(
-            captured_1, items
-        )
+        injected_1, canaries_1 = self._extract_injected_item_ids(captured_1, items)
 
         # Run 2 (same seed)
         captured_2: list[str] = []
         client_2 = self._build_mock_client(captured_2)
         self._run_generate(items, client_2, prompt, canary_rng_seed=42)
-        injected_2, canaries_2 = self._extract_injected_item_ids(
-            captured_2, items
-        )
+        injected_2, canaries_2 = self._extract_injected_item_ids(captured_2, items)
 
-        assert injected_1 == injected_2, (
-            f"Canary item set differs across runs: {injected_1} vs {injected_2}"
-        )
+        assert (
+            injected_1 == injected_2
+        ), f"Canary item set differs across runs: {injected_1} vs {injected_2}"
         # And the same canary id should appear for each item that got one
-        assert canaries_1 == canaries_2, (
-            f"Canary ids differ across runs: {canaries_1} vs {canaries_2}"
-        )
+        assert (
+            canaries_1 == canaries_2
+        ), f"Canary ids differ across runs: {canaries_1} vs {canaries_2}"
 
     def test_generate_batch_canary_seed_stable_across_canary_choice(
         self, isolated_storage, tmp_path
@@ -511,6 +521,7 @@ class TestS2CanaryRngSeed:
         result = generate_batch(
             items,
             prompt,
+            prompt,
             "charter text",
             "test-model",
             iteration=1,
@@ -523,9 +534,7 @@ class TestS2CanaryRngSeed:
             assert "item_id" in r
             assert "analysis" in r
 
-    def test_generate_batch_canary_seed_changes_set(
-        self, isolated_storage, tmp_path
-    ):
+    def test_generate_batch_canary_seed_changes_set(self, isolated_storage, tmp_path):
         items = self._make_items(30)
         prompt = self._make_prompt(tmp_path)
 
@@ -538,9 +547,7 @@ class TestS2CanaryRngSeed:
 
         inj_a, _ = self._extract_injected_item_ids(cap_a, items)
         inj_b, _ = self._extract_injected_item_ids(cap_b, items)
-        assert inj_a != inj_b, (
-            f"Different seeds produced the same canary set: {inj_a}"
-        )
+        assert inj_a != inj_b, f"Different seeds produced the same canary set: {inj_a}"
 
 
 # ===========================================================================
@@ -636,15 +643,13 @@ class TestS3ApiCallBackoff:
             base = 2**i
             lo = 0.5 * base
             hi = 1.5 * base
-            assert lo <= dt <= hi, (
-                f"Sleep {i}={dt} not in jitter range [{lo}, {hi}]"
-            )
+            assert lo <= dt <= hi, f"Sleep {i}={dt} not in jitter range [{lo}, {hi}]"
 
         # At least one sleep should NOT equal base exactly — jitter should
         # produce non-integer values with high probability.
-        assert any(abs(dt - 2**i) > 1e-9 for i, dt in enumerate(sleeps)), (
-            f"Sleeps look un-jittered (all exactly 2**attempt): {sleeps}"
-        )
+        assert any(
+            abs(dt - 2**i) > 1e-9 for i, dt in enumerate(sleeps)
+        ), f"Sleeps look un-jittered (all exactly 2**attempt): {sleeps}"
 
     def test_api_call_rate_limit_gets_more_retries(self):
         from pipeline.api import api_call
@@ -670,9 +675,9 @@ class TestS3ApiCallBackoff:
                     )
             finally:
                 loop.close()
-        assert state_rl["count"] == 8, (
-            f"Expected 8 rate-limit attempts, got {state_rl['count']}"
-        )
+        assert (
+            state_rl["count"] == 8
+        ), f"Expected 8 rate-limit attempts, got {state_rl['count']}"
 
         # --- APIConnectionError: should retry 5 times ---
         client_cn, state_cn = self._mock_client_raising(openai.APIConnectionError)
@@ -690,17 +695,15 @@ class TestS3ApiCallBackoff:
                     )
             finally:
                 loop.close()
-        assert state_cn["count"] == 5, (
-            f"Expected 5 connection attempts, got {state_cn['count']}"
-        )
+        assert (
+            state_cn["count"] == 5
+        ), f"Expected 5 connection attempts, got {state_cn['count']}"
 
     def test_api_call_eventual_success(self):
         from pipeline.api import api_call
 
         sem = asyncio.Semaphore(1)
-        client, state = self._mock_client_raising(
-            openai.RateLimitError, n_failures=2
-        )
+        client, state = self._mock_client_raising(openai.RateLimitError, n_failures=2)
 
         async def fake_sleep(dt):
             pass
@@ -744,8 +747,9 @@ class TestS4RunConcurrentTqdm:
         mock_stderr = MagicMock()
         mock_stderr.isatty = MagicMock(return_value=False)
 
-        with patch.object(api_mod, "tqdm_asyncio") as mock_tqdm, patch(
-            "sys.stderr", mock_stderr
+        with (
+            patch.object(api_mod, "tqdm_asyncio") as mock_tqdm,
+            patch("sys.stderr", mock_stderr),
         ):
             mock_tqdm.gather = fake_gather
             api_mod.run_concurrent(trivial_coro(), desc="test")
@@ -753,9 +757,9 @@ class TestS4RunConcurrentTqdm:
         # Under non-tty, either mininterval >= 30 OR disable=True.
         mininterval = captured_kwargs.get("mininterval", 0)
         disable = captured_kwargs.get("disable", False)
-        assert mininterval >= 30 or disable is True, (
-            f"Non-tty call did not throttle tqdm: {captured_kwargs}"
-        )
+        assert (
+            mininterval >= 30 or disable is True
+        ), f"Non-tty call did not throttle tqdm: {captured_kwargs}"
 
     def test_run_concurrent_normal_tqdm_when_tty(self):
         from pipeline import api as api_mod
@@ -772,8 +776,9 @@ class TestS4RunConcurrentTqdm:
         mock_stderr = MagicMock()
         mock_stderr.isatty = MagicMock(return_value=True)
 
-        with patch.object(api_mod, "tqdm_asyncio") as mock_tqdm, patch(
-            "sys.stderr", mock_stderr
+        with (
+            patch.object(api_mod, "tqdm_asyncio") as mock_tqdm,
+            patch("sys.stderr", mock_stderr),
         ):
             mock_tqdm.gather = fake_gather
             api_mod.run_concurrent(trivial_coro(), desc="test")
@@ -782,13 +787,13 @@ class TestS4RunConcurrentTqdm:
         # We allow: mininterval absent, mininterval < 30, or disable!=True.
         mininterval = captured_kwargs.get("mininterval", None)
         disable = captured_kwargs.get("disable", False)
-        assert disable is not True, (
-            f"tty branch incorrectly disabled tqdm: {captured_kwargs}"
-        )
+        assert (
+            disable is not True
+        ), f"tty branch incorrectly disabled tqdm: {captured_kwargs}"
         if mininterval is not None:
-            assert mininterval < 30, (
-                f"tty branch incorrectly throttled tqdm: {captured_kwargs}"
-            )
+            assert (
+                mininterval < 30
+            ), f"tty branch incorrectly throttled tqdm: {captured_kwargs}"
 
 
 # ===========================================================================
@@ -809,12 +814,12 @@ class TestS5ResolvePromptPath:
         assert not (tmp_path / alias).exists()
 
         with pytest.raises(Exception):
-            cfg_mod.resolve_prompt_path("judge_v3.md", alias)
+            cfg_mod.resolve_prompt_path("judge_reflection_v3.md", alias)
 
         # Critically: the alias directory should NOT have been created.
-        assert not (tmp_path / alias).exists(), (
-            "Explicit version should not trigger _init_model_prompts"
-        )
+        assert not (
+            tmp_path / alias
+        ).exists(), "Explicit version should not trigger _init_model_prompts"
 
     def test_resolve_prompt_path_latest_does_init(self, tmp_path, monkeypatch):
         import pipeline.config as cfg_mod
@@ -824,12 +829,12 @@ class TestS5ResolvePromptPath:
         alias = "fresh_alias"
         assert not (tmp_path / alias).exists()
 
-        path = cfg_mod.resolve_prompt_path("judge_latest.md", alias)
+        path = cfg_mod.resolve_prompt_path("judge_reflection_latest.md", alias)
 
         # The alias directory was created by _init_model_prompts.
         assert (tmp_path / alias).exists()
-        # And the returned path is the v1 judge prompt in the new dir.
-        assert path.name == "judge_v1.md"
+        # And the returned path is the v1 judge_reflection prompt in the new dir.
+        assert path.name == "judge_reflection_v1.md"
         assert path.parent == (tmp_path / alias)
         assert path.exists()
 
@@ -843,10 +848,10 @@ class TestS5ResolvePromptPath:
         alias = "real_alias"
         alias_dir = tmp_path / alias
         alias_dir.mkdir()
-        expected = alias_dir / "judge_v3.md"
-        expected.write_text("judge v3 content")
+        expected = alias_dir / "judge_reflection_v3.md"
+        expected.write_text("judge reflection v3 content")
 
-        path = cfg_mod.resolve_prompt_path("judge_v3.md", alias)
+        path = cfg_mod.resolve_prompt_path("judge_reflection_v3.md", alias)
         assert path == expected
 
 
@@ -928,6 +933,7 @@ class TestS6OnFailureCallback:
         result = generate_batch(
             items,
             prompt,
+            prompt,
             "charter",
             "test-model",
             iteration=1,
@@ -949,8 +955,9 @@ class TestS6OnFailureCallback:
         assert info["stage"] in (
             "reflection",
             "preflection",
-            "judge_combined",
-        ) or info["stage"].startswith("judge_")
+        ) or info[
+            "stage"
+        ].startswith("judge_")
         assert info.get("raw") is not None
         assert bad_content in info["raw"]
 
@@ -977,6 +984,7 @@ class TestS6OnFailureCallback:
         with patch("pipeline.phase2.run.api_call", side_effect=mock_api_call):
             result = generate_batch(
                 items,
+                prompt,
                 prompt,
                 "charter",
                 "test-model",
@@ -1012,6 +1020,7 @@ class TestS6OnFailureCallback:
         result = generate_batch(
             items,
             prompt,
+            prompt,
             "charter",
             "test-model",
             iteration=1,
@@ -1045,10 +1054,10 @@ class TestS6OnFailureCallback:
             "canary": None,
         }
 
-        prompt = self._make_prompt(tmp_path, name="judge_v1.md")
-        # Use a prompt WITHOUT {part_type} so combined judging runs (it will
-        # call _parse_combined_judgment which asserts on missing voices).
-        prompt.write_text("Judge all. Threshold: {accept_threshold}")
+        refl_prompt = self._make_prompt(tmp_path, name="judge_reflection_v1.md")
+        refl_prompt.write_text("Judge reflection. Threshold: {accept_threshold}")
+        prefl_prompt = self._make_prompt(tmp_path, name="judge_preflection_v1.md")
+        prefl_prompt.write_text("Judge preflection. Threshold: {accept_threshold}")
 
         bad_content = "not valid json at all"
         client = self._mock_client_returning(bad_content)
@@ -1061,7 +1070,8 @@ class TestS6OnFailureCallback:
         sem = asyncio.Semaphore(4)
         result = judge_batch(
             [generated_item],
-            prompt,
+            refl_prompt,
+            prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,
@@ -1077,9 +1087,7 @@ class TestS6OnFailureCallback:
         assert info["category"] == "parse"
         assert info["item_id"] == "judged_item"
         assert "stage" in info
-        assert info["stage"] == "judge_combined" or info["stage"].startswith(
-            "judge_"
-        )
+        assert info["stage"].startswith("judge_")
         assert info.get("raw") is not None
         assert bad_content in info["raw"]
 
@@ -1106,8 +1114,10 @@ class TestS6OnFailureCallback:
             "canary": None,
         }
 
-        prompt = self._make_prompt(tmp_path, name="judge_v1.md")
-        prompt.write_text("Judge all. Threshold: {accept_threshold}")
+        refl_prompt = self._make_prompt(tmp_path, name="judge_reflection_v1.md")
+        refl_prompt.write_text("Judge reflection. Threshold: {accept_threshold}")
+        prefl_prompt = self._make_prompt(tmp_path, name="judge_preflection_v1.md")
+        prefl_prompt.write_text("Judge preflection. Threshold: {accept_threshold}")
 
         client = self._mock_client_returning("not json")
 
@@ -1115,7 +1125,8 @@ class TestS6OnFailureCallback:
         # Must not raise.
         result = judge_batch(
             [generated_item],
-            prompt,
+            refl_prompt,
+            prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,
@@ -1125,9 +1136,7 @@ class TestS6OnFailureCallback:
         )
         assert result == []
 
-    def test_on_failure_called_before_none_returned(
-        self, isolated_storage, tmp_path
-    ):
+    def test_on_failure_called_before_none_returned(self, isolated_storage, tmp_path):
         """The callback fires for every item that ends up missing from the
         result list. We verify by comparing the set of callback item_ids to
         the set of dropped items."""
@@ -1147,6 +1156,7 @@ class TestS6OnFailureCallback:
         result = generate_batch(
             items,
             prompt,
+            prompt,
             "charter",
             "test-model",
             iteration=1,
@@ -1156,12 +1166,10 @@ class TestS6OnFailureCallback:
             on_failure=on_failure,
         )
 
-        dropped_ids = {it["item_id"] for it in items} - {
-            r["item_id"] for r in result
-        }
+        dropped_ids = {it["item_id"] for it in items} - {r["item_id"] for r in result}
         # Every dropped item must have had the callback invoked for it.
-        assert dropped_ids.issubset(recorded_ids), (
-            f"dropped={dropped_ids} recorded={recorded_ids}"
-        )
+        assert dropped_ids.issubset(
+            recorded_ids
+        ), f"dropped={dropped_ids} recorded={recorded_ids}"
         # Since all 3 items get bad content, all 3 should be dropped.
         assert len(dropped_ids) == 3

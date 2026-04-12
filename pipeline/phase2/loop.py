@@ -5,8 +5,8 @@ tools via CLI. Multiple models run in parallel, each with its own scratch
 directory and thread-safe status updates.
 
 Usage:
-    uv run python -m pipeline.phase2.loop --role judge [--aliases glm45,olmo3-32B-think]
-    uv run python -m pipeline.phase2.loop --role generator [--aliases glm45]
+    uv run python -m pipeline.phase2.loop --role judge --mode reflection [--aliases glm45,olmo3-32B-think]
+    uv run python -m pipeline.phase2.loop --role generator --mode preflection [--aliases glm45]
 """
 
 from __future__ import annotations
@@ -76,26 +76,30 @@ def _resolve_config_prompt(filename: str, alias: str) -> str:
     return filename
 
 
-def _detect_new_prompts(alias: str, role: str) -> str:
-    """Find the highest-versioned prompt for the given role in the model directory.
+def _detect_new_prompts(alias: str, role: str, mode: str) -> str:
+    """Find the highest-versioned prompt for the given role+mode in the model directory.
 
-    Returns the latest filename (e.g. 'judge_v3.md').
+    Returns the latest filename (e.g. 'judge_reflection_v3.md').
     """
     model_dir = PROMPTS_DIR / alias
     prefix = "judge" if role == "judge" else "generator"
-    matches = sorted(glob.glob(str(model_dir / f"{prefix}_v*.md")))
-    assert matches, f"No {prefix}_v*.md files in {model_dir}"
+    matches = sorted(glob.glob(str(model_dir / f"{prefix}_{mode}_v*.md")))
+    assert matches, f"No {prefix}_{mode}_v*.md files in {model_dir}"
     return Path(matches[-1]).name
 
 
 def _build_improver_prompt(
-    cfg: AppConfig, role: str, target_alias: str, agent_tmp_dir: Path | None = None
+    cfg: AppConfig,
+    role: str,
+    target_alias: str,
+    mode: str,
+    agent_tmp_dir: Path | None = None,
 ) -> str:
     """Unified prompt builder for judge and generator improvers.
 
     Key additions over old phase prompts:
     - Lists ALL counterpart models the agent's cross-iterations will use
-    - Tells agent to use `run_cross_batch --role {role} --target {alias}`
+    - Tells agent to use `run_cross_batch --role {role} --target {alias} --mode {mode}`
     - Explains group_id for interpreting cross-model results
     - Points to `cross_summary <group_id>` command for aggregated stats
     """
@@ -103,10 +107,16 @@ def _build_improver_prompt(
         agent_tmp_dir = AGENT_TMP_DIR
     model_dir = PROMPTS_DIR / target_alias
     improver_path = _INIT_PROMPTS_DIR / "improver.md"
+    other_mode = "preflection" if mode == "reflection" else "reflection"
 
     if role == "judge":
-        prompt_path = resolve_prompt_path("judge_latest.md", target_alias)
-        other_prompt_path = resolve_prompt_path("generator_latest.md", target_alias)
+        prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
+        other_prompt_path = resolve_prompt_path(
+            f"generator_{mode}_latest.md", target_alias
+        )
+        same_role_other_mode_path = resolve_prompt_path(
+            f"judge_{other_mode}_latest.md", target_alias
+        )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
         phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.judge_prompt
@@ -115,8 +125,11 @@ def _build_improver_prompt(
         prompt_type = "judge"
         other_type = "generator"
     else:
-        prompt_path = resolve_prompt_path("generator_latest.md", target_alias)
-        other_prompt_path = resolve_prompt_path("judge_latest.md", target_alias)
+        prompt_path = resolve_prompt_path(f"generator_{mode}_latest.md", target_alias)
+        other_prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
+        same_role_other_mode_path = resolve_prompt_path(
+            f"generator_{other_mode}_latest.md", target_alias
+        )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
         phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.generator_prompt
@@ -125,7 +138,7 @@ def _build_improver_prompt(
         prompt_type = "generator"
         other_type = "judge"
 
-    state_path = model_dir / "state.md"
+    state_path = model_dir / f"state_{role}_{mode}.md"
     if not state_path.exists():
         state_path.write_text("# Improver State\n\nNo previous iterations.\n")
 
@@ -232,7 +245,7 @@ def _build_improver_prompt(
 ## FIRST RUN — No data exists yet!
 There are no iterations in the database. You MUST run a baseline batch first before analyzing anything.
 Do this immediately (run in background — it takes 3-5 minutes!):
-  Bash: {{"command": "uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} 2>&1", "run_in_background": true}}
+  Bash: {{"command": "uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} --mode {mode} 2>&1", "run_in_background": true}}
 Then wait:
   TaskOutput: {{"task_id": "<id>", "block": true, "timeout": 600000}}
 Then use `diagnose <group_id>` for a full analysis.
@@ -309,11 +322,14 @@ Human Review Mining sections of the improver instructions.
 
     return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
 
-## {role_label} Improvement for model: {target_alias}
+## {role_label} Improvement for model: {target_alias} (mode: {mode})
 
-**IMPORTANT: Other improver agents may be running in parallel for different models.**
-You are ONLY responsible for the **{target_alias}** model. Ignore iterations, errors, or data
-belonging to other models. When analyzing results, filter by your target model.
+**IMPORTANT: Other improver agents may be running in parallel for different models and modes.**
+You are ONLY responsible for the **{target_alias}** model's **{mode}** prompt. Ignore iterations,
+errors, or data belonging to other models. When analyzing results, filter by your target model.
+
+The {other_mode} prompt for this role is at: {same_role_other_mode_path}
+Read it for context but do NOT modify it — a separate improver handles {other_mode}.
 
 {phase_instructions}
 {first_run_note}{human_notes_block}
@@ -361,7 +377,7 @@ prompt instructions.
   diversity than before. Instead, use abstract instructions like "vary your approach" or
   "never start two annotations the same way."
 - **Keep prompts focused.** Small models (7B-70B) degrade with long system prompts. The
-  current `init_judge.md` baseline is ~900 words; do not let prompt length grow monotonically
+  current judge baseline is ~500 words per mode; do not let prompt length grow monotonically
   across iterations — every addition must be balanced by removing a redundant instruction
   or example.
 
@@ -395,7 +411,7 @@ Copy IDs from the `scores`, `failures`, or `filter` output.
 ## Test tools (run experiments WITHOUT modifying main data)
   uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--role {role}]
   uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--role {role}]
-  uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias}  — cross-iteration with ALL {other_type} models
+  uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} --mode {mode}  — cross-iteration with ALL {other_type} models
   uv run python -m pipeline.improver_tools cross_summary <group_id>   — per-model stats for a cross-iteration
   uv run python -m pipeline.improver_tools diagnose <group_id>        — ONE-SHOT full analysis (use this first!)
   uv run python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]  — cross-iteration item comparison
@@ -406,7 +422,7 @@ Copy IDs from the `scores`, `failures`, or `filter` output.
 `run_cross_batch`, `run_batch`, `test_judge`, and `test_generate` make many API calls and
 take several minutes. You MUST run them in background and wait with a long timeout:
 ```
-Bash: {{"command": "uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} 2>&1", "run_in_background": true}}
+Bash: {{"command": "uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} --mode {mode} 2>&1", "run_in_background": true}}
 ```
 Then wait for the result:
 ```
@@ -468,9 +484,9 @@ over inspecting items one by one.
 2. Read the improver instructions: {improver_path}
 3. Read the current {prompt_type} prompt: {prompt_path} and the {other_type} prompt for context: {other_prompt_path}
 4. If no data exists yet, run a baseline batch first (see "Running long commands" above — use background + 600s timeout):
-   `uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} 2>&1`
+   `uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} --mode {mode} 2>&1`
 5. Analyze results: start with `diagnose <group_id>` for a full overview, then drill into specifics with `diff`, `failures`, `show`. After consuming the auto-injected diagnose AND after every subsequently-spawned `run_cross_batch`, append a `## Reflection N` block to {state_path} per the `<analysis_checkpoint_protocol>` in the phase instructions, BEFORE writing the next prompt version.
-6. Write improved {prompt_type} to {model_dir}/{prompt_type}_v{next_v}.md
+6. Write improved {prompt_type} {mode} prompt to {model_dir}/{prompt_type}_{mode}_v{next_v}.md
 7. You may run up to {max_batches} `run_cross_batch` calls to test your changes
 8. Update {state_path} with: what you changed, why, key metrics, and what to try next
 9. **Compress state.md**: Spawn a subagent to read {state_path} and rewrite it more concisely.
@@ -493,7 +509,7 @@ perfect analysis that never produces a prompt.
 ## VERSION SELECTION — CRITICAL
 The pipeline ALWAYS uses the highest version number (_vN.md) as the active prompt.
 If you write v2 (best), then v3 (worse), v3 is deployed — not v2. Before finalizing:
-- If an earlier version performed best, run `rollback {target_alias} {prompt_type} <best_version>`
+- If an earlier version performed best, run `rollback {target_alias} {prompt_type}_{mode} <best_version>`
   to copy it to v(max+1), making it the active prompt.
 - Never leave a worse version as the highest number on disk.
 - **Always use rollback** rather than manually rewriting prompt files from old versions.
@@ -525,7 +541,7 @@ from pathlib import Path
 content = \"\"\"
 <your prompt content here>
 \"\"\"
-Path("{model_dir}/{prompt_type}_v{next_v}.md").write_text(content.strip())
+Path("{model_dir}/{prompt_type}_{mode}_v{next_v}.md").write_text(content.strip())
 print("Written successfully")
 PYEOF
 ```
@@ -643,22 +659,24 @@ def _preflight_health_check(cfg: AppConfig, role: str, target_alias: str) -> Non
 ALLOWED_TOOLS = _allowed_tools(AGENT_TMP_DIR)
 
 
-def run_improver(cfg: AppConfig, role: str, target_alias: str) -> None:
-    """Run a single improver for one (role, model) pair.
+def run_improver(cfg: AppConfig, role: str, target_alias: str, mode: str) -> None:
+    """Run a single improver for one (role, model, mode) triple.
 
     Independently launchable and thread-safe. Each improver gets its own
     scratch directory and updates loop_status.json atomically.
     """
     _preflight_health_check(cfg, role, target_alias)
 
-    key = f"{role}_{target_alias}"
+    key = f"{role}_{mode}_{target_alias}"
     log_path = improver_log_path(role, target_alias)
-    tmp_dir = PIPELINE_DATA_DIR / f"tmp_{role}_{target_alias}"
-    prompt = _build_improver_prompt(cfg, role, target_alias, agent_tmp_dir=tmp_dir)
-    state_path = PROMPTS_DIR / target_alias / "state.md"
+    tmp_dir = PIPELINE_DATA_DIR / f"tmp_{role}_{mode}_{target_alias}"
+    prompt = _build_improver_prompt(
+        cfg, role, target_alias, mode=mode, agent_tmp_dir=tmp_dir
+    )
+    state_path = PROMPTS_DIR / target_alias / f"state_{role}_{mode}.md"
 
     def _post_hook():
-        new_prompt = _detect_new_prompts(target_alias, role)
+        new_prompt = _detect_new_prompts(target_alias, role, mode)
         logger.info("Improver {} done: latest prompt -> {}", key, new_prompt)
 
         if role == "judge":
@@ -677,8 +695,10 @@ def run_improver(cfg: AppConfig, role: str, target_alias: str) -> None:
         _auto_compress_state(state_path)
 
 
-def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) -> None:
-    """Run improvers for a role in parallel. If aliases is None, run ALL models for that role."""
+def _run_improvers(
+    cfg: AppConfig, role: str, mode: str, aliases: list[str] | None = None
+) -> None:
+    """Run improvers for a role+mode in parallel. If aliases is None, run ALL models for that role."""
     if aliases is None:
         model_list = (
             cfg.phase2.judge_models if role == "judge" else cfg.phase2.generator_models
@@ -688,11 +708,14 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
     now = datetime.now(timezone.utc).isoformat()
     prompts_before = _snapshot_prompts(cfg)
 
-    improvers = {f"{role}_{a}": _make_improver_status("pending") for a in aliases}
+    improvers = {
+        f"{role}_{mode}_{a}": _make_improver_status("pending") for a in aliases
+    }
     status = {
         "running": True,
         "started_at": now,
         "role": role,
+        "mode": mode,
         "improvers": improvers,
         "error": None,
     }
@@ -703,7 +726,8 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
     try:
         with ThreadPoolExecutor(max_workers=len(aliases)) as pool:
             futures = {
-                pool.submit(run_improver, cfg, role, alias): alias for alias in aliases
+                pool.submit(run_improver, cfg, role, alias, mode): alias
+                for alias in aliases
             }
             for future in as_completed(futures):
                 alias = futures[future]
@@ -711,7 +735,7 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
                     future.result()
                 except Exception as e:
                     errors[alias] = e
-                    logger.error("Improver {}/{} failed: {}", role, alias, e)
+                    logger.error("Improver {}/{}/{} failed: {}", role, mode, alias, e)
 
         def _finalize(s: dict) -> None:
             s["running"] = False
@@ -745,14 +769,18 @@ def _run_improvers(cfg: AppConfig, role: str, aliases: list[str] | None = None) 
             fallback.write_text(json.dumps(status, indent=2, default=str))
 
 
-def run_judge_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
+def run_judge_improvers(
+    cfg: AppConfig, mode: str, aliases: list[str] | None = None
+) -> None:
     """Run judge improvers in parallel. If aliases is None, run ALL judge models."""
-    _run_improvers(cfg, "judge", aliases)
+    _run_improvers(cfg, "judge", mode, aliases)
 
 
-def run_generator_improvers(cfg: AppConfig, aliases: list[str] | None = None) -> None:
+def run_generator_improvers(
+    cfg: AppConfig, mode: str, aliases: list[str] | None = None
+) -> None:
     """Run generator improvers in parallel. If aliases is None, run ALL generator models."""
-    _run_improvers(cfg, "generator", aliases)
+    _run_improvers(cfg, "generator", mode, aliases)
 
 
 def interrupt_improvers() -> int:
@@ -795,18 +823,18 @@ def _save_history(status: dict, prompts_before: dict[str, str], cfg: AppConfig) 
     # Extract reasoning from logs for any improvers missing it
     for key, data in status.get("improvers", {}).items():
         if not data.get("reasoning") and data.get("status") != "pending":
-            parts = key.split("_", 1)
-            if len(parts) == 2:
-                role, alias = parts
+            parts = key.split("_", 2)
+            if len(parts) == 3:
+                role, _mode, alias = parts
                 log_p = improver_log_path(role, alias)
                 data["reasoning"] = _extract_reasoning_from_log(log_p)
 
     # Capture full logs
     logs = {}
     for key in status.get("improvers", {}):
-        parts = key.split("_", 1)
-        if len(parts) == 2:
-            role, alias = parts
+        parts = key.split("_", 2)
+        if len(parts) == 3:
+            role, _mode, alias = parts
             log_p = improver_log_path(role, alias)
             if log_p.exists():
                 logs[key] = log_p.read_text()
@@ -831,6 +859,12 @@ def main():
     parser = argparse.ArgumentParser(description="Run improver agents")
     parser.add_argument("--role", required=True, choices=["judge", "generator"])
     parser.add_argument(
+        "--mode",
+        required=True,
+        choices=["reflection", "preflection"],
+        help="Which mode's prompt to improve",
+    )
+    parser.add_argument(
         "--aliases",
         type=str,
         default=None,
@@ -841,14 +875,14 @@ def main():
     cfg = load_config()
     aliases = args.aliases.split(",") if args.aliases else None
 
-    logger.info("Starting {} improver(s)", args.role)
+    logger.info("Starting {} {} improver(s)", args.role, args.mode)
     if aliases:
         logger.info("Aliases: {}", aliases)
 
     if args.role == "judge":
-        run_judge_improvers(cfg, aliases=aliases)
+        run_judge_improvers(cfg, mode=args.mode, aliases=aliases)
     else:
-        run_generator_improvers(cfg, aliases=aliases)
+        run_generator_improvers(cfg, mode=args.mode, aliases=aliases)
 
 
 if __name__ == "__main__":
