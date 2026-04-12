@@ -81,7 +81,7 @@ phase2:
   loop: {}
 phase3:
   endpoint: ${phase2.endpoint}
-  eval_dir: ${oc.env:SCRATCH}/model-raising-data/phase3_eval
+  eval_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase3_eval
   gold_judge:
     alias: glm-4.5-air
     api_name: jminder/jZ7aJGjetjNN
@@ -122,7 +122,7 @@ phase3:
     - voice_tone
 phase4:
   sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
-  output_dir: ${oc.env:SCRATCH}/model-raising-data/phase4
+  output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase4
   reflection_prompt: generator_reflection_v1.md
   preflection_prompt: generator_preflection_v1.md
   generator_alias: glm-4.5-air

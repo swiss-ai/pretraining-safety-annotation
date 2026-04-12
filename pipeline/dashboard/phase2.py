@@ -645,6 +645,133 @@ def _render_loop_history():
                     )
 
 
+def _render_mode_overview(items_by_key: dict) -> None:
+    """Render side-by-side Reflection / Preflection overview panels.
+
+    Each panel shows: accept rate, per-voice mean scores, per-dimension means,
+    and judge prompt version.  Old judgments without per-mode decisions render
+    gracefully (showing "n/a").
+    """
+    cfg = load_config()
+    dimensions = cfg.phase2.scoring.dimensions
+
+    all_items = list(items_by_key.values())
+    judged = [i for i in all_items if i.get("judgment")]
+    if not judged:
+        return
+
+    _REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
+    _PREFLECTION_VOICES = ("preflection_3p", "preflection_1p")
+
+    def _mode_panel(
+        label: str,
+        decision_key: str,
+        voices: tuple[str, ...],
+        judge_prompt_key: str,
+    ) -> None:
+        """Render one column of the overview for a single mode."""
+        # --- Accept rate ---
+        with_decision = [
+            i for i in judged if i["judgment"].get(decision_key) is not None
+        ]
+        if with_decision:
+            n_acc = sum(
+                1 for i in with_decision if i["judgment"].get(decision_key) == "accept"
+            )
+            rate = round(n_acc / len(with_decision) * 100, 1)
+            rate_text = f"{rate}%  ({n_acc}/{len(with_decision)})"
+        else:
+            rate_text = "n/a"
+
+        ui.label(label).classes("text-h6 text-weight-bold")
+        ui.label(f"Accept rate: {rate_text}").classes("text-body1 q-mt-xs")
+
+        # --- Per-voice mean scores ---
+        ui.label("Per-voice mean scores").classes("text-overline text-grey-7 q-mt-md")
+        for voice in voices:
+            aggs = [
+                i["judgment"][voice]["aggregate"]
+                for i in judged
+                if isinstance(i["judgment"].get(voice), dict)
+                and "aggregate" in i["judgment"][voice]
+            ]
+            mean_val = f"{statistics.mean(aggs):.2f}" if aggs else "n/a"
+            ui.label(f"  {voice}: {mean_val}  (n={len(aggs)})").classes("text-body2")
+
+        # --- Per-dimension means (across voices in this mode) ---
+        ui.label("Per-dimension means").classes("text-overline text-grey-7 q-mt-md")
+        for dim in dimensions:
+            scores_for_dim: list[float] = []
+            for i in judged:
+                j = i["judgment"]
+                for voice in voices:
+                    part = j.get(voice)
+                    if isinstance(part, dict):
+                        s = part.get("scores", {}).get(dim)
+                        if s is not None:
+                            scores_for_dim.append(s)
+            mean_val = (
+                f"{statistics.mean(scores_for_dim):.2f}" if scores_for_dim else "n/a"
+            )
+            ui.label(f"  {dim}: {mean_val}  (n={len(scores_for_dim)})").classes(
+                "text-body2"
+            )
+
+        # --- Judge prompt version ---
+        prompt_versions = {
+            i["judgment"].get(judge_prompt_key, "")
+            for i in judged
+            if i["judgment"].get(judge_prompt_key)
+        }
+        if prompt_versions:
+            import re as _re_ov
+
+            def _extract_v(p: str) -> str:
+                m = _re_ov.search(r"_v(\d+)", p)
+                return f"v{m.group(1)}" if m else p
+
+            versions_str = ", ".join(sorted({_extract_v(p) for p in prompt_versions}))
+        else:
+            versions_str = "n/a"
+        ui.label(f"Judge prompt: {versions_str}").classes(
+            "text-caption text-grey-7 q-mt-md"
+        )
+
+    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
+        with ui.row().classes("w-full gap-4"):
+            with ui.column().classes("flex-1"):
+                _mode_panel(
+                    "Reflection",
+                    "reflection_decision",
+                    _REFLECTION_VOICES,
+                    "judge_prompt_reflection",
+                )
+            with ui.column().classes("flex-1"):
+                _mode_panel(
+                    "Preflection",
+                    "preflection_decision",
+                    _PREFLECTION_VOICES,
+                    "judge_prompt_preflection",
+                )
+
+        # Combined (deprioritized — small text below panels)
+        n_combined_acc = sum(
+            1 for i in judged if i["judgment"].get("decision") == "accept"
+        )
+        combined_rate = round(n_combined_acc / len(judged) * 100, 1) if judged else 0
+        combined_agg_scores = [i["judgment"].get("aggregate", 0) for i in judged]
+        combined_mean = (
+            f"{statistics.mean(combined_agg_scores):.2f}"
+            if combined_agg_scores
+            else "n/a"
+        )
+        ui.label(
+            f"Combined: {combined_rate}% accept "
+            f"({n_combined_acc}/{len(judged)}), "
+            f"mean score {combined_mean}"
+        ).classes("text-caption text-grey-6 q-mt-md")
+
+
 def _render_acceptance_rate_chart(
     runs: list[dict],
     iter_stats: list[dict],
@@ -1562,6 +1689,9 @@ def pipeline_monitoring_page():
                 "calibration": cal_iter,
             }
         )
+
+    # --- Reflection / Preflection Overview (side-by-side) ---
+    _render_mode_overview(items_by_key)
 
     # --- Reviews per Reviewer ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
