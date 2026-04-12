@@ -29,6 +29,12 @@ def truncate_to_max_tokens(text: str, max_tokens: int) -> str:
     return tokenizer.decode(truncated_ids, skip_special_tokens=True)
 
 
+def count_tokens(text: str) -> int:
+    """Count tokens in *text* using the shared SmolLM2 tokenizer."""
+    tokenizer = _get_tokenizer()
+    return len(tokenizer.encode(text, add_special_tokens=False))
+
+
 def compute_reflection_point(text: str, rng: random.Random) -> int:
     """Pick a reflection point between 10%-90% of text, snapped to a token boundary.
 

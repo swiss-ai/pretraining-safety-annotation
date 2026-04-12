@@ -1030,6 +1030,57 @@ class TestS6OnFailureCallback:
         )
         assert result == []
 
+    def test_generate_batch_clamps_completion_to_context_window(
+        self, isolated_storage, tmp_path
+    ):
+        from pipeline.phase2.run import CONTEXT_WINDOW_MARGIN_TOKENS, generate_batch
+
+        items = self._make_items(1)
+        prompt = self._make_prompt(tmp_path)
+        good_content = json.dumps(
+            {
+                "analysis": "ok",
+                "reflection_1p": "r1",
+                "reflection_3p": "r3",
+            }
+        )
+        seen_max_tokens: list[int] = []
+
+        async def mock_api_call(*args, **kwargs):
+            seen_max_tokens.append(kwargs["max_tokens"])
+            return (
+                good_content,
+                None,
+                {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                },
+            )
+
+        sem = asyncio.Semaphore(4)
+        with (
+            patch("pipeline.phase2.run.api_call", side_effect=mock_api_call),
+            patch("pipeline.phase2.run._estimate_prompt_tokens", return_value=7000),
+        ):
+            result = generate_batch(
+                items,
+                prompt,
+                None,
+                "charter",
+                "test-model",
+                iteration=1,
+                client=MagicMock(),
+                semaphore=sem,
+                save=False,
+                completion_max_tokens=32000,
+                context_window_tokens=16384,
+                mode="reflection",
+            )
+
+        assert len(result) == 1
+        assert seen_max_tokens == [16384 - 7000 - CONTEXT_WINDOW_MARGIN_TOKENS]
+
     def test_judge_batch_on_failure_called_on_parse_error(
         self, isolated_storage, tmp_path
     ):

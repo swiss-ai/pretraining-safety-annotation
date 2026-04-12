@@ -134,7 +134,9 @@ def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
     return (p_o - p_e) / (1 - p_e)
 
 
-def _load_correlation_pairs(split: str | None = None) -> list[dict]:
+def _load_correlation_pairs(
+    split: str | None = None, mode: str | None = None
+) -> list[dict]:
     """Load and join (judge, human) calibration pairs.
 
     Combines two sources:
@@ -153,15 +155,27 @@ def _load_correlation_pairs(split: str | None = None) -> list[dict]:
     judge_agg, human_agg, judge_dec, human_dec.
 
     split: "train", "validation", or None (all).
+    mode: "reflection", "preflection", or None (combined).
+      When set, uses per-mode aggregate/decision keys and per-mode judge prompt.
     """
     review_by_item = build_review_lookup(split=split)
     if not review_by_item:
         return []
 
     runs = load_runs()
-    run_judge_info: dict[int, tuple[str, str]] = {
-        r["iteration"]: (r["judge_prompt"], r["judge_model"]) for r in runs
-    }
+    if mode:
+        _jp_field = f"judge_{mode}_prompt"
+        run_judge_info: dict[int, tuple[str, str]] = {
+            r["iteration"]: (
+                r.get(_jp_field) or r["judge_prompt"],
+                r["judge_model"],
+            )
+            for r in runs
+        }
+    else:
+        run_judge_info: dict[int, tuple[str, str]] = {
+            r["iteration"]: (r["judge_prompt"], r["judge_model"]) for r in runs
+        }
 
     pairs: list[dict] = []
     seen: set[tuple[str, str, str, int]] = set()
@@ -177,16 +191,30 @@ def _load_correlation_pairs(split: str | None = None) -> list[dict]:
             continue
         judge_prompt, judge_model = judge_info
         j = item["judgment"]
+        if mode:
+            j_agg, j_dec = _derive_mode_agg_dec(j, mode)
+            h_agg, h_dec = _derive_mode_review_agg_dec(rev, mode)
+            if j_agg is None or j_dec is None:
+                continue
+            if h_agg is None or h_dec is None:
+                # Fall back to combined review decision
+                h_agg = rev.get("aggregate", 0)
+                h_dec = rev.get("decision", "")
+        else:
+            j_agg = j.get("aggregate", 0)
+            j_dec = j.get("decision", "")
+            h_agg = rev.get("aggregate", 0)
+            h_dec = rev.get("decision", "")
         pairs.append(
             {
                 "judge_prompt": judge_prompt,
                 "judge_model": judge_model,
                 "iteration": iteration,
                 "item_id": item_id,
-                "judge_agg": j.get("aggregate", 0),
-                "human_agg": rev.get("aggregate", 0),
-                "judge_dec": j.get("decision", ""),
-                "human_dec": rev.get("decision", ""),
+                "judge_agg": j_agg,
+                "human_agg": h_agg,
+                "judge_dec": j_dec or "",
+                "human_dec": h_dec or "",
             }
         )
         seen.add((judge_prompt, judge_model, item_id, iteration))
@@ -199,18 +227,38 @@ def _load_correlation_pairs(split: str | None = None) -> list[dict]:
         rev = review_by_item.get((c["item_id"], c["iteration"]))
         if not rev:
             continue
+        cj = c["judgment"]
+        if mode:
+            cj_agg, cj_dec = _derive_mode_agg_dec(cj, mode)
+            ch_agg, ch_dec = _derive_mode_review_agg_dec(rev, mode)
+            if cj_agg is None or cj_dec is None:
+                continue
+            if ch_agg is None or ch_dec is None:
+                ch_agg = rev.get("aggregate", 0)
+                ch_dec = rev.get("decision", "")
+        else:
+            cj_agg = cj.get("aggregate", 0)
+            cj_dec = cj.get("decision", "")
+            ch_agg = rev.get("aggregate", 0)
+            ch_dec = rev.get("decision", "")
         pairs.append(
             {
                 "judge_prompt": c["judge_prompt"],
                 "judge_model": c["judge_model"],
                 "iteration": c["iteration"],
                 "item_id": c["item_id"],
-                "judge_agg": c["judgment"].get("aggregate", 0),
-                "human_agg": rev.get("aggregate", 0),
-                "judge_dec": c["judgment"].get("decision", ""),
-                "human_dec": rev.get("decision", ""),
+                "judge_agg": cj_agg,
+                "human_agg": ch_agg,
+                "judge_dec": cj_dec or "",
+                "human_dec": ch_dec or "",
             }
         )
+
+    # When mode is set, drop pairs from old combined prompts (judge_v*.md)
+    # that predate the per-mode split — they're irrelevant noise.
+    if mode and pairs:
+        _mode_prefix = f"judge_{mode}_v"
+        pairs = [p for p in pairs if p["judge_prompt"].startswith(_mode_prefix)]
 
     return pairs
 
@@ -645,131 +693,836 @@ def _render_loop_history():
                     )
 
 
-def _render_mode_overview(items_by_key: dict) -> None:
-    """Render side-by-side Reflection / Preflection overview panels.
+_MODE_VOICES = {
+    "reflection": ("reflection_1p", "reflection_3p"),
+    "preflection": ("preflection_3p", "preflection_1p"),
+}
 
-    Each panel shows: accept rate, per-voice mean scores, per-dimension means,
-    and judge prompt version.  Old judgments without per-mode decisions render
-    gracefully (showing "n/a").
+
+def _derive_mode_agg_dec(
+    judgment: dict, mode: str, accept_threshold: float = 4.0, floor_threshold: int = 2
+) -> tuple[float | None, str | None]:
+    """Extract per-mode aggregate and decision from a judgment dict.
+
+    Returns the explicit ``{mode}_aggregate`` / ``{mode}_decision`` if present.
+    Falls back to computing from per-voice scores for backward compat with
+    judgments created before the mode split.
     """
-    cfg = load_config()
+    agg = judgment.get(f"{mode}_aggregate")
+    dec = judgment.get(f"{mode}_decision")
+    if agg is not None and dec is not None:
+        return agg, dec
+
+    voices = _MODE_VOICES.get(mode, ())
+    all_scores: list[float] = []
+    for v in voices:
+        part = judgment.get(v)
+        if not isinstance(part, dict):
+            return None, None
+        scores = part.get("scores", {})
+        if not scores:
+            return None, None
+        all_scores.extend(scores.values())
+
+    if not all_scores:
+        return None, None
+
+    agg = sum(all_scores) / len(all_scores)
+    has_floor = any(s <= floor_threshold for s in all_scores)
+    dec = "reject" if has_floor or agg < accept_threshold else "accept"
+    return agg, dec
+
+
+def _derive_mode_review_agg_dec(
+    review: dict, mode: str, accept_threshold: float = 4.0, floor_threshold: int = 2
+) -> tuple[float | None, str | None]:
+    """Extract per-mode aggregate and decision from a human review.
+
+    Returns the explicit ``{mode}_aggregate`` / ``{mode}_decision`` if present.
+    Falls back to computing from per-voice scores in the review.
+    """
+    agg = review.get(f"{mode}_aggregate")
+    dec = review.get(f"{mode}_decision")
+    if agg is not None and dec is not None:
+        return agg, dec
+
+    scores = review.get("scores", {})
+    if not scores:
+        return None, None
+
+    # Per-part review scores: {"reflection_1p": {"dim": val, ...}, ...}
+    is_per_part = isinstance(next(iter(scores.values())), dict)
+    if not is_per_part:
+        return None, None
+
+    voices = _MODE_VOICES.get(mode, ())
+    all_vals: list[float] = []
+    for v in voices:
+        part_scores = scores.get(v, {})
+        if not part_scores:
+            return None, None
+        all_vals.extend(part_scores.values())
+
+    if not all_vals:
+        return None, None
+
+    agg = sum(all_vals) / len(all_vals)
+    has_floor = any(v <= floor_threshold for v in all_vals)
+    dec = "reject" if has_floor or agg < accept_threshold else "accept"
+    return agg, dec
+
+
+_SOURCE_LABEL = {
+    "improve_judge": "J",
+    "improve_generator": "G",
+    "manual": "\u2014",
+    "phase_a": "J",
+    "phase_b": "G",
+}
+_SOURCE_MARKER = {
+    "improve_judge": "diamond",
+    "improve_generator": "triangle",
+    "manual": "circle",
+    "phase_a": "diamond",
+    "phase_b": "triangle",
+}
+
+
+def _render_mode_dashboard(
+    mode: str,
+    runs: list[dict],
+    items_by_key: dict,
+    all_reviews: list[dict],
+    cfg: "AppConfig",
+) -> None:
+    """Render all per-mode panels for a single mode (reflection or preflection).
+
+    Includes: overview card, judge calibration table, trend charts,
+    per-generator acceptance rate bar chart, generator stats, calibration
+    by judge model, and judge-judge correlations.
+    """
+    import re as _re_md
+
     dimensions = cfg.phase2.scoring.dimensions
+    accept_threshold = cfg.phase2.scoring.accept_threshold
+    floor_threshold = getattr(cfg.phase2.scoring, "floor_threshold", 2)
+    voices = _MODE_VOICES[mode]
+    jp_field = f"judge_{mode}_prompt"
+    gp_field = f"gen_{mode}_prompt"
 
-    all_items = list(items_by_key.values())
-    judged = [i for i in all_items if i.get("judgment")]
-    if not judged:
-        return
-
-    _REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
-    _PREFLECTION_VOICES = ("preflection_3p", "preflection_1p")
-
-    def _mode_panel(
-        label: str,
-        decision_key: str,
-        voices: tuple[str, ...],
-        judge_prompt_key: str,
-    ) -> None:
-        """Render one column of the overview for a single mode."""
-        # --- Accept rate ---
-        with_decision = [
-            i for i in judged if i["judgment"].get(decision_key) is not None
-        ]
-        if with_decision:
-            n_acc = sum(
-                1 for i in with_decision if i["judgment"].get(decision_key) == "accept"
+    # --- Compute mode-specific iter_stats ---
+    # Uses _derive_mode_agg_dec to handle old judgments without explicit per-mode keys.
+    mode_iter_stats: list[dict] = []
+    for run in runs:
+        it = run["iteration"]
+        items = load_items_for_iteration(it)
+        judged = [i for i in items if i.get("judgment")]
+        n_acc = 0
+        n_mode = 0
+        agg_scores: list[float] = []
+        for i in judged:
+            m_agg, m_dec = _derive_mode_agg_dec(
+                i["judgment"], mode, accept_threshold, floor_threshold
             )
-            rate = round(n_acc / len(with_decision) * 100, 1)
-            rate_text = f"{rate}%  ({n_acc}/{len(with_decision)})"
+            if m_agg is None:
+                continue
+            n_mode += 1
+            if m_dec == "accept":
+                n_acc += 1
+            agg_scores.append(m_agg)
+        mean_s = statistics.mean(agg_scores) if agg_scores else 0
+        accept_rate = round(n_acc / n_mode * 100, 1) if n_mode else 0
+
+        iter_reviews = [r for r in all_reviews if r["iteration"] == it]
+        iter_items = {(i["item_id"], i["iteration"]): i for i in items}
+        cal_iter = _compute_calibration(iter_reviews, iter_items)
+
+        mode_iter_stats.append(
+            {
+                **run,
+                "judge_prompt": run.get(jp_field) or run.get("judge_prompt") or "",
+                "gen_prompt": run.get(gp_field) or run.get("gen_prompt") or "",
+                "n_acc": n_acc,
+                "n_rej": n_mode - n_acc,
+                "mean_score": mean_s,
+                "accept_rate": accept_rate,
+                "calibration": cal_iter,
+            }
+        )
+
+    # --- (a) Overview card ---
+    all_items = list(items_by_key.values())
+    judged_items = [i for i in all_items if i.get("judgment")]
+
+    with ui.card().classes("w-full q-mt-sm q-pa-md"):
+        ui.label(f"{mode.title()} Overview").classes("text-h6 text-weight-bold")
+
+        # Accept rate (derived with fallback for old judgments)
+        ov_n_acc = 0
+        ov_total = 0
+        for i in judged_items:
+            m_agg, m_dec = _derive_mode_agg_dec(
+                i["judgment"], mode, accept_threshold, floor_threshold
+            )
+            if m_agg is None:
+                continue
+            ov_total += 1
+            if m_dec == "accept":
+                ov_n_acc += 1
+        if ov_total:
+            ov_rate = round(ov_n_acc / ov_total * 100, 1)
+            rate_text = f"{ov_rate}%  ({ov_n_acc}/{ov_total})"
         else:
             rate_text = "n/a"
-
-        ui.label(label).classes("text-h6 text-weight-bold")
         ui.label(f"Accept rate: {rate_text}").classes("text-body1 q-mt-xs")
 
-        # --- Per-voice mean scores ---
-        ui.label("Per-voice mean scores").classes("text-overline text-grey-7 q-mt-md")
-        for voice in voices:
-            aggs = [
-                i["judgment"][voice]["aggregate"]
-                for i in judged
-                if isinstance(i["judgment"].get(voice), dict)
-                and "aggregate" in i["judgment"][voice]
-            ]
-            mean_val = f"{statistics.mean(aggs):.2f}" if aggs else "n/a"
-            ui.label(f"  {voice}: {mean_val}  (n={len(aggs)})").classes("text-body2")
-
-        # --- Per-dimension means (across voices in this mode) ---
-        ui.label("Per-dimension means").classes("text-overline text-grey-7 q-mt-md")
-        for dim in dimensions:
-            scores_for_dim: list[float] = []
-            for i in judged:
-                j = i["judgment"]
+        with ui.row().classes("w-full gap-8 q-mt-sm"):
+            # Per-voice mean scores
+            with ui.column():
+                ui.label("Per-voice mean scores").classes("text-overline text-grey-7")
                 for voice in voices:
-                    part = j.get(voice)
-                    if isinstance(part, dict):
-                        s = part.get("scores", {}).get(dim)
-                        if s is not None:
-                            scores_for_dim.append(s)
-            mean_val = (
-                f"{statistics.mean(scores_for_dim):.2f}" if scores_for_dim else "n/a"
-            )
-            ui.label(f"  {dim}: {mean_val}  (n={len(scores_for_dim)})").classes(
-                "text-body2"
-            )
+                    aggs = [
+                        i["judgment"][voice]["aggregate"]
+                        for i in judged_items
+                        if isinstance(i["judgment"].get(voice), dict)
+                        and "aggregate" in i["judgment"][voice]
+                    ]
+                    mean_val = f"{statistics.mean(aggs):.2f}" if aggs else "n/a"
+                    ui.label(f"  {voice}: {mean_val}  (n={len(aggs)})").classes(
+                        "text-body2"
+                    )
 
-        # --- Judge prompt version ---
+            # Per-dimension means
+            with ui.column():
+                ui.label("Per-dimension means").classes("text-overline text-grey-7")
+                for dim in dimensions:
+                    scores_for_dim: list[float] = []
+                    for i in judged_items:
+                        j = i["judgment"]
+                        for voice in voices:
+                            part = j.get(voice)
+                            if isinstance(part, dict):
+                                s = part.get("scores", {}).get(dim)
+                                if s is not None:
+                                    scores_for_dim.append(s)
+                    mean_val = (
+                        f"{statistics.mean(scores_for_dim):.2f}"
+                        if scores_for_dim
+                        else "n/a"
+                    )
+                    ui.label(f"  {dim}: {mean_val}  (n={len(scores_for_dim)})").classes(
+                        "text-body2"
+                    )
+
+        # Judge prompt version
+        judge_prompt_key = f"judge_prompt_{mode}"
         prompt_versions = {
             i["judgment"].get(judge_prompt_key, "")
-            for i in judged
+            for i in judged_items
             if i["judgment"].get(judge_prompt_key)
         }
         if prompt_versions:
-            import re as _re_ov
 
             def _extract_v(p: str) -> str:
-                m = _re_ov.search(r"_v(\d+)", p)
+                m = _re_md.search(r"_v(\d+)", p)
                 return f"v{m.group(1)}" if m else p
 
             versions_str = ", ".join(sorted({_extract_v(p) for p in prompt_versions}))
         else:
             versions_str = "n/a"
         ui.label(f"Judge prompt: {versions_str}").classes(
-            "text-caption text-grey-7 q-mt-md"
+            "text-caption text-grey-7 q-mt-sm"
         )
 
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        with ui.row().classes("w-full gap-4"):
-            with ui.column().classes("flex-1"):
-                _mode_panel(
-                    "Reflection",
-                    "reflection_decision",
-                    _REFLECTION_VOICES,
-                    "judge_prompt_reflection",
-                )
-            with ui.column().classes("flex-1"):
-                _mode_panel(
-                    "Preflection",
-                    "preflection_decision",
-                    _PREFLECTION_VOICES,
-                    "judge_prompt_preflection",
-                )
-
-        # Combined (deprioritized — small text below panels)
-        n_combined_acc = sum(
-            1 for i in judged if i["judgment"].get("decision") == "accept"
-        )
-        combined_rate = round(n_combined_acc / len(judged) * 100, 1) if judged else 0
-        combined_agg_scores = [i["judgment"].get("aggregate", 0) for i in judged]
-        combined_mean = (
-            f"{statistics.mean(combined_agg_scores):.2f}"
-            if combined_agg_scores
-            else "n/a"
-        )
+    # --- (c) Judge Calibration table ---
+    with ui.card().classes("w-full q-mt-md q-pa-md"):
+        ui.label("Judge Calibration").classes("text-h6 text-weight-bold")
         ui.label(
-            f"Combined: {combined_rate}% accept "
-            f"({n_combined_acc}/{len(judged)}), "
-            f"mean score {combined_mean}"
-        ).classes("text-caption text-grey-6 q-mt-md")
+            "Latest judge prompt per model. Decision agreement (Cohen's \u03ba) and "
+            "aggregate score correlation (Pearson r), by split."
+        ).classes("text-caption text-grey-7")
+
+        _all_pairs = _load_correlation_pairs(mode=mode)
+        if not _all_pairs:
+            _review_lookup = build_review_lookup()
+            _n_reviews_total = len(_review_lookup)
+            _n_train = sum(
+                1 for (iid, _it) in _review_lookup if review_split(iid) == "train"
+            )
+            _n_val = sum(
+                1 for (iid, _it) in _review_lookup if review_split(iid) == "validation"
+            )
+
+            with ui.column().classes("gap-1 q-mt-sm"):
+                ui.label(
+                    f"Reviews: {_n_reviews_total} total — "
+                    f"{_n_train} train, {_n_val} validation"
+                ).classes("text-body2")
+
+                if _n_reviews_total == 0:
+                    ui.label(
+                        "Submit some reviews on /pipeline/review to populate "
+                        "this panel — every reviewed item that already has a "
+                        "judge score will be paired automatically."
+                    ).classes("text-caption text-grey-6")
+                else:
+                    ui.label(
+                        "Reviews exist but none of the reviewed items have a "
+                        "stored judge score for this mode."
+                    ).classes("text-caption text-grey-6")
+        else:
+            # Find latest judge prompt version per judge model
+            _latest_prompt: dict[str, tuple[int, str]] = {}
+            for _p in _all_pairs:
+                _model = _p["judge_model"]
+                _prompt = _p["judge_prompt"]
+                _m = _re_md.search(r"_v(\d+)", _prompt)
+                _v = int(_m.group(1)) if _m else 0
+                if _model not in _latest_prompt or _v > _latest_prompt[_model][0]:
+                    _latest_prompt[_model] = (_v, _prompt)
+
+            def _fmt(x: float | None) -> str:
+                return f"{x:.3f}" if x is not None else "\u2014"
+
+            cal_rows: list[dict] = []
+            for _model in sorted(_latest_prompt):
+                _prompt = _latest_prompt[_model][1]
+                _model_pairs = [
+                    p
+                    for p in _all_pairs
+                    if p["judge_model"] == _model and p["judge_prompt"] == _prompt
+                ]
+                for split_name in ("overall", "train", "validation"):
+                    if split_name == "overall":
+                        sp = _model_pairs
+                    else:
+                        sp = [
+                            p
+                            for p in _model_pairs
+                            if review_split(p["item_id"]) == split_name
+                        ]
+                    if not sp:
+                        cal_rows.append(
+                            {
+                                "model": _model,
+                                "prompt": _prompt,
+                                "split": split_name,
+                                "n": 0,
+                                "kappa": "\u2014",
+                                "pearson": "\u2014",
+                            }
+                        )
+                        continue
+                    agg = _aggregate_correlation_pairs(sp)
+                    entry = agg.get((_prompt, _model), {})
+                    cal_rows.append(
+                        {
+                            "model": _model,
+                            "prompt": _prompt,
+                            "split": split_name,
+                            "n": len(sp),
+                            "kappa": _fmt(entry.get("kappa")),
+                            "pearson": _fmt(entry.get("pearson")),
+                        }
+                    )
+
+            ui.table(
+                columns=[
+                    {
+                        "name": "model",
+                        "label": "Judge Model",
+                        "field": "model",
+                        "align": "left",
+                    },
+                    {
+                        "name": "prompt",
+                        "label": "Prompt",
+                        "field": "prompt",
+                        "align": "left",
+                    },
+                    {
+                        "name": "split",
+                        "label": "Split",
+                        "field": "split",
+                        "align": "left",
+                    },
+                    {"name": "n", "label": "n", "field": "n", "align": "right"},
+                    {
+                        "name": "kappa",
+                        "label": "Decision \u03ba",
+                        "field": "kappa",
+                        "align": "right",
+                    },
+                    {
+                        "name": "pearson",
+                        "label": "Score r",
+                        "field": "pearson",
+                        "align": "right",
+                    },
+                ],
+                rows=cal_rows,
+                row_key="model",
+            ).props("dense flat").classes("w-full")
+
+    # --- (d) Trend Charts ---
+    all_gen_models = sorted(
+        {s.get("generator_model", "unknown") for s in mode_iter_stats}
+    )
+
+    if len(mode_iter_stats) >= 2:
+
+        def _pv(s: str) -> int:
+            m = _re_md.search(r"_v(\d+)", s or "")
+            return int(m.group(1)) if m else 0
+
+        def _build_trend_chart(gen_filter: str | None) -> dict:
+            filtered = (
+                mode_iter_stats
+                if gen_filter is None
+                else [
+                    s for s in mode_iter_stats if s.get("generator_model") == gen_filter
+                ]
+            )
+            labels = [
+                f"J{_pv(s.get('judge_prompt', ''))}/G{_pv(s.get('gen_prompt', ''))}"
+                for s in filtered
+            ]
+            accept_data = [
+                {
+                    "value": s["accept_rate"],
+                    "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
+                    "symbolSize": 10,
+                    "iter": s["iteration"],
+                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
+                }
+                for s in filtered
+            ]
+            score_data = [
+                {
+                    "value": round(s["mean_score"], 2),
+                    "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
+                    "symbolSize": 10,
+                    "iter": s["iteration"],
+                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
+                }
+                for s in filtered
+            ]
+            return {
+                "xAxis": {"type": "category", "data": labels},
+                "yAxis": [
+                    {
+                        "type": "value",
+                        "name": "Accept %",
+                        "min": 0,
+                        "max": 100,
+                        "position": "left",
+                    },
+                    {
+                        "type": "value",
+                        "name": "Mean Score",
+                        "min": 1,
+                        "max": 5,
+                        "position": "right",
+                    },
+                ],
+                "series": [
+                    {
+                        "name": "Accept %",
+                        "type": "line",
+                        "data": accept_data,
+                        "yAxisIndex": 0,
+                        "lineStyle": {"color": "#4caf50"},
+                        "itemStyle": {"color": "#4caf50"},
+                    },
+                    {
+                        "name": "Mean Score",
+                        "type": "line",
+                        "data": score_data,
+                        "yAxisIndex": 1,
+                        "lineStyle": {"color": "#2196f3"},
+                        "itemStyle": {"color": "#2196f3"},
+                    },
+                ],
+                "tooltip": {"trigger": "axis"},
+                "legend": {"bottom": 0},
+            }
+
+        def _best_current_gen_model() -> str | None:
+            """Return the generator model with the highest accept rate under
+            the current-best prompt combo for this mode."""
+
+            def _v(s: str) -> int:
+                m = _re_md.search(r"_v(\d+)", s or "")
+                return int(m.group(1)) if m else 0
+
+            # Filter to mode-specific prompts only (exclude old combined prompts)
+            _mode_stats = [
+                s
+                for s in mode_iter_stats
+                if f"_{mode}_" in (s.get("judge_prompt") or "")
+            ]
+            judged_stats = [s for s in _mode_stats if s["n_acc"] + s["n_rej"] > 0]
+            if not judged_stats:
+                return None
+            latest_judge_v = max(_v(s.get("judge_prompt", "")) for s in judged_stats)
+            latest_gen_v: dict[str, int] = {}
+            for s in judged_stats:
+                gm = s.get("generator_model", "unknown")
+                gv = _v(s.get("gen_prompt", ""))
+                if gv > latest_gen_v.get(gm, -1):
+                    latest_gen_v[gm] = gv
+            pooled: dict[str, list[int]] = {}
+            for s in judged_stats:
+                gm = s.get("generator_model", "unknown")
+                if _v(s.get("judge_prompt", "")) != latest_judge_v:
+                    continue
+                if _v(s.get("gen_prompt", "")) != latest_gen_v.get(gm, -1):
+                    continue
+                acc, rej = pooled.setdefault(gm, [0, 0])
+                pooled[gm] = [acc + s["n_acc"], rej + s["n_rej"]]
+            rates = {gm: a / (a + r) for gm, (a, r) in pooled.items() if (a + r) > 0}
+            return max(rates, key=rates.get) if rates else None
+
+        with ui.row().classes("w-full q-mt-md gap-4"):
+            with ui.card().classes("flex-1 q-pa-md"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Acceptance Rate & Mean Score").classes(
+                        "text-subtitle2 text-weight-bold"
+                    )
+                    if len(all_gen_models) > 1:
+                        gen_options = ["All"] + all_gen_models
+                        default_gen = _best_current_gen_model() or all_gen_models[0]
+                    else:
+                        gen_options = all_gen_models
+                        default_gen = all_gen_models[0] if all_gen_models else None
+
+                trend_chart = (
+                    ui.echart(
+                        _build_trend_chart(
+                            default_gen if len(all_gen_models) > 1 else None
+                        )
+                    )
+                    .classes("w-full")
+                    .style("height: 250px;")
+                )
+
+                if len(all_gen_models) > 1:
+
+                    def _on_gen_filter(e):
+                        val = None if e.value == "All" else e.value
+                        trend_chart.options.update(_build_trend_chart(val))
+                        trend_chart.update()
+
+                    ui.select(
+                        gen_options,
+                        value=default_gen,
+                        label="Generator Model",
+                        on_change=_on_gen_filter,
+                    ).classes("w-48")
+
+            with ui.card().classes("flex-1 q-pa-md"):
+                with ui.row().classes("items-center no-wrap").style("gap: 6px;"):
+                    ui.label("Judge-Human Correlation by Judge Version").classes(
+                        "text-subtitle2 text-weight-bold"
+                    )
+                    _metric_help = (
+                        ui.icon("help_outline")
+                        .classes("text-grey-6 cursor-pointer")
+                        .style("font-size: 16px;")
+                    )
+                    with _metric_help:
+                        ui.tooltip(
+                            "Score Pearson r \u2014 linear correlation between judge "
+                            "and human aggregate scores; +1 = perfectly aligned, "
+                            "0 = no relationship, -1 = anti-aligned. Sensitive "
+                            "to score *trend*, not absolute level.\n\n"
+                            "Decision Cohen's \u03ba \u2014 chance-corrected agreement on "
+                            "the binary accept/reject decision. 1 = perfect, "
+                            "0 = chance, <0 = worse than chance. Penalises "
+                            "agreement that comes from a skewed class prior.\n\n"
+                            "Decision agreement \u2014 raw fraction of items where "
+                            "judge and human picked the same decision (0..1). "
+                            "Easy to read but inflated when one class dominates "
+                            "\u2014 always read alongside \u03ba."
+                        ).style(
+                            "white-space: pre-line; max-width: 360px; "
+                            "font-size: 0.8em;"
+                        )
+                iter_to_gen = {
+                    r["iteration"]: r.get("generator_model", "unknown") for r in runs
+                }
+                cached_corr_pairs = _load_correlation_pairs(mode=mode)
+                version_corrs = _aggregate_correlation_pairs(cached_corr_pairs)
+                if not version_corrs:
+                    ui.label("No judge correlations yet.").classes("text-grey-6")
+                else:
+                    all_models = sorted({m for _, m in version_corrs})
+                    model_options = all_models + (
+                        ["All (mean)", "All (min)"] if len(all_models) > 1 else []
+                    )
+                    default_model = (
+                        all_models[0] if len(all_models) == 1 else "All (mean)"
+                    )
+
+                    all_prompts = sorted(
+                        {p for p, _ in version_corrs},
+                        key=lambda p: (
+                            int(m.group(1))
+                            if (m := _re_md.search(r"_v(\d+)", p))
+                            else 0
+                        ),
+                    )
+
+                    corr_state = {
+                        "judge_model": default_model,
+                        "gen_filter": None,
+                        "split": None,
+                    }
+
+                    def _build_corr_chart_filtered() -> dict:
+                        """Build correlation chart using current corr_state filters."""
+                        gf = corr_state["gen_filter"]
+                        sp = corr_state["split"]
+                        if sp:
+                            split_pairs = [
+                                p
+                                for p in cached_corr_pairs
+                                if review_split(p["item_id"]) == sp
+                            ]
+                        else:
+                            split_pairs = cached_corr_pairs
+                        vc = (
+                            _compute_correlation_by_judge_version(
+                                gen_filter=gf,
+                                iter_to_gen=iter_to_gen,
+                                _pairs=split_pairs,
+                            )
+                            if gf
+                            else _aggregate_correlation_pairs(split_pairs)
+                        )
+                        sm = corr_state["judge_model"]
+                        cur_models = sorted({m for _, m in vc}) if vc else []
+
+                        def _agg(prompt, metric):
+                            if sm.startswith("All"):
+                                vals = [
+                                    vc.get((prompt, m), {}).get(metric)
+                                    for m in cur_models
+                                ]
+                                vals = [v for v in vals if v is not None]
+                                if not vals:
+                                    return None
+                                if "mean" in sm.lower():
+                                    return round(statistics.mean(vals), 3)
+                                return round(min(vals), 3)
+                            entry = vc.get((prompt, sm), {})
+                            v = entry.get(metric)
+                            return round(v, 3) if v is not None else None
+
+                        corr_data = [_agg(p, "pearson") for p in all_prompts]
+                        kappa_data = [_agg(p, "kappa") for p in all_prompts]
+                        agreement_data = [_agg(p, "agreement") for p in all_prompts]
+                        return {
+                            "xAxis": {
+                                "type": "category",
+                                "data": all_prompts,
+                            },
+                            "yAxis": {
+                                "type": "value",
+                                "name": "Score (-1..1)",
+                                "min": -1,
+                                "max": 1,
+                            },
+                            "series": [
+                                {
+                                    "name": "Score Pearson r",
+                                    "type": "line",
+                                    "data": corr_data,
+                                    "itemStyle": {"color": "#ff9800"},
+                                    "connectNulls": True,
+                                },
+                                {
+                                    "name": "Decision Cohen's \u03ba",
+                                    "type": "line",
+                                    "data": kappa_data,
+                                    "lineStyle": {"color": "#4caf50"},
+                                    "itemStyle": {"color": "#4caf50"},
+                                    "connectNulls": True,
+                                },
+                                {
+                                    "name": "Decision agreement",
+                                    "type": "line",
+                                    "data": agreement_data,
+                                    "lineStyle": {
+                                        "color": "#2196f3",
+                                        "type": "dashed",
+                                    },
+                                    "itemStyle": {"color": "#2196f3"},
+                                    "connectNulls": True,
+                                },
+                            ],
+                            "tooltip": {"trigger": "axis"},
+                            "legend": {"bottom": 0},
+                        }
+
+                    corr_chart = (
+                        ui.echart(_build_corr_chart_filtered())
+                        .classes("w-full")
+                        .style("height: 250px;")
+                    )
+
+                    def _refresh_corr_chart():
+                        corr_chart.options.update(_build_corr_chart_filtered())
+                        corr_chart.update()
+
+                    with ui.row().classes("gap-2"):
+                        if len(model_options) > 1:
+
+                            def _on_model_change(e):
+                                corr_state["judge_model"] = e.value
+                                _refresh_corr_chart()
+
+                            ui.select(
+                                model_options,
+                                value=default_model,
+                                label="Judge Model",
+                                on_change=_on_model_change,
+                            ).classes("w-48")
+
+                        if len(all_gen_models) > 1:
+                            corr_gen_options = ["All"] + all_gen_models
+
+                            def _on_corr_gen_filter(e):
+                                corr_state["gen_filter"] = (
+                                    None if e.value == "All" else e.value
+                                )
+                                _refresh_corr_chart()
+
+                            ui.select(
+                                corr_gen_options,
+                                value="All",
+                                label="Generator Model",
+                                on_change=_on_corr_gen_filter,
+                            ).classes("w-48")
+
+                        def _on_split_change(e):
+                            corr_state["split"] = None if e.value == "all" else e.value
+                            _refresh_corr_chart()
+
+                        ui.select(
+                            ["all", "train", "validation"],
+                            value="all",
+                            label="Review Split",
+                            on_change=_on_split_change,
+                        ).classes("w-36")
+
+    # --- (e) Per-Generator Acceptance Rate Bar Chart (auto-refreshing) ---
+    _acc_rate_state = {"prompt_mode": "best", "min_samples": 50}
+    _acc_rate_container = ui.column().classes("w-full")
+
+    def _draw_acc_rate(r, s):
+        _acc_rate_container.clear()
+        with _acc_rate_container:
+            _render_acceptance_rate_chart(
+                r,
+                s,
+                _acc_rate_state["prompt_mode"],
+                min_samples=_acc_rate_state["min_samples"],
+                on_prompt_mode_change=lambda e: _on_acc_prompt_mode(e),
+                on_min_samples_change=lambda e: _on_acc_min_samples(e),
+                mode=mode,
+            )
+
+    def _on_acc_prompt_mode(e):
+        _acc_rate_state["prompt_mode"] = e.value
+        fresh_runs = load_runs()
+        fresh_stats = _build_mode_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    def _on_acc_min_samples(e):
+        _acc_rate_state["min_samples"] = 50 if e.value else 0
+        fresh_runs = load_runs()
+        fresh_stats = _build_mode_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    def _build_mode_acc_stats(fresh_runs):
+        fresh_stats = []
+        for run in fresh_runs:
+            it = run["iteration"]
+            items = load_items_for_iteration(it)
+            judged = [i for i in items if i.get("judgment")]
+            n_acc = 0
+            n_mode = 0
+            _agg_scores: list[float] = []
+            for i in judged:
+                _ma, _md = _derive_mode_agg_dec(
+                    i["judgment"], mode, accept_threshold, floor_threshold
+                )
+                if _ma is None:
+                    continue
+                n_mode += 1
+                if _md == "accept":
+                    n_acc += 1
+                _agg_scores.append(_ma)
+            mean_s = statistics.mean(_agg_scores) if _agg_scores else 0
+            accept_rate = round(n_acc / n_mode * 100, 1) if n_mode else 0
+            fresh_stats.append(
+                {
+                    **run,
+                    "judge_prompt": run.get(jp_field) or run.get("judge_prompt") or "",
+                    "gen_prompt": run.get(gp_field) or run.get("gen_prompt") or "",
+                    "n_acc": n_acc,
+                    "n_rej": n_mode - n_acc,
+                    "mean_score": mean_s,
+                    "accept_rate": accept_rate,
+                }
+            )
+        return fresh_stats
+
+    _draw_acc_rate(runs, mode_iter_stats)
+
+    _acc_rate_n_runs = [len(runs)]
+
+    def _refresh_acc_rate():
+        fresh_runs = load_runs()
+        if len(fresh_runs) == _acc_rate_n_runs[0]:
+            return
+        _acc_rate_n_runs[0] = len(fresh_runs)
+        fresh_stats = _build_mode_acc_stats(fresh_runs)
+        _draw_acc_rate(fresh_runs, fresh_stats)
+
+    ui.timer(30.0, _refresh_acc_rate)
+
+    # --- (f) Generator Stats ---
+    _render_generator_stats_panel(runs, mode_iter_stats, mode=mode)
+
+    # --- (g) Calibration by Judge Model bar chart ---
+    _cal_bar_pairs = _load_correlation_pairs(mode=mode)
+    with ui.card().classes("w-full q-mt-md q-pa-md"):
+        with ui.row().classes("items-center gap-2"):
+            ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
+
+            def _on_cal_bar_split(e):
+                sp = None if e.value == "all" else e.value
+                _cal_bar_chart_area.clear()
+                with _cal_bar_chart_area:
+                    _render_calibration_bar_chart(
+                        pairs=_cal_bar_pairs, split=sp, _wrap_card=False
+                    )
+
+            ui.select(
+                ["all", "train", "validation"],
+                value="all",
+                label="Review Split",
+                on_change=_on_cal_bar_split,
+            ).classes("w-36")
+
+        _cal_bar_chart_area = ui.column().classes("w-full")
+        with _cal_bar_chart_area:
+            _render_calibration_bar_chart(pairs=_cal_bar_pairs, _wrap_card=False)
+
+    # --- (h) Judge-Judge Correlations ---
+    _render_judge_judge_correlations(runs, mode=mode)
 
 
 def _render_acceptance_rate_chart(
@@ -779,6 +1532,7 @@ def _render_acceptance_rate_chart(
     min_samples: int = 0,
     on_prompt_mode_change=None,
     on_min_samples_change=None,
+    mode: str | None = None,
 ) -> None:
     """Render per-generator-model acceptance rate bar chart with binomial 95% CI.
 
@@ -789,6 +1543,7 @@ def _render_acceptance_rate_chart(
     prompt_mode: "latest" uses the latest gen prompt version, "best" picks the
     gen prompt version with the highest acceptance rate.
     min_samples: only include iterations with more than this many judged samples.
+    mode: when set, filter out old pre-split prompt entries (e.g. ``judge_v50.md``).
     """
     import math
     import re as _re_ar
@@ -798,6 +1553,13 @@ def _render_acceptance_rate_chart(
         if not m:
             m = _re_ar.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
+
+    # Drop entries with old combined prompts so their version numbers
+    # (e.g. judge_v50) don't mask newer mode-specific ones (judge_reflection_v3).
+    if mode:
+        iter_stats = [
+            s for s in iter_stats if f"_{mode}_" in (s.get("judge_prompt") or "")
+        ]
 
     if not iter_stats:
         return
@@ -1000,7 +1762,9 @@ def _render_acceptance_rate_chart(
         ui.echart(chart_opts).classes("w-full").style("height: 340px;")
 
 
-def _render_generator_stats_panel(runs: list[dict], iter_stats: list[dict]) -> None:
+def _render_generator_stats_panel(
+    runs: list[dict], iter_stats: list[dict], mode: str | None = None
+) -> None:
     """Render closable panel with per-generator stats for the latest prompt version.
 
     Shows failure rate, accept/reject counts, mean score, mean latency, etc.
@@ -1012,6 +1776,12 @@ def _render_generator_stats_panel(runs: list[dict], iter_stats: list[dict]) -> N
         if not m:
             m = _re_gs.search(r"_v(\d+)", prompt_str)
         return int(m.group(1)) if m else 0
+
+    # Drop entries with old combined prompts (see _render_acceptance_rate_chart).
+    if mode:
+        iter_stats = [
+            s for s in iter_stats if f"_{mode}_" in (s.get("gen_prompt") or "")
+        ]
 
     if not iter_stats:
         return
@@ -1487,11 +2257,14 @@ def _render_batch_rate_table(
             ).classes("w-full")
 
 
-def _render_judge_judge_correlations(runs: list[dict]) -> None:
+def _render_judge_judge_correlations(runs: list[dict], mode: str | None = None) -> None:
     """Render pairwise judge-judge correlation matrix/table.
 
     For each pair of judge models, computes Pearson r on scores and Cohen's kappa
     on decisions for items judged by both.
+
+    mode: "reflection", "preflection", or None (combined).
+      When set, uses per-mode aggregate/decision keys.
     """
     import re as _re_jj
 
@@ -1543,12 +2316,16 @@ def _render_judge_judge_correlations(runs: list[dict]) -> None:
                 if m_a in judgments and m_b in judgments:
                     j_a = judgments[m_a]
                     j_b = judgments[m_b]
-                    agg_a = j_a.get("aggregate")
-                    agg_b = j_b.get("aggregate")
+                    if mode:
+                        agg_a, dec_a = _derive_mode_agg_dec(j_a, mode)
+                        agg_b, dec_b = _derive_mode_agg_dec(j_b, mode)
+                    else:
+                        agg_a = j_a.get("aggregate")
+                        agg_b = j_b.get("aggregate")
+                        dec_a = j_a.get("decision", "")
+                        dec_b = j_b.get("decision", "")
                     if agg_a is not None and agg_b is not None:
                         score_pairs.append((agg_a, agg_b))
-                    dec_a = j_a.get("decision", "")
-                    dec_b = j_b.get("decision", "")
                     if dec_a and dec_b:
                         decision_pairs.append((dec_a, dec_b))
             pair_results[(m_a, m_b)] = {
@@ -1690,10 +2467,7 @@ def pipeline_monitoring_page():
             }
         )
 
-    # --- Reflection / Preflection Overview (side-by-side) ---
-    _render_mode_overview(items_by_key)
-
-    # --- Reviews per Reviewer ---
+    # --- Reviews per Reviewer (shared) ---
     with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
         ui.label("Reviews per Reviewer").classes("text-h6 text-weight-bold")
 
@@ -1734,609 +2508,20 @@ def pipeline_monitoring_page():
                 }
             ).classes("w-full").style(f"height: {max(80, 28 * len(_names) + 50)}px;")
 
-    # --- Judge Calibration Panel (latest judge prompt per model) ---
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        ui.label("Judge Calibration").classes("text-h6 text-weight-bold")
-        ui.label(
-            "Latest judge prompt per model. Decision agreement (Cohen's κ) and "
-            "aggregate score correlation (Pearson r), by split."
-        ).classes("text-caption text-grey-7")
+    # --- Mode tabs (Reflection / Preflection) ---
+    cfg = load_config()
+    with ui.tabs().classes("w-full q-mx-md q-mt-md") as mode_tabs:
+        refl_tab = ui.tab("Reflection")
+        prefl_tab = ui.tab("Preflection")
 
-        _all_pairs = _load_correlation_pairs()
-        if not _all_pairs:
-            # Diagnose: review counts (by split) + whether the items they
-            # belong to have stored judgments at all.
-            _review_lookup = build_review_lookup()
-            _n_reviews_total = len(_review_lookup)
-            _n_train = sum(
-                1 for (iid, _it) in _review_lookup if review_split(iid) == "train"
-            )
-            _n_val = sum(
-                1 for (iid, _it) in _review_lookup if review_split(iid) == "validation"
-            )
+    with ui.tab_panels(mode_tabs, value=refl_tab).classes("w-full"):
+        with ui.tab_panel(refl_tab):
+            _render_mode_dashboard("reflection", runs, items_by_key, all_reviews, cfg)
+        with ui.tab_panel(prefl_tab):
+            _render_mode_dashboard("preflection", runs, items_by_key, all_reviews, cfg)
 
-            with ui.column().classes("gap-1 q-mt-sm"):
-                ui.label(
-                    f"Reviews: {_n_reviews_total} total — "
-                    f"{_n_train} train, {_n_val} validation"
-                ).classes("text-body2")
-
-                if _n_reviews_total == 0:
-                    ui.label(
-                        "Submit some reviews on /pipeline/review to populate "
-                        "this panel — every reviewed item that already has a "
-                        "judge score will be paired automatically."
-                    ).classes("text-caption text-grey-6")
-                else:
-                    ui.label(
-                        "Reviews exist but none of the reviewed items have a "
-                        "stored judge score. This usually means the reviews "
-                        "are for items whose original judgment was never "
-                        "saved (very old data). Run "
-                    ).classes("text-caption text-grey-6")
-                    ui.code("python -m pipeline.improver_tools rejudge_all").classes(
-                        "text-caption"
-                    )
-                    ui.label(
-                        "to re-judge every reviewed item with the current "
-                        "judge prompts and populate this panel."
-                    ).classes("text-caption text-grey-6")
-        else:
-            import re as _re_panel
-
-            # Find latest judge prompt version per judge model
-            _latest_prompt: dict[str, tuple[int, str]] = {}
-            for _p in _all_pairs:
-                _model = _p["judge_model"]
-                _prompt = _p["judge_prompt"]
-                _m = _re_panel.search(r"_v(\d+)", _prompt)
-                _v = int(_m.group(1)) if _m else 0
-                if _model not in _latest_prompt or _v > _latest_prompt[_model][0]:
-                    _latest_prompt[_model] = (_v, _prompt)
-
-            def _fmt(x: float | None) -> str:
-                return f"{x:.3f}" if x is not None else "—"
-
-            rows: list[dict] = []
-            for _model in sorted(_latest_prompt):
-                _prompt = _latest_prompt[_model][1]
-                _model_pairs = [
-                    p
-                    for p in _all_pairs
-                    if p["judge_model"] == _model and p["judge_prompt"] == _prompt
-                ]
-                for split_name in ("overall", "train", "validation"):
-                    if split_name == "overall":
-                        sp = _model_pairs
-                    else:
-                        sp = [
-                            p
-                            for p in _model_pairs
-                            if review_split(p["item_id"]) == split_name
-                        ]
-                    if not sp:
-                        rows.append(
-                            {
-                                "model": _model,
-                                "prompt": _prompt,
-                                "split": split_name,
-                                "n": 0,
-                                "kappa": "—",
-                                "pearson": "—",
-                            }
-                        )
-                        continue
-                    agg = _aggregate_correlation_pairs(sp)
-                    entry = agg.get((_prompt, _model), {})
-                    rows.append(
-                        {
-                            "model": _model,
-                            "prompt": _prompt,
-                            "split": split_name,
-                            "n": len(sp),
-                            "kappa": _fmt(entry.get("kappa")),
-                            "pearson": _fmt(entry.get("pearson")),
-                        }
-                    )
-
-            ui.table(
-                columns=[
-                    {
-                        "name": "model",
-                        "label": "Judge Model",
-                        "field": "model",
-                        "align": "left",
-                    },
-                    {
-                        "name": "prompt",
-                        "label": "Prompt",
-                        "field": "prompt",
-                        "align": "left",
-                    },
-                    {
-                        "name": "split",
-                        "label": "Split",
-                        "field": "split",
-                        "align": "left",
-                    },
-                    {"name": "n", "label": "n", "field": "n", "align": "right"},
-                    {
-                        "name": "kappa",
-                        "label": "Decision κ",
-                        "field": "kappa",
-                        "align": "right",
-                    },
-                    {
-                        "name": "pearson",
-                        "label": "Score r",
-                        "field": "pearson",
-                        "align": "right",
-                    },
-                ],
-                rows=rows,
-                row_key="model",
-            ).props("dense flat").classes("w-full")
-
-    # --- Trend Charts ---
-    _SOURCE_LABEL = {
-        "improve_judge": "J",
-        "improve_generator": "G",
-        "manual": "\u2014",
-        "phase_a": "J",
-        "phase_b": "G",
-    }
-    _SOURCE_MARKER = {
-        "improve_judge": "diamond",
-        "improve_generator": "triangle",
-        "manual": "circle",
-        "phase_a": "diamond",
-        "phase_b": "triangle",
-    }
-
-    # Collect distinct generator models for dropdown
-    all_gen_models = sorted({s.get("generator_model", "unknown") for s in iter_stats})
-
-    if len(iter_stats) >= 2:
-        import re as _re_trend
-
-        def _pv(s: str) -> int:
-            m = _re_trend.search(r"_v(\d+)", s or "")
-            return int(m.group(1)) if m else 0
-
-        def _build_trend_chart(gen_filter: str | None) -> dict:
-            filtered = (
-                iter_stats
-                if gen_filter is None
-                else [s for s in iter_stats if s.get("generator_model") == gen_filter]
-            )
-            labels = [
-                f"J{_pv(s.get('judge_prompt', ''))}/G{_pv(s.get('gen_prompt', ''))}"
-                for s in filtered
-            ]
-            accept_data = [
-                {
-                    "value": s["accept_rate"],
-                    "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
-                    "symbolSize": 10,
-                    "iter": s["iteration"],
-                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
-                }
-                for s in filtered
-            ]
-            score_data = [
-                {
-                    "value": round(s["mean_score"], 2),
-                    "symbol": _SOURCE_MARKER.get(s.get("source", "manual"), "circle"),
-                    "symbolSize": 10,
-                    "iter": s["iteration"],
-                    "src": _SOURCE_LABEL.get(s.get("source", "manual"), ""),
-                }
-                for s in filtered
-            ]
-            return {
-                "xAxis": {"type": "category", "data": labels},
-                "yAxis": [
-                    {
-                        "type": "value",
-                        "name": "Accept %",
-                        "min": 0,
-                        "max": 100,
-                        "position": "left",
-                    },
-                    {
-                        "type": "value",
-                        "name": "Mean Score",
-                        "min": 1,
-                        "max": 5,
-                        "position": "right",
-                    },
-                ],
-                "series": [
-                    {
-                        "name": "Accept %",
-                        "type": "line",
-                        "data": accept_data,
-                        "yAxisIndex": 0,
-                        "lineStyle": {"color": "#4caf50"},
-                        "itemStyle": {"color": "#4caf50"},
-                    },
-                    {
-                        "name": "Mean Score",
-                        "type": "line",
-                        "data": score_data,
-                        "yAxisIndex": 1,
-                        "lineStyle": {"color": "#2196f3"},
-                        "itemStyle": {"color": "#2196f3"},
-                    },
-                ],
-                "tooltip": {"trigger": "axis"},
-                "legend": {"bottom": 0},
-            }
-
-        def _best_current_gen_model() -> str | None:
-            """Return the generator model with the highest accept rate under
-            the current-best prompt combo: (latest judge prompt, model's own
-            latest gen prompt). Returns None if no judged runs exist yet.
-            """
-            import re as _re_bcg
-
-            def _v(s: str) -> int:
-                m = _re_bcg.search(r"_v(\d+)", s or "")
-                return int(m.group(1)) if m else 0
-
-            judged_stats = [s for s in iter_stats if s["n_acc"] + s["n_rej"] > 0]
-            if not judged_stats:
-                return None
-            latest_judge_v = max(_v(s.get("judge_prompt", "")) for s in judged_stats)
-            latest_gen_v: dict[str, int] = {}
-            for s in judged_stats:
-                gm = s.get("generator_model", "unknown")
-                gv = _v(s.get("gen_prompt", ""))
-                if gv > latest_gen_v.get(gm, -1):
-                    latest_gen_v[gm] = gv
-            # Pool n_acc / n_rej across iterations matching the current combo,
-            # then pick the model with the highest pooled accept rate.
-            pooled: dict[str, list[int]] = {}
-            for s in judged_stats:
-                gm = s.get("generator_model", "unknown")
-                if _v(s.get("judge_prompt", "")) != latest_judge_v:
-                    continue
-                if _v(s.get("gen_prompt", "")) != latest_gen_v.get(gm, -1):
-                    continue
-                acc, rej = pooled.setdefault(gm, [0, 0])
-                pooled[gm] = [acc + s["n_acc"], rej + s["n_rej"]]
-            rates = {gm: a / (a + r) for gm, (a, r) in pooled.items() if (a + r) > 0}
-            return max(rates, key=rates.get) if rates else None
-
-        with ui.row().classes("w-full q-mx-md q-mt-md gap-4"):
-            with ui.card().classes("flex-1 q-pa-md"):
-                with ui.row().classes("items-center gap-2"):
-                    ui.label("Acceptance Rate & Mean Score").classes(
-                        "text-subtitle2 text-weight-bold"
-                    )
-                    if len(all_gen_models) > 1:
-                        gen_options = ["All"] + all_gen_models
-                        default_gen = _best_current_gen_model() or all_gen_models[0]
-                    else:
-                        gen_options = all_gen_models
-                        default_gen = all_gen_models[0] if all_gen_models else None
-
-                trend_chart = (
-                    ui.echart(
-                        _build_trend_chart(
-                            default_gen if len(all_gen_models) > 1 else None
-                        )
-                    )
-                    .classes("w-full")
-                    .style("height: 250px;")
-                )
-
-                if len(all_gen_models) > 1:
-
-                    def _on_gen_filter(e):
-                        val = None if e.value == "All" else e.value
-                        trend_chart.options.update(_build_trend_chart(val))
-                        trend_chart.update()
-
-                    ui.select(
-                        gen_options,
-                        value=default_gen,
-                        label="Generator Model",
-                        on_change=_on_gen_filter,
-                    ).classes("w-48")
-
-            with ui.card().classes("flex-1 q-pa-md"):
-                with ui.row().classes("items-center no-wrap").style("gap: 6px;"):
-                    ui.label("Judge-Human Correlation by Judge Version").classes(
-                        "text-subtitle2 text-weight-bold"
-                    )
-                    _metric_help = (
-                        ui.icon("help_outline")
-                        .classes("text-grey-6 cursor-pointer")
-                        .style("font-size: 16px;")
-                    )
-                    with _metric_help:
-                        ui.tooltip(
-                            "Score Pearson r — linear correlation between judge "
-                            "and human aggregate scores; +1 = perfectly aligned, "
-                            "0 = no relationship, -1 = anti-aligned. Sensitive "
-                            "to score *trend*, not absolute level.\n\n"
-                            "Decision Cohen's κ — chance-corrected agreement on "
-                            "the binary accept/reject decision. 1 = perfect, "
-                            "0 = chance, <0 = worse than chance. Penalises "
-                            "agreement that comes from a skewed class prior.\n\n"
-                            "Decision agreement — raw fraction of items where "
-                            "judge and human picked the same decision (0..1). "
-                            "Easy to read but inflated when one class dominates "
-                            "— always read alongside κ."
-                        ).style(
-                            "white-space: pre-line; max-width: 360px; "
-                            "font-size: 0.8em;"
-                        )
-                # Load correlation data once, filter in memory on dropdown change
-                iter_to_gen = {
-                    r["iteration"]: r.get("generator_model", "unknown") for r in runs
-                }
-                cached_corr_pairs = _load_correlation_pairs()
-                version_corrs = _aggregate_correlation_pairs(cached_corr_pairs)
-                if not version_corrs:
-                    ui.label("No judge correlations yet.").classes("text-grey-6")
-                else:
-                    all_models = sorted({m for _, m in version_corrs})
-                    model_options = all_models + (
-                        ["All (mean)", "All (min)"] if len(all_models) > 1 else []
-                    )
-                    default_model = (
-                        all_models[0] if len(all_models) == 1 else "All (mean)"
-                    )
-
-                    import re as _re
-
-                    all_prompts = sorted(
-                        {p for p, _ in version_corrs},
-                        key=lambda p: (
-                            int(m.group(1)) if (m := _re.search(r"_v(\d+)", p)) else 0
-                        ),
-                    )
-
-                    # Correlation chart state: tracks judge model, generator filter, and review split
-                    corr_state = {
-                        "judge_model": default_model,
-                        "gen_filter": None,
-                        "split": None,
-                    }
-
-                    def _build_corr_chart_filtered() -> dict:
-                        """Build correlation chart using current corr_state filters."""
-                        gf = corr_state["gen_filter"]
-                        sp = corr_state["split"]
-                        # Filter pairs by split
-                        if sp:
-                            split_pairs = [
-                                p
-                                for p in cached_corr_pairs
-                                if review_split(p["item_id"]) == sp
-                            ]
-                        else:
-                            split_pairs = cached_corr_pairs
-                        vc = (
-                            _compute_correlation_by_judge_version(
-                                gen_filter=gf,
-                                iter_to_gen=iter_to_gen,
-                                _pairs=split_pairs,
-                            )
-                            if gf
-                            else _aggregate_correlation_pairs(split_pairs)
-                        )
-                        sm = corr_state["judge_model"]
-                        cur_models = sorted({m for _, m in vc}) if vc else []
-
-                        def _agg(prompt, metric):
-                            if sm.startswith("All"):
-                                vals = [
-                                    vc.get((prompt, m), {}).get(metric)
-                                    for m in cur_models
-                                ]
-                                vals = [v for v in vals if v is not None]
-                                if not vals:
-                                    return None
-                                if "mean" in sm.lower():
-                                    return round(statistics.mean(vals), 3)
-                                return round(min(vals), 3)
-                            entry = vc.get((prompt, sm), {})
-                            v = entry.get(metric)
-                            return round(v, 3) if v is not None else None
-
-                        corr_data = [_agg(p, "pearson") for p in all_prompts]
-                        kappa_data = [_agg(p, "kappa") for p in all_prompts]
-                        agreement_data = [_agg(p, "agreement") for p in all_prompts]
-                        return {
-                            "xAxis": {"type": "category", "data": all_prompts},
-                            "yAxis": {
-                                "type": "value",
-                                "name": "Score (-1..1)",
-                                "min": -1,
-                                "max": 1,
-                            },
-                            "series": [
-                                {
-                                    "name": "Score Pearson r",
-                                    "type": "line",
-                                    "data": corr_data,
-                                    "itemStyle": {"color": "#ff9800"},
-                                    "connectNulls": True,
-                                },
-                                {
-                                    "name": "Decision Cohen's κ",
-                                    "type": "line",
-                                    "data": kappa_data,
-                                    "lineStyle": {"color": "#4caf50"},
-                                    "itemStyle": {"color": "#4caf50"},
-                                    "connectNulls": True,
-                                },
-                                {
-                                    "name": "Decision agreement",
-                                    "type": "line",
-                                    "data": agreement_data,
-                                    "lineStyle": {
-                                        "color": "#2196f3",
-                                        "type": "dashed",
-                                    },
-                                    "itemStyle": {"color": "#2196f3"},
-                                    "connectNulls": True,
-                                },
-                            ],
-                            "tooltip": {"trigger": "axis"},
-                            "legend": {"bottom": 0},
-                        }
-
-                    corr_chart = (
-                        ui.echart(_build_corr_chart_filtered())
-                        .classes("w-full")
-                        .style("height: 250px;")
-                    )
-
-                    def _refresh_corr_chart():
-                        corr_chart.options.update(_build_corr_chart_filtered())
-                        corr_chart.update()
-
-                    with ui.row().classes("gap-2"):
-                        if len(model_options) > 1:
-
-                            def _on_model_change(e):
-                                corr_state["judge_model"] = e.value
-                                _refresh_corr_chart()
-
-                            ui.select(
-                                model_options,
-                                value=default_model,
-                                label="Judge Model",
-                                on_change=_on_model_change,
-                            ).classes("w-48")
-
-                        if len(all_gen_models) > 1:
-                            corr_gen_options = ["All"] + all_gen_models
-
-                            def _on_corr_gen_filter(e):
-                                corr_state["gen_filter"] = (
-                                    None if e.value == "All" else e.value
-                                )
-                                _refresh_corr_chart()
-
-                            ui.select(
-                                corr_gen_options,
-                                value="All",
-                                label="Generator Model",
-                                on_change=_on_corr_gen_filter,
-                            ).classes("w-48")
-
-                        def _on_split_change(e):
-                            corr_state["split"] = None if e.value == "all" else e.value
-                            _refresh_corr_chart()
-
-                        ui.select(
-                            ["all", "train", "validation"],
-                            value="all",
-                            label="Review Split",
-                            on_change=_on_split_change,
-                        ).classes("w-36")
-
-    # --- Per-Generator Acceptance Rate Bar Chart (auto-refreshing) ---
-    _acc_rate_state = {"prompt_mode": "best", "min_samples": 50}
-    _acc_rate_container = ui.column().classes("w-full")
-
-    def _draw_acc_rate(r, s):
-        _acc_rate_container.clear()
-        with _acc_rate_container:
-            _render_acceptance_rate_chart(
-                r,
-                s,
-                _acc_rate_state["prompt_mode"],
-                min_samples=_acc_rate_state["min_samples"],
-                on_prompt_mode_change=lambda e: _on_acc_prompt_mode(e),
-                on_min_samples_change=lambda e: _on_acc_min_samples(e),
-            )
-
-    def _on_acc_prompt_mode(e):
-        _acc_rate_state["prompt_mode"] = e.value
-        fresh_runs = load_runs()
-        fresh_stats = _build_acc_stats(fresh_runs)
-        _draw_acc_rate(fresh_runs, fresh_stats)
-
-    def _on_acc_min_samples(e):
-        _acc_rate_state["min_samples"] = 50 if e.value else 0
-        fresh_runs = load_runs()
-        fresh_stats = _build_acc_stats(fresh_runs)
-        _draw_acc_rate(fresh_runs, fresh_stats)
-
-    def _build_acc_stats(fresh_runs):
-        fresh_stats = []
-        for run in fresh_runs:
-            it = run["iteration"]
-            items = load_items_for_iteration(it)
-            judged = [i for i in items if i.get("judgment")]
-            n_acc = sum(1 for i in judged if i["judgment"].get("decision") == "accept")
-            scores = [i["judgment"].get("aggregate", 0) for i in judged]
-            mean_s = statistics.mean(scores) if scores else 0
-            accept_rate = round(n_acc / len(judged) * 100, 1) if judged else 0
-            fresh_stats.append(
-                {
-                    **run,
-                    "n_acc": n_acc,
-                    "n_rej": len(judged) - n_acc,
-                    "mean_score": mean_s,
-                    "accept_rate": accept_rate,
-                }
-            )
-        return fresh_stats
-
-    _draw_acc_rate(runs, iter_stats)
-
-    _acc_rate_n_runs = [len(runs)]  # mutable tracker for change detection
-
-    def _refresh_acc_rate():
-        fresh_runs = load_runs()
-        if len(fresh_runs) == _acc_rate_n_runs[0]:
-            return  # no new iterations
-        _acc_rate_n_runs[0] = len(fresh_runs)
-        fresh_stats = _build_acc_stats(fresh_runs)
-        _draw_acc_rate(fresh_runs, fresh_stats)
-
-    ui.timer(30.0, _refresh_acc_rate)
-
-    # --- Generator Stats (closable, latest prompt) ---
-    _render_generator_stats_panel(runs, iter_stats)
-
-    # --- Per-Judge Calibration Bar Chart (with split selector inside card) ---
-    _cal_bar_pairs = _load_correlation_pairs()
-    with ui.card().classes("w-full q-mx-md q-mt-md q-pa-md"):
-        with ui.row().classes("items-center gap-2"):
-            ui.label("Calibration by Judge Model").classes("text-h6 text-weight-bold")
-
-            def _on_cal_bar_split(e):
-                sp = None if e.value == "all" else e.value
-                _cal_bar_chart_area.clear()
-                with _cal_bar_chart_area:
-                    _render_calibration_bar_chart(
-                        pairs=_cal_bar_pairs, split=sp, _wrap_card=False
-                    )
-
-            ui.select(
-                ["all", "train", "validation"],
-                value="all",
-                label="Review Split",
-                on_change=_on_cal_bar_split,
-            ).classes("w-36")
-
-        _cal_bar_chart_area = ui.column().classes("w-full")
-        with _cal_bar_chart_area:
-            _render_calibration_bar_chart(pairs=_cal_bar_pairs, _wrap_card=False)
-
-    # --- API Model Statistics (collapsible) ---
+    # --- API Model Statistics (shared, collapsible) ---
     _render_api_stats_panel(runs, items_by_key)
-
-    # --- Judge-Judge Correlations ---
-    _render_judge_judge_correlations(runs)
 
     # --- Iteration Table ---
     with ui.expansion(

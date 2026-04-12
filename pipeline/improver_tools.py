@@ -1,33 +1,33 @@
 """CLI tools for the improver agent to query iteration data and run tests.
 
 Usage (via Bash tool):
-    python -m pipeline.improver_tools summary <iteration>
-    python -m pipeline.improver_tools failures <iteration> [--limit N] [--offset N] [--reasoning-limit N]
-    python -m pipeline.improver_tools accepts <iteration> [--limit N] [--offset N] [--reasoning-limit N] [--sort top|borderline]
+    python -m pipeline.improver_tools summary <iteration> [--mode reflection|preflection]
+    python -m pipeline.improver_tools failures <iteration> [--limit N] [--offset N] [--reasoning-limit N] [--mode reflection|preflection]
+    python -m pipeline.improver_tools accepts <iteration> [--limit N] [--offset N] [--reasoning-limit N] [--sort top|borderline] [--mode reflection|preflection]
     python -m pipeline.improver_tools show <item_id>[,id2,...] <iteration> [--brief]
     python -m pipeline.improver_tools show --gold <iteration> [--brief]
     python -m pipeline.improver_tools item <item_id> <iteration>
     python -m pipeline.improver_tools reasoning <item_id>[,id2,...] <iteration>
     python -m pipeline.improver_tools diversity <iteration>
-    python -m pipeline.improver_tools scores <iteration>
+    python -m pipeline.improver_tools scores <iteration> [--mode reflection|preflection]
     python -m pipeline.improver_tools distribution <iteration>
     python -m pipeline.improver_tools gold [--limit N] [--offset N] [--verbose]
     python -m pipeline.improver_tools compare <item_id> <iteration>
     python -m pipeline.improver_tools reviews [<judge_prompt>] [--limit N] [--offset N]
     python -m pipeline.improver_tools filter <iteration> --dim X (--below N | --above N) [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
-    python -m pipeline.improver_tools trend
-    python -m pipeline.improver_tools diagnose <group_id>
-    python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]
+    python -m pipeline.improver_tools trend [--mode reflection|preflection]
+    python -m pipeline.improver_tools diagnose <group_id> [--mode reflection|preflection]
+    python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N] [--mode reflection|preflection]
     python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2,...] [--n N] [--role judge|generator]
     python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2,...] [--iteration N] [--role judge|generator] [--mode reflection|preflection]
-    python -m pipeline.improver_tools run_batch [--role judge|generator]
+    python -m pipeline.improver_tools run_batch [--role judge|generator] [--mode reflection|preflection]
     python -m pipeline.improver_tools run_cross_batch --role judge|generator --target <alias> [--mode reflection|preflection]
-    python -m pipeline.improver_tools cross_summary <group_id>
+    python -m pipeline.improver_tools cross_summary <group_id> [--mode reflection|preflection]
     python -m pipeline.improver_tools test_results [--role judge|generator] [--type generate|judge|batch]
-    python -m pipeline.improver_tools correlations
-    python -m pipeline.improver_tools rejudge_all
+    python -m pipeline.improver_tools correlations [--all]
+    python -m pipeline.improver_tools rejudge_all [--mode reflection|preflection]
     python -m pipeline.improver_tools parse_stats <iteration>
-    python -m pipeline.improver_tools rollback <alias> <role> <version>
+    python -m pipeline.improver_tools rollback <alias> <role> <version> [--mode reflection|preflection]
 """
 
 import json
@@ -48,6 +48,42 @@ from pipeline.phase2.run import (
     JUDGMENT_NON_PART_KEYS as _JUDGMENT_NON_PART_KEYS,
     judgment_parts as _judgment_parts,
 )
+
+_REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
+_PREFLECTION_VOICES = ("preflection_3p", "preflection_1p")
+_MODE_VOICES = {
+    "reflection": _REFLECTION_VOICES,
+    "preflection": _PREFLECTION_VOICES,
+}
+
+
+def _validate_mode(mode: str | None) -> str | None:
+    """Validate --mode flag value. Returns the mode or None. Prints error and exits on invalid."""
+    if mode is None:
+        return None
+    if mode not in ("reflection", "preflection"):
+        print(f"Invalid --mode: {mode!r}. Use 'reflection' or 'preflection'.")
+        sys.exit(1)
+    return mode
+
+
+def _mode_judgment_parts(judgment: dict, mode: str | None) -> dict[str, dict]:
+    """Return judgment voice dicts, filtered to the given mode if set."""
+    parts = _judgment_parts(judgment)
+    if mode is None:
+        return parts
+    voices = _MODE_VOICES[mode]
+    return {k: v for k, v in parts.items() if k in voices}
+
+
+def _mode_decision_key(mode: str | None) -> str:
+    """Return the judgment key for the decision, scoped by mode."""
+    return f"{mode}_decision" if mode else "decision"
+
+
+def _mode_aggregate_key(mode: str | None) -> str:
+    """Return the judgment key for the aggregate score, scoped by mode."""
+    return f"{mode}_aggregate" if mode else "aggregate"
 
 
 def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
@@ -75,53 +111,89 @@ def _cohens_kappa(pairs: list[tuple[str, str]]) -> float | None:
     return (p_o - p_e) / (1 - p_e)
 
 
-def cmd_summary(iteration: int) -> None:
+def _pearson_r(pairs: list[tuple[float, float]]) -> float | None:
+    """Compute Pearson correlation coefficient from (x, y) pairs."""
+    if len(pairs) < 3:
+        return None
+    x = [p[0] for p in pairs]
+    y = [p[1] for p in pairs]
+    mx = statistics.mean(x)
+    my = statistics.mean(y)
+    cov = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y))
+    sx = (sum((xi - mx) ** 2 for xi in x)) ** 0.5
+    sy = (sum((yi - my) ** 2 for yi in y)) ** 0.5
+    if sx == 0 or sy == 0:
+        return None
+    return cov / (sx * sy)
+
+
+def cmd_summary(iteration: int, mode: str | None = None) -> None:
     """Print aggregate statistics for an iteration."""
+    mode = _validate_mode(mode)
     items = load_items_for_iteration(iteration)
     judged = [i for i in items if i.get("judgment")]
     if not judged:
         print(f"No judged items for iteration {iteration}")
         return
 
-    n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-    n_rej = len(judged) - n_acc
-    scores = [i["judgment"]["aggregate"] for i in judged]
-    n_gold = sum(1 for i in judged if i.get("is_gold"))
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
 
-    print(f"Iteration {iteration}: {len(judged)} items ({n_gold} gold)")
-    print(f"  Accept: {n_acc} ({n_acc/len(judged)*100:.0f}%)")
-    print(f"  Reject: {n_rej} ({n_rej/len(judged)*100:.0f}%)")
-    print(f"  Mean score: {statistics.mean(scores):.2f}")
-    print(f"  Score range: {min(scores):.2f} – {max(scores):.2f}")
+    # When mode is set, only count items that have the mode-specific decision
+    if mode:
+        judged_for_mode = [i for i in judged if i["judgment"].get(dec_key)]
+    else:
+        judged_for_mode = judged
 
-    # Per-pipeline accept rates (new split judgment format)
-    refl_decisions = [
-        i["judgment"].get("reflection_decision")
-        for i in judged
-        if i["judgment"].get("reflection_decision")
+    n_acc = sum(1 for i in judged_for_mode if i["judgment"].get(dec_key) == "accept")
+    n_rej = len(judged_for_mode) - n_acc
+    scores = [
+        i["judgment"][agg_key]
+        for i in judged_for_mode
+        if i["judgment"].get(agg_key) is not None
     ]
-    prefl_decisions = [
-        i["judgment"].get("preflection_decision")
-        for i in judged
-        if i["judgment"].get("preflection_decision")
-    ]
-    if refl_decisions:
-        refl_acc = sum(1 for d in refl_decisions if d == "accept")
-        print(
-            f"  Reflection accept: {refl_acc}/{len(refl_decisions)} "
-            f"({refl_acc/len(refl_decisions)*100:.0f}%)"
-        )
-    if prefl_decisions:
-        prefl_acc = sum(1 for d in prefl_decisions if d == "accept")
-        print(
-            f"  Preflection accept: {prefl_acc}/{len(prefl_decisions)} "
-            f"({prefl_acc/len(prefl_decisions)*100:.0f}%)"
-        )
+    n_gold = sum(1 for i in judged_for_mode if i.get("is_gold"))
 
-    # Per-dimension breakdown across all judgment parts (supports both old 2-part and new 4-part)
+    mode_label = f" [mode={mode}]" if mode else ""
+    print(
+        f"Iteration {iteration}: {len(judged_for_mode)} items ({n_gold} gold){mode_label}"
+    )
+    print(f"  Accept: {n_acc} ({n_acc/len(judged_for_mode)*100:.0f}%)")
+    print(f"  Reject: {n_rej} ({n_rej/len(judged_for_mode)*100:.0f}%)")
+    if scores:
+        print(f"  Mean score: {statistics.mean(scores):.2f}")
+        print(f"  Score range: {min(scores):.2f} – {max(scores):.2f}")
+
+    # Per-pipeline accept rates (new split judgment format) — show as secondary
+    # when no mode is set; skip when mode is already filtering
+    if not mode:
+        refl_decisions = [
+            i["judgment"].get("reflection_decision")
+            for i in judged
+            if i["judgment"].get("reflection_decision")
+        ]
+        prefl_decisions = [
+            i["judgment"].get("preflection_decision")
+            for i in judged
+            if i["judgment"].get("preflection_decision")
+        ]
+        if refl_decisions:
+            refl_acc = sum(1 for d in refl_decisions if d == "accept")
+            print(
+                f"  Reflection accept: {refl_acc}/{len(refl_decisions)} "
+                f"({refl_acc/len(refl_decisions)*100:.0f}%)"
+            )
+        if prefl_decisions:
+            prefl_acc = sum(1 for d in prefl_decisions if d == "accept")
+            print(
+                f"  Preflection accept: {prefl_acc}/{len(prefl_decisions)} "
+                f"({prefl_acc/len(prefl_decisions)*100:.0f}%)"
+            )
+
+    # Per-dimension breakdown — filter to mode-relevant parts when mode is set
     dim_scores: dict[str, list[float]] = {}
-    for item in judged:
-        for part, part_j in _judgment_parts(item["judgment"]).items():
+    for item in judged_for_mode:
+        for part, part_j in _mode_judgment_parts(item["judgment"], mode).items():
             for dim, score in part_j.get("scores", {}).items():
                 dim_scores.setdefault(f"{part}_{dim}", []).append(score)
 
@@ -131,18 +203,27 @@ def cmd_summary(iteration: int) -> None:
 
 
 def cmd_failures(
-    iteration: int, limit: int = 10, reasoning_limit: int = 200, offset: int = 0
+    iteration: int,
+    limit: int = 10,
+    reasoning_limit: int = 200,
+    offset: int = 0,
+    mode: str | None = None,
 ) -> None:
     """Print rejected items with judge reasoning."""
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     items = load_items_for_iteration(iteration)
     rejected = [
-        i for i in items if i.get("judgment") and i["judgment"]["decision"] == "reject"
+        i for i in items if i.get("judgment") and i["judgment"].get(dec_key) == "reject"
     ]
-    rejected.sort(key=lambda i: i["judgment"]["aggregate"])
+    rejected.sort(key=lambda i: i["judgment"].get(agg_key, 0))
 
     sliced = rejected[offset : offset + limit]
+    mode_label = f" [mode={mode}]" if mode else ""
     print(
-        f"Rejected items ({len(rejected)} total, showing {offset}–{offset + len(sliced)}):\n"
+        f"Rejected items ({len(rejected)} total, showing {offset}–{offset + len(sliced)}){mode_label}:\n"
     )
     _print_judged_items(sliced, reasoning_limit)
 
@@ -153,6 +234,7 @@ def cmd_accepts(
     reasoning_limit: int = 200,
     offset: int = 0,
     sort: str = "top",
+    mode: str | None = None,
 ) -> None:
     """Print accepted items with judge reasoning — symmetric to `failures`.
 
@@ -169,6 +251,10 @@ def cmd_accepts(
                      confident; useful for finding items the judge barely
                      waved through that humans would reject).
     """
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     from pipeline.config import load_config
 
     cfg = load_config()
@@ -176,21 +262,22 @@ def cmd_accepts(
 
     items = load_items_for_iteration(iteration)
     accepted = [
-        i for i in items if i.get("judgment") and i["judgment"]["decision"] == "accept"
+        i for i in items if i.get("judgment") and i["judgment"].get(dec_key) == "accept"
     ]
     if sort == "borderline":
-        accepted.sort(key=lambda i: abs(i["judgment"]["aggregate"] - threshold))
+        accepted.sort(key=lambda i: abs(i["judgment"].get(agg_key, 0) - threshold))
         sort_label = f"borderline (closest to threshold {threshold})"
     elif sort == "top":
-        accepted.sort(key=lambda i: -i["judgment"]["aggregate"])
+        accepted.sort(key=lambda i: -i["judgment"].get(agg_key, 0))
         sort_label = "top (highest aggregate first)"
     else:
         raise ValueError(f"Unknown --sort value: {sort!r}. Use 'top' or 'borderline'.")
 
     sliced = accepted[offset : offset + limit]
+    mode_label = f" [mode={mode}]" if mode else ""
     print(
         f"Accepted items ({len(accepted)} total, sort={sort_label}, "
-        f"showing {offset}–{offset + len(sliced)}):\n"
+        f"showing {offset}–{offset + len(sliced)}){mode_label}:\n"
     )
     _print_judged_items(sliced, reasoning_limit)
 
@@ -399,17 +486,21 @@ def cmd_diversity(iteration: int) -> None:
         print()
 
 
-def cmd_scores(iteration: int) -> None:
+def cmd_scores(iteration: int, mode: str | None = None) -> None:
     """Print a compact scores table for all items."""
+    mode = _validate_mode(mode)
+    agg_key = _mode_aggregate_key(mode)
+    dec_key = _mode_decision_key(mode)
+
     items = load_items_for_iteration(iteration)
     judged = [i for i in items if i.get("judgment")]
-    judged.sort(key=lambda i: i["judgment"]["aggregate"])
+    judged.sort(key=lambda i: i["judgment"].get(agg_key, 0))
 
     for item in judged:
         j = item["judgment"]
         parts_str = " | ".join(
             f"{part[:6]}[{' '.join(f'{k[:3]}={v}' for k, v in part_j.get('scores', {}).items())}]"
-            for part, part_j in _judgment_parts(j).items()
+            for part, part_j in _mode_judgment_parts(j, mode).items()
         )
         gold = "G" if item.get("is_gold") else " "
         # Per-mode decisions (new split format)
@@ -420,8 +511,10 @@ def cmd_scores(iteration: int) -> None:
             r_str = refl_dec[:3] if refl_dec else "---"
             p_str = prefl_dec[:3] if prefl_dec else "---"
             mode_dec = f" r={r_str} p={p_str}"
+        decision = j.get(dec_key, "?")
+        aggregate = j.get(agg_key, 0)
         print(
-            f"{gold} {j['decision'][:3]:>3} {j['aggregate']:4.1f}{mode_dec} | "
+            f"{gold} {decision[:3]:>3} {aggregate:4.1f}{mode_dec} | "
             f"{parts_str} | {item['item_id'][:12]}"
         )
 
@@ -745,9 +838,24 @@ def cmd_reviews(
 
         judge_agg = ""
         judge_decision = ""
+        judge_mode_info = ""
         if judge_judgment:
             judge_agg = f"{judge_judgment['aggregate']:.2f}"
             judge_decision = judge_judgment["decision"]
+            # Per-mode decisions when available
+            refl_dec = judge_judgment.get("reflection_decision")
+            prefl_dec = judge_judgment.get("preflection_decision")
+            if refl_dec or prefl_dec:
+                parts = []
+                if refl_dec:
+                    refl_agg = judge_judgment.get("reflection_aggregate")
+                    refl_agg_str = f"={refl_agg:.2f}" if refl_agg is not None else ""
+                    parts.append(f"refl={refl_dec}{refl_agg_str}")
+                if prefl_dec:
+                    prefl_agg = judge_judgment.get("preflection_aggregate")
+                    prefl_agg_str = f"={prefl_agg:.2f}" if prefl_agg is not None else ""
+                    parts.append(f"prefl={prefl_dec}{prefl_agg_str}")
+                judge_mode_info = f"  ({', '.join(parts)})"
 
         print(
             f"--- {r['item_id'][:16]} iter={r['iteration']} "
@@ -755,7 +863,10 @@ def cmd_reviews(
         )
         print(f"  Human:  decision={r['decision']}  " f"aggregate={r['aggregate']:.2f}")
         if judge_agg:
-            print(f"  {judge_label}:  decision={judge_decision}  aggregate={judge_agg}")
+            print(
+                f"  {judge_label}:  decision={judge_decision}  aggregate={judge_agg}"
+                f"{judge_mode_info}"
+            )
         if diverged_from is not None:
             print(
                 f"  ⚠ Notes below were written against the OLDER JUDGE "
@@ -895,8 +1006,12 @@ def cmd_filter(
         )
 
 
-def cmd_trend() -> None:
+def cmd_trend(mode: str | None = None) -> None:
     """Print per-iteration trend table: accept rate, mean score, per-dimension means."""
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     from pipeline.phase2.storage import load_runs
 
     runs = load_runs()
@@ -909,7 +1024,7 @@ def cmd_trend() -> None:
         judged = [i for i in items if i.get("judgment")]
         if not judged:
             continue
-        for part, part_j in _judgment_parts(judged[0]["judgment"]).items():
+        for part, part_j in _mode_judgment_parts(judged[0]["judgment"], mode).items():
             for dim in part_j.get("scores", {}):
                 key = f"{part[:3]}_{dim[:3]}"
                 if key not in all_dim_keys:
@@ -917,9 +1032,10 @@ def cmd_trend() -> None:
         break
 
     # Header
+    mode_label = f" [mode={mode}]" if mode else ""
     dim_header = " ".join(f"{k:>7}" for k in all_dim_keys)
     print(
-        f"{'iter':>4} {'acc%':>5} {'mean':>5} {dim_header}  gen_prompt / judge_prompt"
+        f"{'iter':>4} {'acc%':>5} {'mean':>5} {dim_header}  gen_prompt / judge_prompt{mode_label}"
     )
 
     for run in runs:
@@ -930,14 +1046,32 @@ def cmd_trend() -> None:
             print(f"{it:>4}  (no judged items)")
             continue
 
-        scores = [i["judgment"]["aggregate"] for i in judged]
-        n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-        acc_pct = n_acc / len(judged) * 100
-        mean = statistics.mean(scores)
+        # When mode is set, only include items that have the mode-specific aggregate
+        if mode:
+            judged_for_mode = [
+                i for i in judged if i["judgment"].get(agg_key) is not None
+            ]
+        else:
+            judged_for_mode = judged
+
+        if not judged_for_mode:
+            print(f"{it:>4}  (no items with {mode} data)")
+            continue
+
+        scores = [
+            i["judgment"][agg_key]
+            for i in judged_for_mode
+            if i["judgment"].get(agg_key) is not None
+        ]
+        n_acc = sum(
+            1 for i in judged_for_mode if i["judgment"].get(dec_key) == "accept"
+        )
+        acc_pct = n_acc / len(judged_for_mode) * 100
+        mean = statistics.mean(scores) if scores else 0.0
 
         dim_means: dict[str, list[float]] = {}
-        for item in judged:
-            for part, part_j in _judgment_parts(item["judgment"]).items():
+        for item in judged_for_mode:
+            for part, part_j in _mode_judgment_parts(item["judgment"], mode).items():
                 for dim, sc in part_j.get("scores", {}).items():
                     key = f"{part[:3]}_{dim[:3]}"
                     dim_means.setdefault(key, []).append(sc)
@@ -1045,7 +1179,39 @@ def cmd_correlations() -> None:
         )
         return
 
-    for prompt_name, model_name in sorted(by_prompt):
+    # Sort by version number descending, skip old pre-split prompts (judge_v*.md),
+    # and default to showing only the 5 latest versions per model.
+    import re as _re_corr
+
+    def _corr_sort_key(key: tuple[str, str]) -> tuple[str, int]:
+        m = _re_corr.search(r"_v(\d+)", key[0])
+        return (key[1], int(m.group(1)) if m else 0)
+
+    sorted_keys = sorted(by_prompt, key=_corr_sort_key, reverse=True)
+    # Drop old combined prompts (judge_v*.md) — only show per-mode prompts
+    sorted_keys = [
+        k
+        for k in sorted_keys
+        if not _re_corr.match(r"^judge_v\d+\.md$", k[0])
+        and not _re_corr.match(r"^generator_v\d+\.md$", k[0])
+    ]
+    # Limit to 5 latest per model (use --all to see everything)
+    if "--all" not in sys.argv:
+        _seen_per_model: dict[str, int] = {}
+        _limited: list[tuple[str, str]] = []
+        for k in sorted_keys:
+            model = k[1]
+            _seen_per_model[model] = _seen_per_model.get(model, 0) + 1
+            if _seen_per_model[model] <= 5:
+                _limited.append(k)
+        if len(_limited) < len(sorted_keys):
+            print(
+                f"(showing 5 latest per model, {len(sorted_keys) - len(_limited)} "
+                f"older hidden — use --all to see all)\n"
+            )
+        sorted_keys = _limited
+
+    for prompt_name, model_name in sorted_keys:
         entries = by_prompt[(prompt_name, model_name)]
         decision_matches = 0
         decision_pairs: list[tuple[str, str]] = []
@@ -1053,9 +1219,11 @@ def cmd_correlations() -> None:
         dim_diffs: dict[str, list[float]] = {}
         matched = 0
 
-        # Per-mode decision tracking
+        # Per-mode decision + score tracking
         refl_decision_pairs: list[tuple[str, str]] = []
         prefl_decision_pairs: list[tuple[str, str]] = []
+        refl_score_pairs: list[tuple[float, float]] = []
+        prefl_score_pairs: list[tuple[float, float]] = []
 
         for c in entries:
             key = (c["item_id"], c["iteration"])
@@ -1072,13 +1240,52 @@ def cmd_correlations() -> None:
             if judge_decision == human_decision:
                 decision_matches += 1
 
-            # Per-mode decision agreement
-            refl_dec = j.get("reflection_decision")
-            prefl_dec = j.get("preflection_decision")
-            if refl_dec and human_decision:
-                refl_decision_pairs.append((refl_dec, human_decision))
-            if prefl_dec and human_decision:
-                prefl_decision_pairs.append((prefl_dec, human_decision))
+            # Per-mode decision agreement — compare judge per-mode decision
+            # against human per-mode decision (derived from per-voice scores).
+            human_scores = review.get("scores", {})
+            _is_pp = human_scores and isinstance(
+                next(iter(human_scores.values()), None), dict
+            )
+            for _mode, _voices, _mode_pairs, _score_pairs in (
+                (
+                    "reflection",
+                    ("reflection_1p", "reflection_3p"),
+                    refl_decision_pairs,
+                    refl_score_pairs,
+                ),
+                (
+                    "preflection",
+                    ("preflection_3p", "preflection_1p"),
+                    prefl_decision_pairs,
+                    prefl_score_pairs,
+                ),
+            ):
+                j_dec = j.get(f"{_mode}_decision")
+                if not j_dec:
+                    continue
+                j_mode_agg = j.get(f"{_mode}_aggregate")
+                # Compute human per-mode decision + aggregate from per-voice scores
+                h_dec = review.get(f"{_mode}_decision")
+                h_mode_agg = review.get(f"{_mode}_aggregate")
+                if (not h_dec or h_mode_agg is None) and _is_pp:
+                    _h_vals = [
+                        v
+                        for _v in _voices
+                        for v in (human_scores.get(_v) or {}).values()
+                    ]
+                    if _h_vals:
+                        _h_agg = sum(_h_vals) / len(_h_vals)
+                        _h_floor = any(v <= 2 for v in _h_vals)
+                        if not h_dec:
+                            h_dec = "reject" if _h_floor or _h_agg < 4 else "accept"
+                        if h_mode_agg is None:
+                            h_mode_agg = _h_agg
+                if not h_dec:
+                    h_dec = human_decision  # last resort: combined
+                if h_dec:
+                    _mode_pairs.append((j_dec, h_dec))
+                if j_mode_agg is not None and h_mode_agg is not None:
+                    _score_pairs.append((j_mode_agg, h_mode_agg))
 
             # Score diff
             judge_agg = j.get("aggregate", 0)
@@ -1111,34 +1318,24 @@ def cmd_correlations() -> None:
             )
             continue
 
-        agreement = decision_matches / matched * 100
-        kappa = _cohens_kappa(decision_pairs)
-        mean_diff = statistics.mean(score_diffs) if score_diffs else 0
+        print(f"\n{prompt_name} / {model_name} ({matched} items):")
 
-        print(f"\n{prompt_name} / {model_name} ({matched} items matched to reviews):")
-        print(f"  Decision agreement: {agreement:.0f}% ({decision_matches}/{matched})")
-        kappa_str = f"{kappa:.3f}" if kappa is not None else "n/a"
-        print(f"  Cohen's κ:          {kappa_str}")
-        print(f"  Mean |score diff|:  {mean_diff:.2f}")
-
-        # Per-mode decision agreement & kappa
-        if refl_decision_pairs:
-            refl_agree = sum(1 for a, b in refl_decision_pairs if a == b)
-            refl_kappa = _cohens_kappa(refl_decision_pairs)
-            refl_kappa_str = f"{refl_kappa:.3f}" if refl_kappa is not None else "n/a"
+        # Per-mode decision agreement, kappa, and Pearson r
+        for _mode_label, _mode_pairs, _score_pairs in (
+            ("Reflection", refl_decision_pairs, refl_score_pairs),
+            ("Preflection", prefl_decision_pairs, prefl_score_pairs),
+        ):
+            if not _mode_pairs:
+                continue
+            _agree = sum(1 for a, b in _mode_pairs if a == b)
+            _kappa = _cohens_kappa(_mode_pairs)
+            _kappa_str = f"{_kappa:.3f}" if _kappa is not None else "n/a"
+            _pearson = _pearson_r(_score_pairs) if _score_pairs else None
+            _pearson_str = f"{_pearson:.3f}" if _pearson is not None else "n/a"
             print(
-                f"  Reflection agreement:  {refl_agree}/{len(refl_decision_pairs)} "
-                f"({refl_agree / len(refl_decision_pairs) * 100:.0f}%)  "
-                f"κ={refl_kappa_str}"
-            )
-        if prefl_decision_pairs:
-            prefl_agree = sum(1 for a, b in prefl_decision_pairs if a == b)
-            prefl_kappa = _cohens_kappa(prefl_decision_pairs)
-            prefl_kappa_str = f"{prefl_kappa:.3f}" if prefl_kappa is not None else "n/a"
-            print(
-                f"  Preflection agreement: {prefl_agree}/{len(prefl_decision_pairs)} "
-                f"({prefl_agree / len(prefl_decision_pairs) * 100:.0f}%)  "
-                f"κ={prefl_kappa_str}"
+                f"  {_mode_label}: {_agree}/{len(_mode_pairs)} "
+                f"({_agree / len(_mode_pairs) * 100:.0f}%)  "
+                f"κ={_kappa_str}  r={_pearson_str}"
             )
 
         if dim_diffs:
@@ -1154,14 +1351,20 @@ def cmd_correlations() -> None:
     )
 
 
-def cmd_rejudge_all() -> None:
+def cmd_rejudge_all(mode: str | None = None) -> None:
     """Re-judge all human-reviewed items with ALL judge prompts × ALL judge models."""
     from pipeline.config import load_config
     from pipeline.phase2.run import rejudge_all_prompts_and_models
 
+    if mode:
+        _validate_mode(mode)
+
     cfg = load_config()
-    print("Re-judging all reviewed items across all judge prompts and models...")
-    total = rejudge_all_prompts_and_models(cfg)
+    mode_label = f" (mode={mode})" if mode else ""
+    print(
+        f"Re-judging all reviewed items across all judge prompts and models{mode_label}..."
+    )
+    total = rejudge_all_prompts_and_models(cfg, mode=mode)
     print(f"Done. {total} new correlations saved.")
 
 
@@ -1177,6 +1380,7 @@ def cmd_test_generate(
     n: int = 3,
     role: str = "judge",
     model_alias: str | None = None,
+    mode: str | None = None,
 ) -> None:
     """Generate with a prompt file without saving to main items table.
 
@@ -1241,7 +1445,15 @@ def cmd_test_generate(
         refl_prompt = prompt
         prefl_prompt = prompt
 
-    print(f"Test generating {len(items)} items with {prompt.name} (model={alias})...")
+    # Auto-detect mode from prompt name if not explicit
+    if mode is None and "reflection" in prompt_name and prefl_prompt is None:
+        mode = "reflection"
+    elif mode is None and "preflection" in prompt_name and refl_prompt is None:
+        mode = "preflection"
+
+    print(
+        f"Test generating {len(items)} items with {prompt.name} (model={alias}, mode={mode or 'both'})..."
+    )
     generated = generate_batch(
         items,
         refl_prompt,
@@ -1254,6 +1466,9 @@ def cmd_test_generate(
         save=False,
         writing_guidelines_text=writing_guidelines_text,
         json_mode=gen_model_cfg.json_mode,
+        completion_max_tokens=gen_model_cfg.completion_max_tokens,
+        context_window_tokens=gen_model_cfg.context_window_tokens,
+        mode=mode,
     )
 
     test_id = _make_test_id("tg")
@@ -1262,10 +1477,10 @@ def cmd_test_generate(
         result_items.append(
             {
                 "item_id": g["item_id"],
-                "preflection": g.get("preflection", "")[:200],
-                "preflection_1p": g.get("preflection_1p", "")[:200],
-                "reflection": g.get("reflection", "")[:200],
-                "reflection_3p": g.get("reflection_3p", "")[:200],
+                "preflection": (g.get("preflection") or "")[:200],
+                "preflection_1p": (g.get("preflection_1p") or "")[:200],
+                "reflection": (g.get("reflection") or "")[:200],
+                "reflection_3p": (g.get("reflection_3p") or "")[:200],
                 "preflection_charter_elements": g.get(
                     "preflection_charter_elements", []
                 ),
@@ -1287,9 +1502,20 @@ def cmd_test_generate(
 
     print(f"\nTest {test_id}: generated {len(generated)} items")
     for g in generated:
-        print(
-            f"  {g['item_id'][:12]}: pre3p={g.get('preflection', '')[:40]}... pre1p={g.get('preflection_1p', '')[:40]}..."
-        )
+        r1p = g.get("reflection", "") or ""
+        r3p = g.get("reflection_3p", "") or ""
+        p3p = g.get("preflection", "") or ""
+        p1p = g.get("preflection_1p", "") or ""
+        parts = []
+        if r1p:
+            parts.append(f"refl_1p={r1p[:60]}")
+        if r3p:
+            parts.append(f"refl_3p={r3p[:60]}")
+        if p3p:
+            parts.append(f"pre_3p={p3p[:60]}")
+        if p1p:
+            parts.append(f"pre_1p={p1p[:60]}")
+        print(f"  {g['item_id'][:12]}: {' | '.join(parts)}")
     print("Saved to test_results")
 
 
@@ -1431,6 +1657,8 @@ def cmd_test_judge(
         floor_threshold=cfg.phase2.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
+        completion_max_tokens=jdg_model_cfg.completion_max_tokens,
+        context_window_tokens=jdg_model_cfg.context_window_tokens,
         mode=mode,
     )
 
@@ -1480,11 +1708,13 @@ def cmd_test_judge(
     print("Saved to test_results")
 
 
-def cmd_run_batch(role: str = "judge") -> None:
+def cmd_run_batch(role: str = "judge", mode: str | None = None) -> None:
     """Run a full cross-iteration batch with the first model of the given role.
 
     Saves to main items + runs tables AND to test_results for tracking.
     """
+    mode = _validate_mode(mode)
+
     from pipeline.config import load_config
     from pipeline.phase2.run import (
         run_judge_cross_iteration,
@@ -1496,11 +1726,11 @@ def cmd_run_batch(role: str = "judge") -> None:
     if role == "judge":
         target = cfg.phase2.judge_models[0].alias
         source = "improve_judge"
-        results = run_judge_cross_iteration(cfg, target, source=source)
+        results = run_judge_cross_iteration(cfg, target, source=source, mode=mode)
     else:
         target = cfg.phase2.generator_models[0].alias
         source = "improve_generator"
-        results = run_generator_cross_iteration(cfg, target, source=source)
+        results = run_generator_cross_iteration(cfg, target, source=source, mode=mode)
 
     test_id = _make_test_id("tb")
     for result in results:
@@ -1568,8 +1798,12 @@ def cmd_run_cross_batch(role: str, target: str, mode: str | None = None) -> None
     )
 
 
-def cmd_cross_summary(group_id: str) -> None:
+def cmd_cross_summary(group_id: str, mode: str | None = None) -> None:
     """Show aggregated stats across all iterations in a cross-iteration group."""
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     from pipeline.phase2.storage import load_runs
 
     runs = load_runs()
@@ -1584,7 +1818,8 @@ def cmd_cross_summary(group_id: str) -> None:
     full_gid = group_runs[0]["group_id"]
     group_runs = [r for r in runs if r.get("group_id") == full_gid]
 
-    print(f"Cross-iteration summary (group_id={full_gid[:8]}...):")
+    mode_label = f" [mode={mode}]" if mode else ""
+    print(f"Cross-iteration summary (group_id={full_gid[:8]}...){mode_label}:")
     print(f"  {len(group_runs)} iterations\n")
 
     total_items = 0
@@ -1598,8 +1833,16 @@ def cmd_cross_summary(group_id: str) -> None:
     for r in group_runs:
         items = load_items_for_iteration(r["iteration"])
         judged = [i for i in items if i.get("judgment")]
-        n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-        scores = [i["judgment"]["aggregate"] for i in judged]
+
+        if mode:
+            judged = [i for i in judged if i["judgment"].get(agg_key) is not None]
+
+        n_acc = sum(1 for i in judged if i["judgment"].get(dec_key) == "accept")
+        scores = [
+            i["judgment"][agg_key]
+            for i in judged
+            if i["judgment"].get(agg_key) is not None
+        ]
         mean_s = statistics.mean(scores) if scores else 0.0
         acc_pct = n_acc / len(judged) * 100 if judged else 0
 
@@ -1627,11 +1870,13 @@ def _collect_judged(iteration: int) -> list[dict]:
     return [i for i in items if i.get("judgment")]
 
 
-def _dim_scores_for_items(judged: list[dict]) -> dict[str, list[float]]:
+def _dim_scores_for_items(
+    judged: list[dict], mode: str | None = None
+) -> dict[str, list[float]]:
     """Collect per-dimension score lists across all judgment parts."""
     dim_scores: dict[str, list[float]] = {}
     for item in judged:
-        for part, part_j in _judgment_parts(item["judgment"]).items():
+        for part, part_j in _mode_judgment_parts(item["judgment"], mode).items():
             for dim, score in part_j.get("scores", {}).items():
                 dim_scores.setdefault(f"{part[:3]}_{dim[:3]}", []).append(score)
     return dim_scores
@@ -1654,13 +1899,17 @@ def _score_distribution(all_scores: list[float], label: str) -> None:
     print(f"    ceiling (=5): {ceiling:.0f}%  |  floor (<=2): {floor:.0f}%")
 
 
-def cmd_diagnose(group_id: str) -> None:
+def cmd_diagnose(group_id: str, mode: str | None = None) -> None:
     """One-shot comprehensive analysis for a cross-iteration group.
 
     Combines: cross_summary, per-dimension means, score distributions,
     ceiling effects, floor-rule violations, decision flips, diversity,
     and gold/review availability.
     """
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     from pipeline.config import load_config
     from pipeline.phase2.storage import load_runs, load_latest_reviews
 
@@ -1679,66 +1928,90 @@ def cmd_diagnose(group_id: str) -> None:
     group_runs = [r for r in runs if r.get("group_id") == full_gid]
 
     # --- 1. Cross-iteration summary table ---
+    mode_label = f" [mode={mode}]" if mode else ""
     print(
-        f"=== DIAGNOSE group_id={full_gid[:8]}... ({len(group_runs)} iterations) ===\n"
+        f"=== DIAGNOSE group_id={full_gid[:8]}... ({len(group_runs)} iterations){mode_label} ===\n"
     )
 
     iter_data: dict[int, list[dict]] = {}
     iter_runs: dict[int, dict] = {}
 
-    print(
-        f"{'Iter':>6} {'Generator':>20} {'Judge':>20} "
-        f"{'Items':>6} {'Acc%':>6} {'Refl%':>6} {'Prefl%':>7} {'Mean':>6} {'Floor':>6}"
-    )
-    print("-" * 100)
+    if mode:
+        print(
+            f"{'Iter':>6} {'Generator':>20} {'Judge':>20} "
+            f"{'Items':>6} {'Acc%':>6} {'Mean':>6} {'Floor':>6}"
+        )
+        print("-" * 80)
+    else:
+        print(
+            f"{'Iter':>6} {'Generator':>20} {'Judge':>20} "
+            f"{'Items':>6} {'Acc%':>6} {'Refl%':>6} {'Prefl%':>7} {'Mean':>6} {'Floor':>6}"
+        )
+        print("-" * 100)
     for r in group_runs:
         it = r["iteration"]
         judged = _collect_judged(it)
         iter_data[it] = judged
         iter_runs[it] = r
 
-        n_acc = sum(1 for i in judged if i["judgment"]["decision"] == "accept")
-        scores = [i["judgment"]["aggregate"] for i in judged]
+        n_acc = sum(1 for i in judged if i["judgment"].get(dec_key) == "accept")
+        scores = [
+            i["judgment"][agg_key]
+            for i in judged
+            if i["judgment"].get(agg_key) is not None
+        ]
         mean_s = statistics.mean(scores) if scores else 0.0
-        acc_pct = n_acc / len(judged) * 100 if judged else 0
-
-        # Per-pipeline accept rates
-        refl_decs = [
-            i["judgment"].get("reflection_decision")
-            for i in judged
-            if i["judgment"].get("reflection_decision")
-        ]
-        prefl_decs = [
-            i["judgment"].get("preflection_decision")
-            for i in judged
-            if i["judgment"].get("preflection_decision")
-        ]
-        refl_pct_str = (
-            f"{sum(1 for d in refl_decs if d == 'accept') / len(refl_decs) * 100:5.0f}%"
-            if refl_decs
-            else "   n/a"
+        judged_count = (
+            len([i for i in judged if i["judgment"].get(agg_key) is not None])
+            if mode
+            else len(judged)
         )
-        prefl_pct_str = (
-            f"{sum(1 for d in prefl_decs if d == 'accept') / len(prefl_decs) * 100:5.0f}%"
-            if prefl_decs
-            else "    n/a"
-        )
+        acc_pct = n_acc / judged_count * 100 if judged_count else 0
 
         n_floor = sum(
             1
             for i in judged
             if any(
                 s <= floor_thresh
-                for part_j in _judgment_parts(i["judgment"]).values()
+                for part_j in _mode_judgment_parts(i["judgment"], mode).values()
                 for s in part_j.get("scores", {}).values()
             )
         )
 
-        print(
-            f"{it:>6} {r['generator_model']:>20} {r['judge_model']:>20} "
-            f"{len(judged):>6} {acc_pct:>5.0f}% {refl_pct_str:>6} {prefl_pct_str:>7} "
-            f"{mean_s:>6.2f} {n_floor:>6}"
-        )
+        if mode:
+            print(
+                f"{it:>6} {r['generator_model']:>20} {r['judge_model']:>20} "
+                f"{judged_count:>6} {acc_pct:>5.0f}% "
+                f"{mean_s:>6.2f} {n_floor:>6}"
+            )
+        else:
+            # Per-pipeline accept rates
+            refl_decs = [
+                i["judgment"].get("reflection_decision")
+                for i in judged
+                if i["judgment"].get("reflection_decision")
+            ]
+            prefl_decs = [
+                i["judgment"].get("preflection_decision")
+                for i in judged
+                if i["judgment"].get("preflection_decision")
+            ]
+            refl_pct_str = (
+                f"{sum(1 for d in refl_decs if d == 'accept') / len(refl_decs) * 100:5.0f}%"
+                if refl_decs
+                else "   n/a"
+            )
+            prefl_pct_str = (
+                f"{sum(1 for d in prefl_decs if d == 'accept') / len(prefl_decs) * 100:5.0f}%"
+                if prefl_decs
+                else "    n/a"
+            )
+
+            print(
+                f"{it:>6} {r['generator_model']:>20} {r['judge_model']:>20} "
+                f"{len(judged):>6} {acc_pct:>5.0f}% {refl_pct_str:>6} {prefl_pct_str:>7} "
+                f"{mean_s:>6.2f} {n_floor:>6}"
+            )
 
     # --- 2. Per-dimension means per iteration ---
     print("\n--- Per-dimension means ---")
@@ -1746,7 +2019,7 @@ def cmd_diagnose(group_id: str) -> None:
     for judged in iter_data.values():
         if not judged:
             continue
-        for part, part_j in _judgment_parts(judged[0]["judgment"]).items():
+        for part, part_j in _mode_judgment_parts(judged[0]["judgment"], mode).items():
             for dim in part_j.get("scores", {}):
                 key = f"{part[:3]}_{dim[:3]}"
                 if key not in all_dim_keys:
@@ -1756,7 +2029,7 @@ def cmd_diagnose(group_id: str) -> None:
     header = "  " + f"{'Iter':>6}" + "".join(f" {k:>8}" for k in all_dim_keys)
     print(header)
     for it, judged in iter_data.items():
-        dim_scores = _dim_scores_for_items(judged)
+        dim_scores = _dim_scores_for_items(judged, mode)
         vals = "".join(
             f" {statistics.mean(dim_scores.get(k, [0])):>8.2f}" for k in all_dim_keys
         )
@@ -1765,7 +2038,7 @@ def cmd_diagnose(group_id: str) -> None:
     # --- 3. Score distribution & ceiling effect ---
     print("\n--- Score distribution (all dimensions pooled) ---")
     for it, judged in iter_data.items():
-        dim_scores = _dim_scores_for_items(judged)
+        dim_scores = _dim_scores_for_items(judged, mode)
         all_vals = [s for vals in dim_scores.values() for s in vals]
         r = iter_runs[it]
         _score_distribution(
@@ -1779,7 +2052,7 @@ def cmd_diagnose(group_id: str) -> None:
         violations = []
         for item in judged:
             j = item["judgment"]
-            for part, part_j in _judgment_parts(j).items():
+            for part, part_j in _mode_judgment_parts(j, mode).items():
                 for dim, score in part_j.get("scores", {}).items():
                     if score <= floor_thresh:
                         violations.append(
@@ -1788,7 +2061,7 @@ def cmd_diagnose(group_id: str) -> None:
                                 part[:3],
                                 dim[:3],
                                 score,
-                                j["aggregate"],
+                                j.get(agg_key, 0),
                             )
                         )
         if violations:
@@ -1804,7 +2077,7 @@ def cmd_diagnose(group_id: str) -> None:
         print(f"\n--- Decision flips between iterations ---")
         for i in range(len(iters)):
             for j in range(i + 1, len(iters)):
-                _print_flips(iters[i], iters[j], iter_data, iter_runs)
+                _print_flips(iters[i], iters[j], iter_data, iter_runs, mode=mode)
 
     # --- 6. Diversity (compact) ---
     print("\n--- Diversity (reflection_1p openers) ---")
@@ -1852,8 +2125,12 @@ def _print_flips(
     iter_b: int,
     iter_data: dict[int, list[dict]],
     iter_runs: dict[int, dict],
+    mode: str | None = None,
 ) -> None:
     """Print decision flips between two iterations on shared items."""
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     items_a = {i["item_id"]: i for i in iter_data[iter_a]}
     items_b = {i["item_id"]: i for i in iter_data[iter_b]}
     shared = set(items_a) & set(items_b)
@@ -1863,11 +2140,11 @@ def _print_flips(
 
     flips = []
     for iid in sorted(shared):
-        da = items_a[iid]["judgment"]["decision"]
-        db = items_b[iid]["judgment"]["decision"]
+        da = items_a[iid]["judgment"].get(dec_key, "?")
+        db = items_b[iid]["judgment"].get(dec_key, "?")
         if da != db:
-            sa = items_a[iid]["judgment"]["aggregate"]
-            sb = items_b[iid]["judgment"]["aggregate"]
+            sa = items_a[iid]["judgment"].get(agg_key, 0)
+            sb = items_b[iid]["judgment"].get(agg_key, 0)
             flips.append((iid[:12], da, sa, db, sb))
 
     ra = iter_runs[iter_a]
@@ -1882,12 +2159,18 @@ def _print_flips(
         print(f"    {iid}: {da}({sa:.1f}) -> {db}({sb:.1f}) [diff={sb-sa:+.1f}]")
 
 
-def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
+def cmd_diff(
+    iter_a: int, iter_b: int, limit: int = 10, mode: str | None = None
+) -> None:
     """Cross-iteration comparison of shared items between two iterations.
 
     Shows: decision agreement, per-dimension score diffs, and full
     preflection/reflection text for items that flipped accept<->reject.
     """
+    mode = _validate_mode(mode)
+    dec_key = _mode_decision_key(mode)
+    agg_key = _mode_aggregate_key(mode)
+
     judged_a = _collect_judged(iter_a)
     judged_b = _collect_judged(iter_b)
     if not judged_a:
@@ -1914,8 +2197,11 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
     for iid in shared_ids:
         ja = by_id_a[iid]["judgment"]
         jb = by_id_b[iid]["judgment"]
-        da, db = ja["decision"], jb["decision"]
-        agg_diffs.append(jb["aggregate"] - ja["aggregate"])
+        da = ja.get(dec_key, "?")
+        db = jb.get(dec_key, "?")
+        sa_agg = ja.get(agg_key, 0)
+        sb_agg = jb.get(agg_key, 0)
+        agg_diffs.append(sb_agg - sa_agg)
 
         if da == "accept" and db == "accept":
             both_acc += 1
@@ -1928,7 +2214,9 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
             only_b_acc += 1
             flips.append((iid, by_id_a[iid], by_id_b[iid]))
 
-        all_parts_ab = set(_judgment_parts(ja)) | set(_judgment_parts(jb))
+        all_parts_ab = set(_mode_judgment_parts(ja, mode)) | set(
+            _mode_judgment_parts(jb, mode)
+        )
         for part in all_parts_ab:
             sa = ja.get(part, {}).get("scores", {})
             sb = jb.get(part, {}).get("scores", {})
@@ -1938,7 +2226,10 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
 
     total = len(shared_ids)
     agree = both_acc + both_rej
-    print(f"=== DIFF iter {iter_a} vs iter {iter_b} ({total} shared items) ===\n")
+    mode_label = f" [mode={mode}]" if mode else ""
+    print(
+        f"=== DIFF iter {iter_a} vs iter {iter_b} ({total} shared items){mode_label} ===\n"
+    )
     print(f"  Decision agreement: {agree}/{total} ({agree/total*100:.0f}%)")
     print(f"    both accept:  {both_acc}")
     print(f"    both reject:  {both_rej}")
@@ -1963,7 +2254,7 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
     # --- Flipped items with text ---
     flips.sort(
         key=lambda x: abs(
-            x[2]["judgment"]["aggregate"] - x[1]["judgment"]["aggregate"]
+            x[2]["judgment"].get(agg_key, 0) - x[1]["judgment"].get(agg_key, 0)
         ),
         reverse=True,
     )
@@ -1973,13 +2264,17 @@ def cmd_diff(iter_a: int, iter_b: int, limit: int = 10) -> None:
     for iid, item_a, item_b in shown:
         ja = item_a["judgment"]
         jb = item_b["judgment"]
+        ja_agg = ja.get(agg_key, 0)
+        jb_agg = jb.get(agg_key, 0)
         print(
-            f"\n  {iid[:16]}: {ja['decision']}({ja['aggregate']:.1f}) -> "
-            f"{jb['decision']}({jb['aggregate']:.1f}) [diff={jb['aggregate']-ja['aggregate']:+.1f}]"
+            f"\n  {iid[:16]}: {ja.get(dec_key, '?')}({ja_agg:.1f}) -> "
+            f"{jb.get(dec_key, '?')}({jb_agg:.1f}) [diff={jb_agg-ja_agg:+.1f}]"
         )
 
-        # Per-dimension comparison
-        for part in set(_judgment_parts(ja)) | set(_judgment_parts(jb)):
+        # Per-dimension comparison — filtered to mode-relevant parts
+        for part in set(_mode_judgment_parts(ja, mode)) | set(
+            _mode_judgment_parts(jb, mode)
+        ):
             sa = ja.get(part, {}).get("scores", {})
             sb = jb.get(part, {}).get("scores", {})
             changes = []
@@ -2071,14 +2366,18 @@ def cmd_parse_stats(iteration: int) -> None:
     print(f"  Prompt:    {run.get('gen_prompt', '?')}")
 
 
-def cmd_rollback(alias: str, role: str, version: int) -> None:
+def cmd_rollback(alias: str, role: str, version: int, mode: str | None = None) -> None:
     """Promote a specific version to be the latest by copying it to v(max+1).
 
     The pipeline always uses the highest _vN.md file. If v2 performed best but
     v3 and v4 exist, `rollback <alias> generator 2` copies v2 to v5, making it
     the active prompt.
+
+    For judge and generator roles, prompt files use the naming convention
+    ``{role}_{mode}_v{N}.md`` (e.g. ``judge_reflection_v3.md``).
+    Pass ``--mode reflection`` or ``--mode preflection`` to select which
+    mode-specific prompt to roll back.
     """
-    import glob as _glob
     import shutil
 
     from pipeline.config import PIPELINE_DATA_DIR
@@ -2088,7 +2387,29 @@ def cmd_rollback(alias: str, role: str, version: int) -> None:
         prompts_dir.exists()
     ), f"No prompt directory for alias '{alias}': {prompts_dir}"
 
-    prefix = "judge" if role == "judge" else "generator"
+    # Build the file prefix. For judge/generator roles with a mode, the naming
+    # is e.g. judge_reflection_v3.md. Without mode, fall back to legacy naming.
+    if mode:
+        mode = _validate_mode(mode)
+        prefix = f"{role}_{mode}"
+    else:
+        # Auto-detect: if mode-specific files exist, require --mode
+        import re as _re
+
+        _has_mode_files = any(
+            _re.match(
+                rf"^{_re.escape(role)}_(reflection|preflection)_v\d+\.md$", p.name
+            )
+            for p in prompts_dir.iterdir()
+        )
+        if _has_mode_files and role in ("judge", "generator"):
+            print(
+                f"Prompt files use mode-specific naming ({role}_reflection_vN.md / "
+                f"{role}_preflection_vN.md). Pass --mode reflection or --mode preflection."
+            )
+            return
+        prefix = role
+
     source = prompts_dir / f"{prefix}_v{version}.md"
     assert source.exists(), f"Version file not found: {source}"
 
@@ -2109,7 +2430,7 @@ def cmd_rollback(alias: str, role: str, version: int) -> None:
     new_v = max_v + 1
     dest = prompts_dir / f"{prefix}_v{new_v}.md"
     shutil.copy2(source, dest)
-    print(f"Rolled back: copied {source.name} → {dest.name}")
+    print(f"Rolled back: copied {source.name} -> {dest.name}")
     print(f"Active prompt is now {dest.name} (content identical to v{version})")
 
 
@@ -2194,23 +2515,25 @@ def main():
         return int(val) if val is not None else default
 
     if cmd == "summary":
-        _require_positional(1, "summary <iteration>")
-        cmd_summary(int(positional[0]))
+        _require_positional(1, "summary <iteration> [--mode reflection|preflection]")
+        cmd_summary(int(positional[0]), mode=_get_flag("--mode"))
     elif cmd == "failures":
         _require_positional(
-            1, "failures <iteration> [--limit N] [--offset N] [--reasoning-limit N]"
+            1,
+            "failures <iteration> [--limit N] [--offset N] [--reasoning-limit N] [--mode reflection|preflection]",
         )
         cmd_failures(
             int(positional[0]),
             limit=_get_flag_int("--limit", 10),
             reasoning_limit=_get_flag_int("--reasoning-limit", 200),
             offset=_get_flag_int("--offset", 0),
+            mode=_get_flag("--mode"),
         )
     elif cmd == "accepts":
         _require_positional(
             1,
             "accepts <iteration> [--limit N] [--offset N] [--reasoning-limit N] "
-            "[--sort top|borderline]",
+            "[--sort top|borderline] [--mode reflection|preflection]",
         )
         cmd_accepts(
             int(positional[0]),
@@ -2218,6 +2541,7 @@ def main():
             reasoning_limit=_get_flag_int("--reasoning-limit", 200),
             offset=_get_flag_int("--offset", 0),
             sort=_get_flag("--sort", "top"),
+            mode=_get_flag("--mode"),
         )
     elif cmd == "show":
         brief = "--brief" in args
@@ -2238,8 +2562,8 @@ def main():
         _require_positional(1, "diversity <iteration>")
         cmd_diversity(int(positional[0]))
     elif cmd == "scores":
-        _require_positional(1, "scores <iteration>")
-        cmd_scores(int(positional[0]))
+        _require_positional(1, "scores <iteration> [--mode reflection|preflection]")
+        cmd_scores(int(positional[0]), mode=_get_flag("--mode"))
     elif cmd == "distribution":
         _require_positional(1, "distribution <iteration>")
         cmd_distribution(int(positional[0]))
@@ -2276,7 +2600,7 @@ def main():
             part=_get_flag("--part"),
         )
     elif cmd == "trend":
-        cmd_trend()
+        cmd_trend(mode=_get_flag("--mode"))
     elif cmd == "test_generate":
         _require_positional(
             1,
@@ -2290,6 +2614,7 @@ def main():
             n=_get_flag_int("--n", 3),
             role=_get_flag("--role", _get_flag("--phase", "judge")),
             model_alias=_get_flag("--model"),
+            mode=_get_flag("--mode"),
         )
     elif cmd == "test_judge":
         _require_positional(
@@ -2314,7 +2639,10 @@ def main():
             mode=mode_arg,
         )
     elif cmd == "run_batch":
-        cmd_run_batch(role=_get_flag("--role", _get_flag("--phase", "judge")))
+        cmd_run_batch(
+            role=_get_flag("--role", _get_flag("--phase", "judge")),
+            mode=_get_flag("--mode"),
+        )
     elif cmd == "run_cross_batch":
         role = _get_flag("--role")
         target = _get_flag("--target")
@@ -2332,17 +2660,23 @@ def main():
             ), f"--mode must be 'reflection' or 'preflection', got '{mode_arg}'"
         cmd_run_cross_batch(role=role, target=target, mode=mode_arg)
     elif cmd == "cross_summary":
-        _require_positional(1, "cross_summary <group_id>")
-        cmd_cross_summary(positional[0])
+        _require_positional(
+            1, "cross_summary <group_id> [--mode reflection|preflection]"
+        )
+        cmd_cross_summary(positional[0], mode=_get_flag("--mode"))
     elif cmd == "diagnose":
-        _require_positional(1, "diagnose <group_id>")
-        cmd_diagnose(positional[0])
+        _require_positional(1, "diagnose <group_id> [--mode reflection|preflection]")
+        cmd_diagnose(positional[0], mode=_get_flag("--mode"))
     elif cmd == "diff":
-        _require_positional(2, "diff <iter1> <iter2> [--limit N]")
+        _require_positional(
+            2,
+            "diff <iter1> <iter2> [--limit N] [--mode reflection|preflection]",
+        )
         cmd_diff(
             int(positional[0]),
             int(positional[1]),
             limit=_get_flag_int("--limit", 10),
+            mode=_get_flag("--mode"),
         )
     elif cmd == "test_results":
         cmd_test_results(
@@ -2353,13 +2687,21 @@ def main():
     elif cmd == "correlations":
         cmd_correlations()
     elif cmd == "rejudge_all":
-        cmd_rejudge_all()
+        cmd_rejudge_all(mode=_get_flag("--mode"))
     elif cmd == "parse_stats":
         _require_positional(1, "parse_stats <iteration>")
         cmd_parse_stats(int(positional[0]))
     elif cmd == "rollback":
-        _require_positional(3, "rollback <alias> <role> <version>")
-        cmd_rollback(positional[0], positional[1], int(positional[2]))
+        _require_positional(
+            3,
+            "rollback <alias> <role> <version> [--mode reflection|preflection]",
+        )
+        cmd_rollback(
+            positional[0],
+            positional[1],
+            int(positional[2]),
+            mode=_get_flag("--mode"),
+        )
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

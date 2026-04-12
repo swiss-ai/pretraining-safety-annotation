@@ -382,8 +382,16 @@ def _open_and_stamp(
     store.write_metadata(meta)
 
 
-def run_generator_eval(cfg: AppConfig, run_id: str) -> None:
-    """Path-A runner: rank candidate generators against the single gold judge."""
+def run_generator_eval(
+    cfg: AppConfig, run_id: str, *, stage: str | None = None
+) -> None:
+    """Path-A runner: rank candidate generators against the single gold judge.
+
+    *stage* controls which part to run:
+      - ``None``       – run both stages (default, backwards-compatible)
+      - ``"generate"`` – only generate reflections for every candidate
+      - ``"judge"``    – only judge existing generations with the gold judge
+    """
     ge = cfg.phase3.generator_eval
     root = _eval_root(cfg)
     store = JsonlRunStore(root, run_id)
@@ -397,6 +405,9 @@ def run_generator_eval(cfg: AppConfig, run_id: str) -> None:
         "candidates": [_candidate_metadata(c) for c in ge.candidates],
     }
 
+    run_generate = stage in (None, "generate")
+    run_judge = stage in (None, "judge")
+
     try:
         _open_and_stamp(store, root, run_id, "generator_eval", expected)
 
@@ -407,45 +418,51 @@ def run_generator_eval(cfg: AppConfig, run_id: str) -> None:
         wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
         gold = cfg.phase3.gold_judge
 
-        for gen in ge.candidates:
-            _generate_with_resume(
-                store,
-                _gen_file(gen),
-                items,
-                gen,
-                cfg,
-                client,
-                sem,
-                charter,
-                wg,
-                chunk_size=ge.chunk_size,
-                failures_name=_gen_failures_name(gen),
-                canary_rng_seed=ge.seed,
-                failure_attempt_cap=ge.failure_attempt_cap,
-                store_reasoning=ge.store_reasoning,
-            )
+        # Stage 1: generate reflections for every candidate
+        if run_generate:
+            for gen in ge.candidates:
+                _generate_with_resume(
+                    store,
+                    _gen_file(gen),
+                    items,
+                    gen,
+                    cfg,
+                    client,
+                    sem,
+                    charter,
+                    wg,
+                    chunk_size=ge.chunk_size,
+                    failures_name=_gen_failures_name(gen),
+                    canary_rng_seed=ge.seed,
+                    failure_attempt_cap=ge.failure_attempt_cap,
+                    store_reasoning=ge.store_reasoning,
+                )
 
-            _judge_with_resume(
-                store,
-                _judg_file(gold, gen),
-                store.iter_rows(_gen_file(gen)),
-                gold,
-                cfg,
-                client,
-                sem,
-                charter,
-                wg,
-                chunk_size=ge.chunk_size,
-                failures_name=_judge_failures_name(gold, gen),
-                accept_threshold=cfg.phase3.scoring.accept_threshold,
-                failure_attempt_cap=ge.failure_attempt_cap,
-                store_reasoning=ge.store_reasoning,
-            )
+        # Stage 2: judge all generations with the gold judge
+        if run_judge:
+            for gen in ge.candidates:
+                _judge_with_resume(
+                    store,
+                    _judg_file(gold, gen),
+                    store.iter_rows(_gen_file(gen)),
+                    gold,
+                    cfg,
+                    client,
+                    sem,
+                    charter,
+                    wg,
+                    chunk_size=ge.chunk_size,
+                    failures_name=_judge_failures_name(gold, gen),
+                    accept_threshold=cfg.phase3.scoring.accept_threshold,
+                    failure_attempt_cap=ge.failure_attempt_cap,
+                    store_reasoning=ge.store_reasoning,
+                )
 
-        # Mark done
-        meta = store.read_metadata()
-        meta["status"] = "done"
-        meta["finished_at"] = _now_iso()
-        store.write_metadata(meta)
+        # Mark done only when both stages have run (or judge finishes)
+        if run_judge:
+            meta = store.read_metadata()
+            meta["status"] = "done"
+            meta["finished_at"] = _now_iso()
+            store.write_metadata(meta)
     finally:
         store.close()

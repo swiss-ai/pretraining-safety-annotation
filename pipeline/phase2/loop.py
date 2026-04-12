@@ -124,8 +124,10 @@ def _build_improver_prompt(
 
     if role == "judge":
         prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
+        # Resolve generator prompt from the first generator model, not the judge model
+        gen_alias_for_ref = cfg.phase2.generator_models[0].alias
         other_prompt_path = resolve_prompt_path(
-            f"generator_{mode}_latest.md", target_alias
+            f"generator_{mode}_latest.md", gen_alias_for_ref
         )
         same_role_other_mode_path = resolve_prompt_path(
             f"judge_{other_mode}_latest.md", target_alias
@@ -139,7 +141,9 @@ def _build_improver_prompt(
         other_type = "generator"
     else:
         prompt_path = resolve_prompt_path(f"generator_{mode}_latest.md", target_alias)
-        other_prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
+        # Resolve judge prompt from the first judge model, not the generator model
+        judge_alias = cfg.phase2.judge_models[0].alias
+        other_prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", judge_alias)
         same_role_other_mode_path = resolve_prompt_path(
             f"generator_{other_mode}_latest.md", target_alias
         )
@@ -228,7 +232,7 @@ def _build_improver_prompt(
                 with contextlib.redirect_stdout(buf):
                     from pipeline.improver_tools import cmd_diagnose
 
-                    cmd_diagnose(latest_gid)
+                    cmd_diagnose(latest_gid, mode=mode)
                 baseline_diagnose = buf.getvalue()
                 if len(baseline_diagnose) > 4000:
                     baseline_diagnose = baseline_diagnose[:4000] + "\n... (truncated)"
@@ -396,11 +400,12 @@ prompt instructions.
 
 ## Query tools
 Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration number from your batch output.
-  uv run python -m pipeline.improver_tools summary <ITER>     — aggregate stats
-  uv run python -m pipeline.improver_tools failures <ITER>    — rejected items with reasoning
-  uv run python -m pipeline.improver_tools failures <ITER> --reasoning-limit 500  — full reasoning
+**IMPORTANT: `--mode {mode}` is already included in every command below. Do NOT omit it.**
+  uv run python -m pipeline.improver_tools summary <ITER> --mode {mode}     — aggregate stats for {mode}
+  uv run python -m pipeline.improver_tools failures <ITER> --mode {mode}    — rejected items with reasoning
+  uv run python -m pipeline.improver_tools failures <ITER> --mode {mode} --reasoning-limit 500  — full reasoning
   uv run python -m pipeline.improver_tools diversity <ITER>   — frequency-based diversity analysis
-  uv run python -m pipeline.improver_tools scores <ITER>      — compact scores table
+  uv run python -m pipeline.improver_tools scores <ITER> --mode {mode}      — compact scores table
   uv run python -m pipeline.improver_tools distribution <ITER> — per-dimension score distributions + floor trigger counts
   uv run python -m pipeline.improver_tools show <id> <ITER>   — full text + outputs for one item
   uv run python -m pipeline.improver_tools show <id1,id2,...> <ITER>  — batch show multiple items
@@ -413,7 +418,7 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold
   uv run python -m pipeline.improver_tools reviews [<JUDGE_PROMPT>] [--reasoning-limit N]  — human reviews with the *latest* judge's scores + reasoning side-by-side (pass --reasoning-limit 0 to suppress reasoning, default 200)
   uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
-  uv run python -m pipeline.improver_tools trend                     — cross-iteration comparison table
+  uv run python -m pipeline.improver_tools trend --mode {mode}              — cross-iteration comparison table
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
   uv run python -m pipeline.improver_tools parse_stats <ITER>        — generation parse success/failure counts
 
@@ -422,14 +427,14 @@ match by prefix — pass the first 8+ chars. Numeric values like `25` or `40` ar
 Copy IDs from the `scores`, `failures`, or `filter` output.
 
 ## Test tools (run experiments WITHOUT modifying main data)
-  uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--role {role}]
+  uv run python -m pipeline.improver_tools test_judge <prompt_path> [--items id1,id2] [--n N] [--role {role}] [--mode {mode}]
   uv run python -m pipeline.improver_tools test_generate <prompt_path> [--items id1,id2] [--n N] [--role {role}]
   uv run python -m pipeline.improver_tools run_cross_batch --role {role} --target {target_alias} --mode {mode}  — cross-iteration with ALL {other_type} models
-  uv run python -m pipeline.improver_tools cross_summary <group_id>   — per-model stats for a cross-iteration
-  uv run python -m pipeline.improver_tools diagnose <group_id>        — ONE-SHOT full analysis (use this first!)
-  uv run python -m pipeline.improver_tools diff <iter1> <iter2> [--limit N]  — cross-iteration item comparison
+  uv run python -m pipeline.improver_tools cross_summary <group_id> --mode {mode}   — per-model stats for a cross-iteration
+  uv run python -m pipeline.improver_tools diagnose <group_id> --mode {mode}        — ONE-SHOT full analysis (use this first!)
+  uv run python -m pipeline.improver_tools diff <iter1> <iter2> --mode {mode} [--limit N]  — cross-iteration item comparison
   uv run python -m pipeline.improver_tools test_results --role {role}  — view test results
-  uv run python -m pipeline.improver_tools rollback {target_alias} {role} <version>  — promote version N to latest
+  uv run python -m pipeline.improver_tools rollback {target_alias} {role} <version> --mode {mode} — promote version N to latest
 
 ## Running long commands (CRITICAL — `run_cross_batch` takes 3-5 minutes!)
 `run_cross_batch`, `run_batch`, `test_judge`, and `test_generate` make many API calls and
@@ -696,9 +701,10 @@ def run_improver(cfg: AppConfig, role: str, target_alias: str, mode: str) -> Non
             from pipeline.phase2.run import rejudge_all_prompts_and_models
 
             logger.info(
-                "Running rejudge_all_prompts_and_models after judge improvement..."
+                "Running rejudge_all_prompts_and_models (mode={}) after judge improvement...",
+                mode,
             )
-            rejudge_all_prompts_and_models(cfg)
+            rejudge_all_prompts_and_models(cfg, mode=mode)
 
     try:
         run_improver_agent(prompt, key, log_path, tmp_dir, post_hook=_post_hook)

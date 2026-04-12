@@ -1,7 +1,7 @@
 """Phase 3 CLI: eval-generators / eval-judges / rank-* / list-runs / failures.
 
 Usage:
-    uv run python -m pipeline.phase3 eval-generators [--run-id NAME] [overrides...]
+    uv run python -m pipeline.phase3 eval-generators [--run-id NAME] [--stage generate|judge] [overrides...]
     uv run python -m pipeline.phase3 eval-judges     [--run-id NAME] [overrides...]
     uv run python -m pipeline.phase3 rank-generators <run_id> [--json]
     uv run python -m pipeline.phase3 rank-judges     <run_id> [--json]
@@ -10,6 +10,10 @@ Usage:
 
 OmegaConf-style dotlist overrides work the same as in phase 2:
     uv run python -m pipeline.phase3 eval-generators phase3.generator_eval.n_items=20
+
+The --stage flag for eval-generators lets you run generation and judging separately:
+    uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage generate
+    uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage judge
 """
 
 from __future__ import annotations
@@ -27,9 +31,15 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
 
 
-def _split_run_id_and_overrides(args: list[str]) -> tuple[str | None, list[str]]:
-    """Pull --run-id NAME out of args and return (run_id, remaining)."""
+def _split_run_id_and_overrides(
+    args: list[str],
+) -> tuple[str | None, str | None, list[str]]:
+    """Pull --run-id NAME and --stage NAME out of args.
+
+    Returns ``(run_id, stage, remaining_overrides)``.
+    """
     run_id: str | None = None
+    stage: str | None = None
     rest: list[str] = []
     i = 0
     while i < len(args):
@@ -38,26 +48,33 @@ def _split_run_id_and_overrides(args: list[str]) -> tuple[str | None, list[str]]
             run_id = args[i + 1]
             i += 2
             continue
+        if a == "--stage" and i + 1 < len(args):
+            stage = args[i + 1]
+            i += 2
+            continue
         rest.append(a)
         i += 1
-    return run_id, rest
+    return run_id, stage, rest
 
 
 def cmd_eval_generators(args: list[str]) -> int:
-    run_id, overrides = _split_run_id_and_overrides(args)
+    run_id, stage, overrides = _split_run_id_and_overrides(args)
+    if stage and stage not in ("generate", "judge"):
+        print(f"Unknown --stage {stage!r}. Must be 'generate' or 'judge'.")
+        return 2
     cfg = load_config(overrides=overrides if overrides else None)
     if not run_id:
         run_id = f"gen_eval_{_now_iso()}"
     from pipeline.phase3.eval_generators import run_generator_eval
 
-    logger.info("phase3 eval-generators run_id={}", run_id)
-    run_generator_eval(cfg, run_id)
+    logger.info("phase3 eval-generators run_id={} stage={}", run_id, stage or "all")
+    run_generator_eval(cfg, run_id, stage=stage)
     print(f"\nDone. run_id={run_id}")
     return 0
 
 
 def cmd_eval_judges(args: list[str]) -> int:
-    run_id, overrides = _split_run_id_and_overrides(args)
+    run_id, _stage, overrides = _split_run_id_and_overrides(args)
     cfg = load_config(overrides=overrides if overrides else None)
     if not run_id:
         run_id = f"judge_eval_{_now_iso()}"

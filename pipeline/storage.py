@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 
 from pipeline.config import DATA_DIR
 from pipeline.log import logger
@@ -352,21 +353,102 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in run_cols:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
 
+    # Make preflection/reflection/analysis/raw_response nullable (added 2026-04-12)
+    # SQLite cannot ALTER COLUMN, so we recreate the table if any of these are NOT NULL.
+    item_col_info = conn.execute("PRAGMA table_info(items)").fetchall()
+    not_null_map = {row[1]: bool(row[3]) for row in item_col_info}
+    needs_rebuild = any(
+        not_null_map.get(c) for c in ("preflection", "reflection", "analysis")
+    )
+    if needs_rebuild:
+        # Get current column names/types to rebuild with nullable columns
+        col_names = [row[1] for row in item_col_info]
+        cols_csv = ", ".join(col_names)
+        # Build new CREATE TABLE with the correct schema (nullable where needed)
+        conn.execute("ALTER TABLE items RENAME TO items_old")
+        # Re-run schema for items table (already nullable in _SCHEMA)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS items (
+                item_id TEXT NOT NULL,
+                iteration INTEGER NOT NULL,
+                is_gold INTEGER NOT NULL,
+                subset TEXT NOT NULL,
+                text TEXT NOT NULL,
+                reflection_point INTEGER NOT NULL,
+                gen_prompt TEXT NOT NULL,
+                model TEXT NOT NULL,
+                analysis TEXT,
+                preflection TEXT,
+                reflection TEXT,
+                preflection_charter_elements TEXT NOT NULL DEFAULT '[]',
+                reflection_charter_elements TEXT NOT NULL DEFAULT '[]',
+                raw_response TEXT,
+                reasoning TEXT,
+                latency_ms INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                judgment TEXT,
+                PRIMARY KEY (item_id, iteration)
+            );
+            """)
+        # Add optional columns that may exist in old table
+        new_item_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        for col in col_names:
+            if col not in new_item_cols:
+                conn.execute(f"ALTER TABLE items ADD COLUMN {col}")
+        # Copy data — only columns that exist in both
+        new_item_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        shared = [c for c in col_names if c in new_item_cols]
+        shared_csv = ", ".join(shared)
+        conn.execute(
+            f"INSERT INTO items ({shared_csv}) SELECT {shared_csv} FROM items_old"
+        )
+        conn.execute("DROP TABLE items_old")
+        conn.commit()
+
+
+# Connections older than this are closed and reopened so the new connection
+# picks up WAL frames written by other processes.  This is critical when the
+# dashboard (Docker) and pipeline (host) share the DB via a bind mount —
+# the mmapped -shm file can go stale across the mount boundary, causing
+# PRAGMA data_version to miss external writes.
+_CONN_MAX_AGE_S = 5.0
+
 
 def _get_conn() -> sqlite3.Connection:
     """Return a thread-local SQLite connection with WAL mode and Row factory.
 
     Sets a 10-second busy timeout to handle concurrent access from dashboard,
     backup, and iteration threads without "database is locked" errors.
+
+    Connections are recycled after ``_CONN_MAX_AGE_S`` seconds so that readers
+    in a Docker container reliably see writes made by the host process.
     """
     conn = getattr(_local, "conn", None)
     if conn is not None:
-        return conn
+        if time.monotonic() - getattr(_local, "conn_opened_at", 0) < _CONN_MAX_AGE_S:
+            return conn
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
-    _init_schema(conn)
+    db_str = str(DB_PATH)
+    if (
+        not getattr(_local, "schema_done", False)
+        or getattr(_local, "schema_db", None) != db_str
+    ):
+        _init_schema(conn)
+        _local.schema_done = True
+        _local.schema_db = db_str
     _local.conn = conn
+    _local.conn_opened_at = time.monotonic()
     logger.debug(
         "Opened SQLite connection (thread={})", threading.current_thread().name
     )

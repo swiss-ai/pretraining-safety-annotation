@@ -97,7 +97,9 @@ uv run python -m pipeline.phase2.run
 uv run python -m pipeline.phase2.loop
 
 # Run phase 3 evals (rank candidate generators or judges on a large diverse pool)
-uv run python -m pipeline.phase3 eval-generators
+uv run python -m pipeline.phase3 eval-generators                                    # both stages
+uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage generate   # generate only
+uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage judge      # judge only
 uv run python -m pipeline.phase3 eval-judges
 uv run python -m pipeline.phase3 rank-generators <run_id>
 uv run python -m pipeline.phase3 rank-judges <run_id>

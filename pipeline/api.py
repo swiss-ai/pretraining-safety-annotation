@@ -23,15 +23,12 @@ MAX_RETRIES = 5
 MAX_RETRIES_RATE_LIMIT = 8
 RETRY_BACKOFF_BASE = 2.0
 
-# Default completion-token budget for chat calls. Needs to cover:
-#   - reasoning tokens for thinking models (Kimi-K2.5 observed burning
-#     ~6500 reasoning tokens on a single combined-judge call),
-#   - output tokens for the actual JSON (~6000 observed for a full
-#     4-voice judge response with explanations),
-#   - some slack on top.
-# When unset, OpenRouter routes to providers that cap at ~128 tokens and
-# silently truncates, so the budget is always passed explicitly.
-DEFAULT_MAX_TOKENS = 65536
+# Default desired completion-token budget when a model does not set
+# ``completion_max_tokens`` in config. Callers may dynamically clamp it against
+# a model-specific total context window before issuing the request. When unset
+# at the HTTP layer, some providers clamp to ~128 tokens, so the budget is
+# always passed explicitly from call sites.
+DEFAULT_MAX_TOKENS = 32000
 
 # Per-model recommended sampling parameters from HuggingFace model cards.
 # Matched case-insensitively against the model name. First match wins.

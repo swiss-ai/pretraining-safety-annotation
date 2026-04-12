@@ -96,6 +96,8 @@ class ModelConfig:
     thinking: bool = False
     endpoint: str = ""
     json_mode: bool = False
+    completion_max_tokens: int | None = None
+    context_window_tokens: int | None = None
 
 
 @dataclass
