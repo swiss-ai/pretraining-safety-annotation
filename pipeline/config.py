@@ -172,6 +172,7 @@ class CandidateModel:
     alias: str = ""
     api_name: str = ""
     hf_slug: str = ""
+    endpoint: str = ""  # per-model override; falls back to phase3.endpoint
     prompt_reflection: str = ""  # e.g. "generator_reflection_v7.md"
     prompt_preflection: str = ""  # e.g. "generator_preflection_v2.md"
     thinking: bool = False
