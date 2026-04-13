@@ -353,6 +353,7 @@ def generate_batch(
     canary_rng_seed: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
     mode: str | None = None,
+    desc: str | None = None,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
@@ -661,7 +662,7 @@ def generate_batch(
         return record
 
     coros = [process_one(item) for item in items]
-    results = run_concurrent(*coros, desc="Generating")
+    results = run_concurrent(*coros, desc=desc or "Generating")
     skipped = sum(1 for r in results if r is None)
     if skipped:
         logger.warning(
@@ -774,6 +775,7 @@ def judge_batch(
     context_window_tokens: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
     mode: str | None = None,
+    desc: str | None = None,
 ) -> list[dict]:
     """Judge generated annotations in parallel.
 
@@ -979,7 +981,7 @@ def judge_batch(
         return judged
 
     coros = [judge_one(item) for item in items]
-    results = run_concurrent(*coros, desc="Judging")
+    results = run_concurrent(*coros, desc=desc or "Judging")
     skipped = sum(1 for r in results if r is None)
     if skipped:
         logger.warning(

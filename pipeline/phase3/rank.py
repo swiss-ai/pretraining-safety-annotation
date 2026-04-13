@@ -174,10 +174,12 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
         jud_filename = f"{gold_alias}__{gold_prompt}__on__{gen_name}.jsonl"
         jud_file = run_dir / "judgments" / jud_filename
         if not jud_file.exists():
-            raise FileNotFoundError(
-                f"Missing gold judgment file for generator {gen_name}: "
-                f"expected {jud_file.relative_to(run_dir)}"
+            logger.warning(
+                "Skipping generator {} — no judgment file yet ({})",
+                gen_name,
+                jud_file.relative_to(run_dir),
             )
+            continue
 
         judgment_rows = _read_jsonl(jud_file)
         n_succeeded = len(judgment_rows)

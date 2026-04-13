@@ -2416,6 +2416,15 @@ def pipeline_monitoring_page():
             else:
                 ui.notify("Backup not configured (BACKUP_REPO not set)", type="warning")
 
+        def _do_refresh():
+            from pipeline.storage import force_reconnect
+
+            force_reconnect()
+            ui.run_javascript("location.reload(true)")
+
+        ui.button(icon="refresh", on_click=_do_refresh).props(
+            "flat dense size=sm"
+        ).tooltip("Reload dashboard data").style("color:#666;")
         ui.button(icon="cloud_upload", on_click=_do_upload).props(
             "flat dense size=sm"
         ).tooltip("Force upload to HuggingFace").style("color:#666;")

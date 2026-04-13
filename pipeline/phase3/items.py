@@ -21,15 +21,13 @@ from pipeline.tokenizer import compute_reflection_point
 _FOUR_VOICES = ("preflection_3p", "preflection_1p", "reflection_1p", "reflection_3p")
 
 
-def build_item_pool(
-    n_items: int, seed: int, max_tokens: int
-) -> tuple[list[dict], str]:
+def build_item_pool(n_items: int, seed: int, max_tokens: int) -> tuple[list[dict], str]:
     """Sample n_items diversely from the full Dolma3 dataset.
 
     Returns (items, dataset_revision). Each item has item_id, text,
     safety_score, reflection_point.
     """
-    result = sample_diverse(n_items=n_items, seed=seed, max_tokens=max_tokens)
+    result = sample_diverse(n=n_items, seed=seed, max_tokens=max_tokens)
     # `sample_diverse` returns a dict with keys "items" and "dataset_revision",
     # OR a (items, revision) tuple — accept either, since the test fakes use
     # the tuple form.
@@ -48,6 +46,8 @@ def build_item_pool(
     for raw in items:
         text = raw["text"]
         item = dict(raw)
+        item.setdefault("subset", "dolma3")
+        item.setdefault("is_gold", False)
         # compute_reflection_point's signature is (text, rng); the test fakes
         # accept (text, **kwargs) so passing rng as a kwarg lets both work.
         try:
@@ -202,9 +202,7 @@ def _average_reviews(reviewers: list[dict]) -> dict:
             dims.update(r["scores"][voice].keys())
         for dim in dims:
             vals = [
-                r["scores"][voice][dim]
-                for r in reviewers
-                if dim in r["scores"][voice]
+                r["scores"][voice][dim] for r in reviewers if dim in r["scores"][voice]
             ]
             if vals:
                 avg_scores[voice][dim] = sum(vals) / len(vals)

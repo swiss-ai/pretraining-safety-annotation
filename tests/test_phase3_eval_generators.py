@@ -288,6 +288,7 @@ def eval_cfg(tmp_path):
             json_mode=False,
         ),
     ]
+    cfg.phase3.generator_eval.gold_prompt = ""
     cfg.phase3.generator_eval.n_items = 5
     cfg.phase3.generator_eval.seed = 42
     cfg.phase3.generator_eval.failure_attempt_cap = 3

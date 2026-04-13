@@ -290,12 +290,12 @@ def _print_judged_items(items: list[dict], reasoning_limit: int) -> None:
             f"--- {item['item_id'][:16]} (score={j['aggregate']:.2f}, gold={item.get('is_gold', False)}) ---"
         )
         print(f"  Text preview: {item['text'][:150]}...")
-        print(f"  Preflection (3p): {item.get('preflection', '')[:150]}...")
+        print(f"  Preflection (3p): {(item.get('preflection') or '')[:150]}...")
         if item.get("preflection_1p"):
-            print(f"  Preflection (1p): {item.get('preflection_1p', '')[:150]}...")
-        print(f"  Reflection (1p): {item.get('reflection', '')[:150]}...")
+            print(f"  Preflection (1p): {(item.get('preflection_1p') or '')[:150]}...")
+        print(f"  Reflection (1p): {(item.get('reflection') or '')[:150]}...")
         if item.get("reflection_3p"):
-            print(f"  Reflection (3p): {item.get('reflection_3p', '')[:150]}...")
+            print(f"  Reflection (3p): {(item.get('reflection_3p') or '')[:150]}...")
         print(
             f"  Charter elements: pref={item.get('preflection_charter_elements', [])} "
             f"refl={item.get('reflection_charter_elements', [])}"

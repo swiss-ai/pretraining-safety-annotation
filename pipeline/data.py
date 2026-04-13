@@ -115,9 +115,7 @@ def _list_dataset_shards() -> list[str]:
     ]
     if not shards:
         # Fallback: any parquet/jsonl file in the repo
-        shards = [
-            f for f in files if f.endswith(".parquet") or f.endswith(".jsonl")
-        ]
+        shards = [f for f in files if f.endswith(".parquet") or f.endswith(".jsonl")]
     shards.sort()
     return shards
 
@@ -165,16 +163,21 @@ def sample_diverse(n: int, seed: int, max_tokens: int) -> dict:
         # sample for a given shard is reproducible but different across shards.
         shard_rng = random.Random(f"sample_diverse_v1::{seed}::{shard}")
         ds = _datasets_mod.load_dataset(
-            DATASET, data_files=[shard], split="train"
+            DATASET,
+            data_files=[shard],
+            split="train",
+            verification_mode="no_checks",
         )
         sampled = _reservoir_sample(iter(ds), per_shard, shard_rng)
         for row in sampled:
             pooled.append(
                 {
                     "text": row["text"],
-                    "safety_score": int(row.get("safety_score", 0))
-                    if row.get("safety_score") is not None
-                    else None,
+                    "safety_score": (
+                        int(row.get("safety_score", 0))
+                        if row.get("safety_score") is not None
+                        else None
+                    ),
                 }
             )
 

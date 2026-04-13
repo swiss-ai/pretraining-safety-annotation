@@ -51,3 +51,7 @@ class _InterceptHandler(logging.Handler):
 
 
 logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
+
+# Suppress noisy HTTP request logs from httpx/openai that break tqdm bars
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)

@@ -270,14 +270,18 @@ Do NOT waste time querying empty data — run the batch first.
 """
 
     # Build conditional sections for gold/review data
+    # Generator improvers don't use human reviews (judge improvers do).
+    show_reviews = has_reviews and role == "judge"
     gold_review_note = ""
-    if not has_gold and not has_reviews:
-        gold_review_note = """
-## Gold annotations & human reviews: NONE AVAILABLE
-There are no gold annotations or human reviews in the database yet.
-Do NOT waste tool calls checking for them — the `gold`, `compare`, `reviews`, and
-`correlations` commands will return empty results. Skip the Gold Set Comparison and
-Human Review Mining sections of the improver instructions.
+    if not has_gold and not show_reviews:
+        unavailable = []
+        if not has_gold:
+            unavailable.extend(["gold", "compare"])
+        if not show_reviews:
+            unavailable.extend(["reviews"])
+        gold_review_note = f"""
+## Data not available: {', '.join(unavailable)}
+Do NOT waste tool calls on these commands — they will return empty or irrelevant results.
 """
     else:
         extra_agents = []
@@ -285,7 +289,7 @@ Human Review Mining sections of the improver instructions.
             extra_agents.append(
                 "- **Gold comparator**: compare generated outputs with gold annotations — run `compare` on multiple items, identify systematic gaps"
             )
-        if has_reviews:
+        if show_reviews:
             extra_agents.append(
                 "- **Human reviews analyst**: read ALL human reviews (`reviews` without iteration filter) and extract key insights from reviewer notes"
             )
@@ -336,6 +340,22 @@ Human Review Mining sections of the improver instructions.
         )
     else:
         human_notes_block = ""
+
+    # Role-conditional: generator improvers don't see reviews
+    reviews_tool_line = (
+        "\n  uv run python -m pipeline.improver_tools reviews [<JUDGE_PROMPT>] "
+        "[--reasoning-limit N]  — human reviews with the *latest* judge's scores + "
+        "reasoning side-by-side (pass --reasoning-limit 0 to suppress reasoning, default 200)"
+        if role == "judge"
+        else ""
+    )
+    reviews_subagent_line = (
+        "\n- **Human reviews analyst**: read ALL human reviews (`reviews` without "
+        "iteration filter — output is large, must use subagent!) and extract key "
+        "insights from reviewer notes"
+        if role == "judge"
+        else ""
+    )
 
     return f"""You are improving {role_label} prompts for a pretraining data annotation pipeline.
 
@@ -415,8 +435,7 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools reasoning <id>[,id2,...] <ITER> — full judge reasoning (scores + text)
   uv run python -m pipeline.improver_tools gold                      — gold annotations (concise, no source text)
   uv run python -m pipeline.improver_tools gold --verbose            — gold with full source text (large output!)
-  uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold
-  uv run python -m pipeline.improver_tools reviews [<JUDGE_PROMPT>] [--reasoning-limit N]  — human reviews with the *latest* judge's scores + reasoning side-by-side (pass --reasoning-limit 0 to suppress reasoning, default 200)
+  uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold{reviews_tool_line}
   uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
   uv run python -m pipeline.improver_tools trend --mode {mode}              — cross-iteration comparison table
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
@@ -470,27 +489,45 @@ Read your state file at {state_path} FIRST. It contains notes from previous iter
 This data is pre-loaded so you can skip running `diagnose` and go straight to deeper analysis
 (failures, show, reasoning on specific items). Pass this output to your subagents too.
 '''}
-## Strategy: use MANY Opus subagents for parallel exploration (CRITICAL)
+## YOU MUST READ ACTUAL ITEMS — NOT JUST SCORES (CRITICAL)
+**DO NOT work from aggregate statistics alone.** Previous improver runs failed because they
+only looked at score distributions, accept rates, and summary tables — never reading the
+actual generated text or judge reasoning for individual items. This produces blind prompt
+edits that don't fix anything.
+
+**For EVERY analysis round, you MUST:**
+1. Run `reasoning <id1,id2,...> <iter>` on rejected items to read what the judge ACTUALLY said
+2. Run `show <id> <iter>` to read the source text and the generated annotations
+3. Only THEN look at scores to confirm the pattern
+
+Use the CLI tools directly via Bash — do NOT write Python scripts that import pipeline modules
+(they will fail with ImportError). The `show`, `reasoning`, `failures`, and `filter` commands
+are all you need.
+
+## Strategy: use subagents for parallel exploration
 You have access to the Agent tool. **Always use model="opus" for subagents** — they need
-strong reasoning. **Spawn 5-8 subagents in parallel** for every analysis round. The bottleneck
-is wall-clock time, not tokens — more parallel subagents = faster and deeper analysis.
+strong reasoning. Spawn subagents in parallel for analysis. The bottleneck is wall-clock
+time, not tokens.
+
+**IMPORTANT: Subagents must use CLI commands, not Python imports.** Tell each subagent to run
+`uv run python -m pipeline.improver_tools <command>` via Bash. Do NOT tell them to write
+Python scripts or import from `pipeline.*` — those approaches fail.
 
 **Before spawning subagents**: Run `diagnose <group_id>` yourself first. Then pass the diagnose
 output to each subagent in its prompt so they don't re-run it. Each subagent prompt should
-include: (1) the diagnose output, (2) their specific analysis task, (3) which commands to run
-that the parent has NOT already run. This eliminates redundant queries.
+include: (1) the diagnose output, (2) their specific analysis task, (3) which CLI commands to
+run. Tell them to keep their response concise (under 2000 words) so you can read it.
 
 Launch these subagents simultaneously (all in one message with multiple Agent calls):
-- **Failures analyst**: analyze all failures — run `failures`, `reasoning`, `show` on worst items
-- **Gold comparator**: compare generated outputs with gold annotations — run `compare` on multiple items, identify systematic gaps
-- **Human reviews analyst**: read ALL human reviews (`reviews` without iteration filter — output is large, must use subagent!) and extract key insights from reviewer notes
+- **Failures analyst**: run `reasoning` on ALL rejected items, read the judge's actual
+  complaints, categorize failures, return ranked list with QUOTED judge reasoning{reviews_subagent_line}
 - **Diversity analyst**: check diversity patterns — run `diversity`, look for formulaic/repetitive output
-- **Dimension deep-dive**: run `filter` for each scoring dimension below threshold, identify which dimensions drag scores down
+- **Dimension deep-dive**: run `filter` for each scoring dimension below threshold, then
+  `reasoning` on the worst items to understand WHY that dimension scored low
 - **Cross-model comparator**: if multiple iterations exist, run `diff` between iterations to see what changed
-- **Score distribution analyst**: run `distribution` and analyze — are scores clustered? bimodal? skewed?
 
-Each subagent should return a concise summary of findings with specific evidence (item IDs, scores, quotes).
-Then synthesize ALL subagent findings to write improved prompts.
+Each subagent should return a concise summary with QUOTED TEXT from the actual generations
+and judge reasoning — not just category labels and counts.
 {gold_review_note}
 **Avoid redundancy**: When you delegate analysis to subagents, do NOT run the same queries
 yourself. Wait for ALL subagent results before proceeding. Never call the same command twice —

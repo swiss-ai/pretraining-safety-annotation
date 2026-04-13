@@ -1,7 +1,7 @@
 """Phase 3 CLI: eval-generators / eval-judges / rank-* / list-runs / failures.
 
 Usage:
-    uv run python -m pipeline.phase3 eval-generators [--run-id NAME] [--stage generate|judge] [overrides...]
+    uv run python -m pipeline.phase3 eval-generators [--run-id NAME] [--stage generate|judge] [--mode reflection|preflection] [overrides...]
     uv run python -m pipeline.phase3 eval-judges     [--run-id NAME] [overrides...]
     uv run python -m pipeline.phase3 rank-generators <run_id> [--json]
     uv run python -m pipeline.phase3 rank-judges     <run_id> [--json]
@@ -14,6 +14,9 @@ OmegaConf-style dotlist overrides work the same as in phase 2:
 The --stage flag for eval-generators lets you run generation and judging separately:
     uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage generate
     uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage judge
+
+The --mode flag restricts to a single pipeline (reflection or preflection):
+    uv run python -m pipeline.phase3 eval-generators --run-id my-run --mode reflection
 """
 
 from __future__ import annotations
@@ -33,13 +36,14 @@ def _now_iso() -> str:
 
 def _split_run_id_and_overrides(
     args: list[str],
-) -> tuple[str | None, str | None, list[str]]:
-    """Pull --run-id NAME and --stage NAME out of args.
+) -> tuple[str | None, str | None, str | None, list[str]]:
+    """Pull --run-id NAME, --stage NAME, and --mode NAME out of args.
 
-    Returns ``(run_id, stage, remaining_overrides)``.
+    Returns ``(run_id, stage, mode, remaining_overrides)``.
     """
     run_id: str | None = None
     stage: str | None = None
+    mode: str | None = None
     rest: list[str] = []
     i = 0
     while i < len(args):
@@ -52,29 +56,43 @@ def _split_run_id_and_overrides(
             stage = args[i + 1]
             i += 2
             continue
+        if a == "--mode" and i + 1 < len(args):
+            mode = args[i + 1]
+            i += 2
+            continue
         rest.append(a)
         i += 1
-    return run_id, stage, rest
+    return run_id, stage, mode, rest
 
 
 def cmd_eval_generators(args: list[str]) -> int:
-    run_id, stage, overrides = _split_run_id_and_overrides(args)
+    run_id, stage, mode, overrides = _split_run_id_and_overrides(args)
     if stage and stage not in ("generate", "judge"):
         print(f"Unknown --stage {stage!r}. Must be 'generate' or 'judge'.")
         return 2
+    if mode and mode not in ("reflection", "preflection"):
+        print(f"Unknown --mode {mode!r}. Must be 'reflection' or 'preflection'.")
+        return 2
     cfg = load_config(overrides=overrides if overrides else None)
+    if mode:
+        cfg.phase3.generator_eval.mode = mode
     if not run_id:
         run_id = f"gen_eval_{_now_iso()}"
     from pipeline.phase3.eval_generators import run_generator_eval
 
-    logger.info("phase3 eval-generators run_id={} stage={}", run_id, stage or "all")
+    logger.info(
+        "phase3 eval-generators run_id={} stage={} mode={}",
+        run_id,
+        stage or "all",
+        cfg.phase3.generator_eval.mode or "both",
+    )
     run_generator_eval(cfg, run_id, stage=stage)
     print(f"\nDone. run_id={run_id}")
     return 0
 
 
 def cmd_eval_judges(args: list[str]) -> int:
-    run_id, _stage, overrides = _split_run_id_and_overrides(args)
+    run_id, _stage, _mode, overrides = _split_run_id_and_overrides(args)
     cfg = load_config(overrides=overrides if overrides else None)
     if not run_id:
         run_id = f"judge_eval_{_now_iso()}"
@@ -87,25 +105,27 @@ def cmd_eval_judges(args: list[str]) -> int:
 
 
 def cmd_rank_generators(args: list[str]) -> int:
-    if not args:
-        print("Usage: rank-generators <run_id> [--json]")
+    as_json = "--json" in args
+    run_ids = [a for a in args if a != "--json"]
+    if not run_ids:
+        print("Usage: rank-generators <run_id> [run_id2 ...] [--json]")
         return 2
-    run_id = args[0]
-    as_json = "--json" in args[1:]
     from pipeline.phase3 import rank as rank_mod
 
-    rows = rank_mod.rank_generators(run_id)
+    all_rows: list[dict] = []
+    for run_id in run_ids:
+        all_rows.extend(rank_mod.rank_generators(run_id))
     if as_json:
-        print(json.dumps(rows, indent=2))
+        print(json.dumps(all_rows, indent=2))
         return 0
-    if not rows:
-        print(f"No generators in run {run_id}")
+    if not all_rows:
+        print(f"No generators in {', '.join(run_ids)}")
         return 0
     print(
         f"{'Generator':<40} {'n_ok':>6} {'mean':>6} {'accept':>8} "
         f"{'gen_api':>8} {'gen_parse':>10} {'jud_api':>8} {'jud_parse':>10}"
     )
-    for r in rows:
+    for r in all_rows:
         fr = r["failure_rates"]
         print(
             f"{r['generator']:<40} {r['n_succeeded']:>6} "

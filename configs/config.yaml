@@ -1,7 +1,7 @@
 charter_path: resources/ModelRaisingConstitution_v0.2.md
 writing_guidelines_path: resources/ValueAnnotationGuidelines_v0.1.md
 data_dir: data
-max_tokens: 2048
+max_tokens: 1920
 api_keys:
   https://api.swissai.svc.cscs.ch/v1: SWISS_AI_API_KEY
   https://openrouter.ai/api/v1: OPENROUTER_API_KEY
@@ -87,22 +87,42 @@ phase2:
   loop: {}
 phase3:
   endpoint: ${phase2.endpoint}
-  eval_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase3_eval
+  eval_dir: data/pipeline/phase3
   gold_judge:
-    alias: glm-4.5-air
-    api_name: jminder/jZ7aJGjetjNN
-    prompt: judge_v1.md
+    alias: kimi-k2.5
+    api_name: jkminder/lAiFTaihSJ
+    hf_slug: moonshotai/Kimi-K2.5
+    prompt: judge_reflection_v24.md
+    completion_max_tokens: 65536
+    context_window_tokens: 65536
   generator_eval:
     n_items: 5000
     seed: 42
-    max_concurrent: 50
-    chunk_size: 200
+    max_concurrent: 512
+    chunk_size: 500
     store_reasoning: false
-    failure_attempt_cap: 3
+    failure_attempt_cap: 5
     candidates:
-    - alias: glm-4.5-air
-      api_name: jminder/jZ7aJGjetjNN
-      prompt: generator_v1.md
+    # - alias: glm-4.5-air
+    #   api_name: jminder/pZcWDUxqEQ
+    #   hf_slug: zai-org/GLM-4.5-Air-FP8
+    #   context_window_tokens: 16384
+    #   prompt: generator_reflection_v7.md
+    # - alias: gpt-oss-120b
+    #   api_name: openai/gpt-oss-120b-SSOR
+    #   hf_slug: openai/gpt-oss-120b
+    #   context_window_tokens: 16384
+    #   prompt: generator_reflection_v7.md
+    - alias: qwen3.5-35b-a3b
+      api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+      context_window_tokens: 24576
+      prompt: generator_reflection_v7.md
+    # - alias: nemotron-3-super-120b-a12b
+    #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
+    #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+    #   context_window_tokens: 16384
+    #   prompt: generator_reflection_v9.md
   judge_eval:
     n_items: 5000
     seed: 42

@@ -496,6 +496,26 @@ def cached_load(key, loader):
     return result
 
 
+def force_reconnect() -> None:
+    """Close the DB connection, clear the read cache, and force a fresh connect.
+
+    Use this when external processes (e.g. the pipeline on the host) have written
+    to the DB and the dashboard (in Docker) needs to see the new data immediately.
+    Closing the connection forces SQLite to re-read the WAL and -shm files on the
+    next query, bypassing any stale mmap state from the bind mount.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+    _local.conn_opened_at = 0
+    _local.read_cache = {}
+    _local.bump_version = getattr(_local, "bump_version", 0) + 1
+
+
 def bump_cache_version() -> None:
     """Invalidate this thread's read cache after a write on the same connection.
 

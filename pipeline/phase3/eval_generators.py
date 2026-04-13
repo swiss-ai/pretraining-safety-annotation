@@ -7,6 +7,9 @@ single configured gold judge. Per-item resume via `JsonlRunStore`.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import copy
 import datetime
 import hashlib
 import os
@@ -40,6 +43,8 @@ def _resolve_both_prompt_paths(
     alias: str,
     kind: str,
     resolve_fn=None,
+    *,
+    only_mode: str | None = None,
 ) -> tuple[Path | None, Path | None]:
     """Derive both reflection and preflection prompt paths from a single prompt field.
 
@@ -47,10 +52,16 @@ def _resolve_both_prompt_paths(
     counterpart is derived automatically.  If it's the old combined format
     (``generator_v3.md``), both paths point to the same file.
 
+    *only_mode* (``"reflection"`` or ``"preflection"``) skips resolving the
+    unused prompt, returning ``None`` for that slot.
+
     Returns ``(refl_prompt_path, prefl_prompt_path)``.
     """
     if resolve_fn is None:
         resolve_fn = resolve_prompt_path
+
+    need_refl = only_mode in (None, "reflection")
+    need_prefl = only_mode in (None, "preflection")
 
     m = _MODE_PROMPT_RE.match(prompt)
     if m:
@@ -58,16 +69,16 @@ def _resolve_both_prompt_paths(
         if mode is None:
             # Old combined format: both point to the same file.
             path = resolve_fn(prompt, alias)
-            return path, path
+            return (path if need_refl else None, path if need_prefl else None)
         refl_name = f"{prefix}_reflection_v{version}.md"
         prefl_name = f"{prefix}_preflection_v{version}.md"
-        refl_path = resolve_fn(refl_name, alias)
-        prefl_path = resolve_fn(prefl_name, alias)
+        refl_path = resolve_fn(refl_name, alias) if need_refl else None
+        prefl_path = resolve_fn(prefl_name, alias) if need_prefl else None
         return refl_path, prefl_path
 
     # Fallback: not a recognized pattern, pass the single file for both.
     path = resolve_fn(prompt, alias)
-    return path, path
+    return (path if need_refl else None, path if need_prefl else None)
 
 
 def _eval_root(cfg: AppConfig) -> Path:
@@ -168,7 +179,7 @@ def _generate_with_resume(
     candidate: CandidateModel,
     cfg: AppConfig,
     client,
-    semaphore,
+    max_concurrent: int,
     charter_text: str,
     writing_guidelines_text: str,
     *,
@@ -197,6 +208,7 @@ def _generate_with_resume(
         candidate.alias,
         "generator",
         resolve_fn=resolve_prompt_path_fn,
+        only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
 
@@ -209,6 +221,9 @@ def _generate_with_resume(
         else [[]]
     )
     for chunk_start, chunk in enumerate(chunked):
+        # Fresh semaphore per chunk: run_concurrent creates a new event loop
+        # each time, and asyncio.Semaphore binds to the first loop it's used in.
+        semaphore = asyncio.Semaphore(max_concurrent)
         results = generate_batch_fn(
             chunk,
             refl_path,
@@ -222,9 +237,12 @@ def _generate_with_resume(
             writing_guidelines_text=writing_guidelines_text,
             thinking=candidate.thinking,
             json_mode=candidate.json_mode,
+            completion_max_tokens=candidate.completion_max_tokens,
+            context_window_tokens=candidate.context_window_tokens,
             canary_rng_seed=canary_rng_seed,
             on_failure=on_failure,
             mode=mode,
+            desc=f"Generating [{candidate.alias}] chunk {chunk_start+1}/{len(chunked)}",
         )
         for row in results:
             if not store_reasoning:
@@ -252,7 +270,7 @@ def _judge_with_resume(
     judge: CandidateModel,
     cfg: AppConfig,
     client,
-    semaphore,
+    max_concurrent: int,
     charter_text: str,
     writing_guidelines_text: str,
     *,
@@ -294,6 +312,7 @@ def _judge_with_resume(
         judge.alias,
         "judge",
         resolve_fn=resolve_prompt_path_fn,
+        only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
 
@@ -306,6 +325,7 @@ def _judge_with_resume(
         else [[]]
     )
     for chunk_start, chunk in enumerate(chunked):
+        semaphore = asyncio.Semaphore(max_concurrent)
         results = judge_batch_fn(
             chunk,
             refl_path,
@@ -319,8 +339,11 @@ def _judge_with_resume(
             charter_text=charter_text,
             writing_guidelines_text=writing_guidelines_text,
             thinking=judge.thinking,
+            completion_max_tokens=judge.completion_max_tokens,
+            context_window_tokens=judge.context_window_tokens,
             on_failure=on_failure,
             mode=mode,
+            desc=f"Judging [{judge.alias}] chunk {chunk_start+1}/{len(chunked)}",
         )
         for row in results:
             if not store_reasoning:
@@ -396,12 +419,17 @@ def run_generator_eval(
     root = _eval_root(cfg)
     store = JsonlRunStore(root, run_id)
 
+    gold = cfg.phase3.gold_judge
+    if ge.gold_prompt:
+        gold = copy.copy(gold)
+        gold.prompt = ge.gold_prompt
+
     expected = {
         "type": "generator_eval",
         "n_items": ge.n_items,
         "seed": ge.seed,
         "max_tokens": cfg.max_tokens,
-        "gold_judge": _candidate_metadata(cfg.phase3.gold_judge),
+        "gold_judge": _candidate_metadata(gold),
         "candidates": [_candidate_metadata(c) for c in ge.candidates],
     }
 
@@ -416,19 +444,26 @@ def run_generator_eval(
         client, sem = make_api_client(cfg.phase3.endpoint, ge.max_concurrent)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
         wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
-        gold = cfg.phase3.gold_judge
 
-        # Stage 1: generate reflections for every candidate
+        eval_mode = ge.mode or None  # "" -> None (both modes)
+
+        # Stage 1: generate reflections for every candidate (in parallel)
         if run_generate:
-            for gen in ge.candidates:
+            n_cands = len(ge.candidates)
+            per_cand = max(1, ge.max_concurrent // n_cands)
+
+            def _gen_one(gen):
+                # Each thread needs its own client because httpx
+                # internals bind to a single event loop.
+                t_client, _ = make_api_client(cfg.phase3.endpoint, per_cand)
                 _generate_with_resume(
                     store,
                     _gen_file(gen),
                     items,
                     gen,
                     cfg,
-                    client,
-                    sem,
+                    t_client,
+                    per_cand,
                     charter,
                     wg,
                     chunk_size=ge.chunk_size,
@@ -436,7 +471,16 @@ def run_generator_eval(
                     canary_rng_seed=ge.seed,
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
+                    mode=eval_mode,
                 )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_cands) as pool:
+                futs = [pool.submit(_gen_one, gen) for gen in ge.candidates]
+                for fut in concurrent.futures.as_completed(futs):
+                    fut.result()  # re-raise exceptions
+
+            # Ensure all generation data is on disk before judging reads it
+            store.flush(fsync=True)
 
         # Stage 2: judge all generations with the gold judge
         if run_judge:
@@ -448,7 +492,7 @@ def run_generator_eval(
                     gold,
                     cfg,
                     client,
-                    sem,
+                    ge.max_concurrent,
                     charter,
                     wg,
                     chunk_size=ge.chunk_size,
@@ -456,6 +500,7 @@ def run_generator_eval(
                     accept_threshold=cfg.phase3.scoring.accept_threshold,
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
+                    mode=eval_mode,
                 )
 
         # Mark done only when both stages have run (or judge finishes)

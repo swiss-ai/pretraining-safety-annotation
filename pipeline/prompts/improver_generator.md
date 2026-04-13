@@ -53,23 +53,6 @@ Voice errors are the single most-violated rule. The generator MUST:
   express the same underlying observation, just in different voices
 </voice_rules>
 
-<reviewer_authority>
-Human reviewer notes are ground truth. When in doubt, defer to the note, not your own read.
-
-**Trusted reviewers** (from config: `cfg.phase2.improver.trusted_reviewers`): {trusted_reviewers_list}
-
-A note from a trusted reviewer overrides your own judgment, even on edge cases. Treat a
-trusted-reviewer note as ground truth UNLESS:
-- (a) A more recent trusted-reviewer note on the same generator behavior contradicts it —
-  the more recent one wins
-- (b) The data clearly shows the generator output was correct and the note misread the
-  item — in that case, surface the conflict explicitly in the Final Summary instead of
-  silently overriding the note
-
-Never reason your way around a trusted-reviewer note silently. For other reviewers, follow
-strict notes when they cite concrete evidence.
-</reviewer_authority>
-
 <failure_patterns>
 Stable generator failure modes that recur across iterations. Use the diagnose statistics
 (later in this prompt) to find which apply to the current state, then drill into specific
@@ -136,7 +119,6 @@ rejected item — that is where you find the root cause.
    yourself to verify. Form your own opinion of the annotation quality BEFORE accepting the
    judge's verdict. If the annotation looks good to you and the judge rejected it, that is
    a judge problem — do not change the generator to accommodate it.
-3. Use `reviews --reasoning-limit 800` for human reviewer notes when available.
 
 **Never diagnose from scores alone.** "specificity mean dropped 0.2" tells you nothing
 actionable. "The judge says the reflection restates the API documentation instead of
@@ -205,14 +187,21 @@ At each checkpoint, append a "## Reflection N" block to your `state.md` answerin
    security articles"). This is what your next version should fix.
 3. **Which metrics moved?** Track Accept %, per-dimension means, diversity stats, and
    decision κ. Note the delta from the previous checkpoint.
-4. **What unaddressed reviewer notes** from older iterations remain.
-5. **Did the previous change fix what it targeted?** Check whether the specific failure
+4. **Did the previous change fix what it targeted?** Check whether the specific failure
    pattern from the last edit is still present or resolved. If unresolved, the edit didn't
    work — try a different approach rather than piling on more changes.
 
 The Final Summary must reference your most recent Reflection block. The state.md trail is
 the audit log — future-you will read it before the next iteration.
 </analysis_checkpoint_protocol>
+
+<stale_data>
+**Ignore iterations judged with older judge prompts.** The judge prompt evolves independently
+of the generator prompt. Iterations judged with an older `judge_{mode}_v*.md` are not
+comparable to iterations judged with the latest version — the rubric changed, so accept rates
+and scores are on a different scale. When analyzing trends or deciding whether to roll back,
+only compare iterations that used the same (latest) judge prompt version.
+</stale_data>
 
 <change_discipline>
 **One change per version.** Each new prompt version should test exactly ONE hypothesis about
@@ -230,11 +219,10 @@ have calibrated to the existing phrasing. Only touch what is broken.
 </change_discipline>
 
 <failure_recovery>
-**Important context — review counts are low**: the human review pool is small (often only
-tens of items per generator prompt version). Per-item metrics have high variance. Do NOT
-treat small numeric movements as regressions — they're often noise. A "significant" Accept %
-drop is something like ≥5 percentage points sustained across two iterations, not a one-shot
-2-point dip.
+**Important context — batch sizes are small**: cross-iteration batches are typically ~100
+items. Per-item metrics have high variance. Do NOT treat small numeric movements as
+regressions — they're often noise. A "significant" Accept % drop is something like ≥5
+percentage points sustained across two iterations, not a one-shot 2-point dip.
 
 **Picking the rollback target**: "best earlier version" means the prior `generator_v<N>.md`
 with the highest Accept % that ALSO has reasonable per-dimension means (no dimension
