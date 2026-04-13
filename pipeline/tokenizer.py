@@ -36,11 +36,11 @@ def count_tokens(text: str) -> int:
 
 
 def compute_reflection_point(text: str, rng: random.Random) -> int:
-    """Pick a reflection point between 10%-90% of text, snapped to a token boundary.
+    """Pick a reflection point snapped to a token boundary.
 
-    Uses the SmolLM2 tokenizer to determine token boundaries, then selects a
-    random token position within the 10%-90% range and returns the corresponding
-    character offset.
+    Samples from a piecewise distribution: linear ramp from 0% to 20% of the
+    token sequence (probability rises from 0 to a constant), then uniform from
+    20% to 100%.  Uses inverse-CDF sampling.
     """
     tokenizer = _get_tokenizer()
     encoding = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
@@ -48,7 +48,13 @@ def compute_reflection_point(text: str, rng: random.Random) -> int:
     n_tokens = len(offsets)
     assert n_tokens > 0, "Text produced no tokens"
 
-    min_tok = max(1, int(n_tokens * 0.1))
-    max_tok = min(n_tokens - 1, max(min_tok, int(n_tokens * 0.9)))
-    tok_idx = rng.randint(min_tok, max_tok)
+    # Inverse-CDF sampling for piecewise linear-ramp + uniform distribution.
+    # CDF boundary at t=0.2 is u=1/9.
+    u = rng.random()
+    if u <= 1.0 / 9.0:
+        t = 0.6 * u**0.5
+    else:
+        t = 0.2 + 0.9 * (u - 1.0 / 9.0)
+
+    tok_idx = max(1, min(int(t * n_tokens), n_tokens - 1))
     return offsets[tok_idx][0]
