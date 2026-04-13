@@ -11,16 +11,16 @@ The runner's contract (summary):
 
     For each candidate generator:
       1. _generate_with_resume: produces
-         generations/<gen_alias>__<gen_prompt>.jsonl via generate_batch
+         generations/<gen_alias>__<prompt_id>.jsonl via generate_batch
       2. _judge_with_resume: produces
-         judgments/<gold_alias>__<gold_prompt>__on__<gen_alias>__<gen_prompt>.jsonl
+         judgments/<gold_alias>__<gold_pid>__on__<gen_alias>__<gen_pid>.jsonl
          via judge_batch
 
     - Uses cfg.phase3.eval_dir as the run-store root.
     - Per-item resume via the JSONL store.
     - Failures are recorded via store.record_failure under:
-        failures/gen_<gen_alias>__<gen_prompt>.jsonl
-        failures/jud_<gold_alias>__<gold_prompt>__on__<gen_alias>__<gen_prompt>.jsonl
+        failures/gen_<gen_alias>__<prompt_id>.jsonl
+        failures/jud_<gold_alias>__<gold_pid>__on__<gen_alias>__<gen_pid>.jsonl
       with a normalized `category: "api" | "parse"` field.
     - The same canary_rng_seed is passed to every generator call so canary
       subsets match across candidates.
@@ -268,7 +268,8 @@ def eval_cfg(tmp_path):
     cfg.phase3.gold_judge = CandidateModel(
         alias="gold-judge",
         api_name="api/gold-judge",
-        prompt="judge_v1.md",
+        prompt_reflection="judge_v1.md",
+        prompt_preflection="judge_v1.md",
         thinking=False,
         json_mode=False,
     )
@@ -276,19 +277,22 @@ def eval_cfg(tmp_path):
         CandidateModel(
             alias="gen0",
             api_name="api/gen0",
-            prompt="generator_v1.md",
+            prompt_reflection="generator_v1.md",
+            prompt_preflection="generator_v1.md",
             thinking=False,
             json_mode=False,
         ),
         CandidateModel(
             alias="gen1",
             api_name="api/gen1",
-            prompt="generator_v2.md",
+            prompt_reflection="generator_v2.md",
+            prompt_preflection="generator_v2.md",
             thinking=False,
             json_mode=False,
         ),
     ]
-    cfg.phase3.generator_eval.gold_prompt = ""
+    cfg.phase3.generator_eval.gold_prompt_reflection = ""
+    cfg.phase3.generator_eval.gold_prompt_preflection = ""
     cfg.phase3.generator_eval.n_items = 5
     cfg.phase3.generator_eval.seed = 42
     cfg.phase3.generator_eval.failure_attempt_cap = 3
@@ -397,25 +401,39 @@ class TestRunGeneratorEval:
     # the convention in the plan and the rank tests.
 
     @staticmethod
+    def _pid(c) -> str:
+        from pipeline.phase3.eval_generators import _prompt_id
+
+        return _prompt_id(c)
+
+    @staticmethod
     def _gen_rel(cand) -> str:
-        return f"generations/{cand.alias}__{cand.prompt}.jsonl"
+        from pipeline.phase3.eval_generators import _prompt_id
+
+        return f"generations/{cand.alias}__{_prompt_id(cand)}.jsonl"
 
     @staticmethod
     def _jud_rel(gold, cand) -> str:
+        from pipeline.phase3.eval_generators import _prompt_id
+
         return (
-            f"judgments/{gold.alias}__{gold.prompt}"
-            f"__on__{cand.alias}__{cand.prompt}.jsonl"
+            f"judgments/{gold.alias}__{_prompt_id(gold)}"
+            f"__on__{cand.alias}__{_prompt_id(cand)}.jsonl"
         )
 
     @staticmethod
     def _fail_gen_rel(cand) -> str:
-        return f"failures/gen_{cand.alias}__{cand.prompt}.jsonl"
+        from pipeline.phase3.eval_generators import _prompt_id
+
+        return f"failures/gen_{cand.alias}__{_prompt_id(cand)}.jsonl"
 
     @staticmethod
     def _fail_jud_rel(gold, cand) -> str:
+        from pipeline.phase3.eval_generators import _prompt_id
+
         return (
-            f"failures/jud_{gold.alias}__{gold.prompt}"
-            f"__on__{cand.alias}__{cand.prompt}.jsonl"
+            f"failures/jud_{gold.alias}__{_prompt_id(gold)}"
+            f"__on__{cand.alias}__{_prompt_id(cand)}.jsonl"
         )
 
     @staticmethod
@@ -684,7 +702,12 @@ class TestRunGeneratorEval:
             g1.alias,
         }, f"metadata.candidates aliases mismatch: {aliases}"
         for c in cands:
-            assert "prompt" in c, f"candidate metadata missing prompt: {c}"
             assert (
-                "prompt_sha256" in c
-            ), f"candidate metadata missing prompt_sha256: {c}"
+                "prompt_reflection" in c
+            ), f"candidate metadata missing prompt_reflection: {c}"
+            assert (
+                "prompt_preflection" in c
+            ), f"candidate metadata missing prompt_preflection: {c}"
+            assert (
+                "prompt_reflection_sha256" in c
+            ), f"candidate metadata missing prompt_reflection_sha256: {c}"

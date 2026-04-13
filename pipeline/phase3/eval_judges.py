@@ -29,7 +29,7 @@ from pipeline.phase3.eval_generators import (
     _judge_with_resume,
     _now_iso,
     _open_and_stamp,
-    _resolve_both_prompt_paths,
+    _prompt_id,
 )
 from pipeline.phase3.items import ensure_item_pool, load_reviewed_items
 from pipeline.phase3.storage import JsonlRunStore
@@ -49,21 +49,21 @@ def _local_judge_batch(*args, **kwargs):
 
 
 def _judge_reviewed_file(judge: CandidateModel) -> str:
-    return f"judgments/{judge.alias}__{judge.prompt}__on__reviewed.jsonl"
+    return f"judgments/{judge.alias}__{_prompt_id(judge)}__on__reviewed.jsonl"
 
 
 def _judge_reviewed_failures_name(judge: CandidateModel) -> str:
-    return f"jud_{judge.alias}__{judge.prompt}__on__reviewed"
+    return f"jud_{judge.alias}__{_prompt_id(judge)}__on__reviewed"
 
 
 def _dedup_judges(
     gold: CandidateModel, candidates: list[CandidateModel]
 ) -> list[CandidateModel]:
-    """Return [gold] + every candidate not equal to gold by (alias, prompt)."""
-    seen = {(gold.alias, gold.prompt)}
+    """Return [gold] + every candidate not equal to gold by (alias, prompts)."""
+    seen = {(gold.alias, gold.prompt_reflection, gold.prompt_preflection)}
     out: list[CandidateModel] = [gold]
     for c in candidates:
-        key = (c.alias, c.prompt)
+        key = (c.alias, c.prompt_reflection, c.prompt_preflection)
         if key in seen:
             continue
         seen.add(key)
@@ -136,7 +136,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
             je.max_concurrent,
             charter,
             wg,
-            chunk_size=je.chunk_size,
             failures_name=_gen_failures_name(gen),
             canary_rng_seed=je.seed,
             failure_attempt_cap=je.failure_attempt_cap,
@@ -144,6 +143,9 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
             generate_batch_fn=_local_generate_batch,
             resolve_prompt_path_fn=_local_resolve_prompt_path,
         )
+
+        # Ensure generation data is on disk before judges read it
+        store.flush(fsync=True)
 
         # Step 2: every judge scores the generations
         for jud in judges:
@@ -157,7 +159,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                 je.max_concurrent,
                 charter,
                 wg,
-                chunk_size=je.chunk_size,
                 failures_name=_judge_failures_name(jud, gen),
                 accept_threshold=cfg.phase3.scoring.accept_threshold,
                 failure_attempt_cap=je.failure_attempt_cap,
@@ -181,7 +182,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                     je.max_concurrent,
                     charter,
                     wg,
-                    chunk_size=je.chunk_size,
                     failures_name=_judge_reviewed_failures_name(jud),
                     accept_threshold=cfg.phase3.scoring.accept_threshold,
                     failure_attempt_cap=je.failure_attempt_cap,

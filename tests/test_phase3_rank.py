@@ -115,7 +115,11 @@ def _build_run_dir(
 
     metadata: dict = {
         "type": type,
-        "gold_judge": {"alias": "gold", "prompt": "judge_v1.md"},
+        "gold_judge": {
+            "alias": "gold",
+            "prompt_reflection": "judge_v1.md",
+            "prompt_preflection": "judge_v1.md",
+        },
         "n_items": len(items) if items is not None else 0,
     }
     if metadata_extra:
@@ -508,7 +512,11 @@ class TestRankJudges:
 
     def _judge_eval_metadata_extra(self) -> dict:
         return {
-            "generator": {"alias": "gen", "prompt": "gen_v1.md"},
+            "generator": {
+                "alias": "gen",
+                "prompt_reflection": "gen_v1.md",
+                "prompt_preflection": "gen_v1.md",
+            },
         }
 
     def test_rank_judges_vs_gold_basic(self, tmp_path, monkeypatch, rank_mod):

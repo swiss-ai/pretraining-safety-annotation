@@ -13,7 +13,6 @@ import copy
 import datetime
 import hashlib
 import os
-import re
 from pathlib import Path
 from typing import Iterable
 
@@ -30,27 +29,24 @@ from pipeline.phase2.run import generate_batch, judge_batch
 from pipeline.phase3.items import ensure_item_pool
 from pipeline.phase3.storage import JsonlRunStore
 
-# Regex to extract the version number from mode-specific prompt filenames.
-# Matches e.g. "generator_reflection_v3.md" -> ("generator", "reflection", "3")
-# Also matches old format "generator_v3.md" -> ("generator", None, "3")
-_MODE_PROMPT_RE = re.compile(
-    r"^(generator|judge)_(?:(reflection|preflection)_)?v(\d+)\.md$"
-)
+
+def _prompt_id(c: CandidateModel) -> str:
+    """Identifier string for file naming, based on the reflection prompt.
+
+    Uses ``prompt_reflection`` as the primary identifier (matching the old
+    single-``prompt`` convention).  The preflection prompt is tracked in
+    metadata but doesn't affect file names.
+    """
+    return c.prompt_reflection or c.prompt_preflection
 
 
-def _resolve_both_prompt_paths(
-    prompt: str,
-    alias: str,
-    kind: str,
+def _resolve_prompt_paths(
+    candidate: CandidateModel,
     resolve_fn=None,
     *,
     only_mode: str | None = None,
 ) -> tuple[Path | None, Path | None]:
-    """Derive both reflection and preflection prompt paths from a single prompt field.
-
-    If the prompt is mode-specific (e.g. ``generator_reflection_v3.md``), the
-    counterpart is derived automatically.  If it's the old combined format
-    (``generator_v3.md``), both paths point to the same file.
+    """Resolve reflection and preflection prompt paths from a CandidateModel.
 
     *only_mode* (``"reflection"`` or ``"preflection"``) skips resolving the
     unused prompt, returning ``None`` for that slot.
@@ -60,25 +56,13 @@ def _resolve_both_prompt_paths(
     if resolve_fn is None:
         resolve_fn = resolve_prompt_path
 
-    need_refl = only_mode in (None, "reflection")
-    need_prefl = only_mode in (None, "preflection")
-
-    m = _MODE_PROMPT_RE.match(prompt)
-    if m:
-        prefix, mode, version = m.group(1), m.group(2), m.group(3)
-        if mode is None:
-            # Old combined format: both point to the same file.
-            path = resolve_fn(prompt, alias)
-            return (path if need_refl else None, path if need_prefl else None)
-        refl_name = f"{prefix}_reflection_v{version}.md"
-        prefl_name = f"{prefix}_preflection_v{version}.md"
-        refl_path = resolve_fn(refl_name, alias) if need_refl else None
-        prefl_path = resolve_fn(prefl_name, alias) if need_prefl else None
-        return refl_path, prefl_path
-
-    # Fallback: not a recognized pattern, pass the single file for both.
-    path = resolve_fn(prompt, alias)
-    return (path if need_refl else None, path if need_prefl else None)
+    refl_path = None
+    prefl_path = None
+    if only_mode in (None, "reflection") and candidate.prompt_reflection:
+        refl_path = resolve_fn(candidate.prompt_reflection, candidate.alias)
+    if only_mode in (None, "preflection") and candidate.prompt_preflection:
+        prefl_path = resolve_fn(candidate.prompt_preflection, candidate.alias)
+    return refl_path, prefl_path
 
 
 def _eval_root(cfg: AppConfig) -> Path:
@@ -97,36 +81,51 @@ def _prompt_sha256(path: Path) -> str:
 
 
 def _candidate_metadata(c: CandidateModel) -> dict:
-    try:
-        path = resolve_prompt_path(c.prompt, c.alias)
-        sha = _prompt_sha256(path)
-    except Exception as e:
-        logger.warning(
-            "candidate metadata: could not hash prompt for {}/{}: {}",
-            c.alias,
-            c.prompt,
-            e,
-        )
-        sha = ""
-    return {"alias": c.alias, "prompt": c.prompt, "prompt_sha256": sha}
+    meta: dict = {
+        "alias": c.alias,
+        "prompt_reflection": c.prompt_reflection,
+        "prompt_preflection": c.prompt_preflection,
+    }
+    for key, filename in (
+        ("prompt_reflection_sha256", c.prompt_reflection),
+        ("prompt_preflection_sha256", c.prompt_preflection),
+    ):
+        if not filename:
+            meta[key] = ""
+            continue
+        try:
+            meta[key] = _prompt_sha256(resolve_prompt_path(filename, c.alias))
+        except Exception as e:
+            logger.warning(
+                "candidate metadata: could not hash {} for {}: {}",
+                filename,
+                c.alias,
+                e,
+            )
+            meta[key] = ""
+    return meta
 
 
 def _gen_file(c: CandidateModel) -> str:
-    return f"generations/{c.alias}__{c.prompt}.jsonl"
+    return f"generations/{c.alias}__{_prompt_id(c)}.jsonl"
 
 
 def _judg_file(judge: CandidateModel, gen: CandidateModel) -> str:
     return (
-        f"judgments/{judge.alias}__{judge.prompt}__on__{gen.alias}__{gen.prompt}.jsonl"
+        f"judgments/{judge.alias}__{_prompt_id(judge)}"
+        f"__on__{gen.alias}__{_prompt_id(gen)}.jsonl"
     )
 
 
 def _gen_failures_name(c: CandidateModel) -> str:
-    return f"gen_{c.alias}__{c.prompt}"
+    return f"gen_{c.alias}__{_prompt_id(c)}"
 
 
 def _judge_failures_name(judge: CandidateModel, gen: CandidateModel) -> str:
-    return f"jud_{judge.alias}__{judge.prompt}__on__{gen.alias}__{gen.prompt}"
+    return (
+        f"jud_{judge.alias}__{_prompt_id(judge)}"
+        f"__on__{gen.alias}__{_prompt_id(gen)}"
+    )
 
 
 def _failures_done_keys(
@@ -183,7 +182,6 @@ def _generate_with_resume(
     charter_text: str,
     writing_guidelines_text: str,
     *,
-    chunk_size: int,
     failures_name: str,
     canary_rng_seed: int,
     failure_attempt_cap: int,
@@ -203,64 +201,45 @@ def _generate_with_resume(
         it for it in items if it["item_id"] not in done and it["item_id"] not in capped
     ]
 
-    refl_path, prefl_path = _resolve_both_prompt_paths(
-        candidate.prompt,
-        candidate.alias,
-        "generator",
+    refl_path, prefl_path = _resolve_prompt_paths(
+        candidate,
         resolve_fn=resolve_prompt_path_fn,
         only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
 
-    # Always make at least one generate_batch call so callers can observe
-    # the resume behavior (the call is a no-op when todo is empty).
-    n_done = 0
-    chunked = (
-        [todo[i : i + chunk_size] for i in range(0, len(todo), chunk_size)]
-        if todo
-        else [[]]
+    semaphore = asyncio.Semaphore(max_concurrent)
+    results = generate_batch_fn(
+        todo,
+        refl_path,
+        prefl_path,
+        charter_text,
+        candidate.api_name,
+        iteration=0,
+        client=client,
+        semaphore=semaphore,
+        save=False,
+        writing_guidelines_text=writing_guidelines_text,
+        thinking=candidate.thinking,
+        json_mode=candidate.json_mode,
+        completion_max_tokens=candidate.completion_max_tokens,
+        context_window_tokens=candidate.context_window_tokens,
+        canary_rng_seed=canary_rng_seed,
+        on_failure=on_failure,
+        mode=mode,
+        desc=f"Generating [{candidate.alias}]",
     )
-    for chunk_start, chunk in enumerate(chunked):
-        # Fresh semaphore per chunk: run_concurrent creates a new event loop
-        # each time, and asyncio.Semaphore binds to the first loop it's used in.
-        semaphore = asyncio.Semaphore(max_concurrent)
-        results = generate_batch_fn(
-            chunk,
-            refl_path,
-            prefl_path,
-            charter_text,
-            candidate.api_name,
-            iteration=0,
-            client=client,
-            semaphore=semaphore,
-            save=False,
-            writing_guidelines_text=writing_guidelines_text,
-            thinking=candidate.thinking,
-            json_mode=candidate.json_mode,
-            completion_max_tokens=candidate.completion_max_tokens,
-            context_window_tokens=candidate.context_window_tokens,
-            canary_rng_seed=canary_rng_seed,
-            on_failure=on_failure,
-            mode=mode,
-            desc=f"Generating [{candidate.alias}] chunk {chunk_start+1}/{len(chunked)}",
-        )
-        for row in results:
-            if not store_reasoning:
-                row = {
-                    k: v
-                    for k, v in row.items()
-                    if k not in ("raw_response", "reasoning")
-                }
-            store.append(rel_path, row)
-        store.flush(fsync=True)
-        n_done += len(results)
-        logger.info(
-            "phase3 gen {} chunk {}: {} new ({} done so far)",
-            candidate.alias,
-            chunk_start,
-            len(results),
-            n_done,
-        )
+    for row in results:
+        if not store_reasoning:
+            row = {
+                k: v for k, v in row.items() if k not in ("raw_response", "reasoning")
+            }
+        store.append(rel_path, row)
+    logger.info(
+        "phase3 gen {}: {} new",
+        candidate.alias,
+        len(results),
+    )
 
 
 def _judge_with_resume(
@@ -274,7 +253,6 @@ def _judge_with_resume(
     charter_text: str,
     writing_guidelines_text: str,
     *,
-    chunk_size: int,
     failures_name: str,
     accept_threshold: float,
     failure_attempt_cap: int,
@@ -307,57 +285,42 @@ def _judge_with_resume(
             continue
         todo.append(it)
 
-    refl_path, prefl_path = _resolve_both_prompt_paths(
-        judge.prompt,
-        judge.alias,
-        "judge",
+    refl_path, prefl_path = _resolve_prompt_paths(
+        judge,
         resolve_fn=resolve_prompt_path_fn,
         only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
 
-    # Always make at least one judge_batch call so callers can observe the
-    # resume behavior (a no-op when todo is empty).
-    n_done = 0
-    chunked = (
-        [todo[i : i + chunk_size] for i in range(0, len(todo), chunk_size)]
-        if todo
-        else [[]]
+    semaphore = asyncio.Semaphore(max_concurrent)
+    results = judge_batch_fn(
+        todo,
+        refl_path,
+        prefl_path,
+        judge.api_name,
+        iteration=0,
+        accept_threshold=accept_threshold,
+        client=client,
+        semaphore=semaphore,
+        save=False,
+        charter_text=charter_text,
+        writing_guidelines_text=writing_guidelines_text,
+        thinking=judge.thinking,
+        completion_max_tokens=judge.completion_max_tokens,
+        context_window_tokens=judge.context_window_tokens,
+        on_failure=on_failure,
+        mode=mode,
+        desc=f"Judging [{judge.alias}]",
     )
-    for chunk_start, chunk in enumerate(chunked):
-        semaphore = asyncio.Semaphore(max_concurrent)
-        results = judge_batch_fn(
-            chunk,
-            refl_path,
-            prefl_path,
-            judge.api_name,
-            iteration=0,
-            accept_threshold=accept_threshold,
-            client=client,
-            semaphore=semaphore,
-            save=False,
-            charter_text=charter_text,
-            writing_guidelines_text=writing_guidelines_text,
-            thinking=judge.thinking,
-            completion_max_tokens=judge.completion_max_tokens,
-            context_window_tokens=judge.context_window_tokens,
-            on_failure=on_failure,
-            mode=mode,
-            desc=f"Judging [{judge.alias}] chunk {chunk_start+1}/{len(chunked)}",
-        )
-        for row in results:
-            if not store_reasoning:
-                row = _strip_reasoning(row)
-            store.append(rel_path, row)
-        store.flush(fsync=True)
-        n_done += len(results)
-        logger.info(
-            "phase3 judge {} chunk {}: {} new ({} done so far)",
-            judge.alias,
-            chunk_start,
-            len(results),
-            n_done,
-        )
+    for row in results:
+        if not store_reasoning:
+            row = _strip_reasoning(row)
+        store.append(rel_path, row)
+    logger.info(
+        "phase3 judge {}: {} new",
+        judge.alias,
+        len(results),
+    )
 
 
 def _strip_reasoning(row: dict) -> dict:
@@ -420,9 +383,12 @@ def run_generator_eval(
     store = JsonlRunStore(root, run_id)
 
     gold = cfg.phase3.gold_judge
-    if ge.gold_prompt:
+    if ge.gold_prompt_reflection or ge.gold_prompt_preflection:
         gold = copy.copy(gold)
-        gold.prompt = ge.gold_prompt
+        if ge.gold_prompt_reflection:
+            gold.prompt_reflection = ge.gold_prompt_reflection
+        if ge.gold_prompt_preflection:
+            gold.prompt_preflection = ge.gold_prompt_preflection
 
     expected = {
         "type": "generator_eval",
@@ -466,7 +432,6 @@ def run_generator_eval(
                     per_cand,
                     charter,
                     wg,
-                    chunk_size=ge.chunk_size,
                     failures_name=_gen_failures_name(gen),
                     canary_rng_seed=ge.seed,
                     failure_attempt_cap=ge.failure_attempt_cap,
@@ -495,7 +460,6 @@ def run_generator_eval(
                     ge.max_concurrent,
                     charter,
                     wg,
-                    chunk_size=ge.chunk_size,
                     failures_name=_judge_failures_name(gold, gen),
                     accept_threshold=cfg.phase3.scoring.accept_threshold,
                     failure_attempt_cap=ge.failure_attempt_cap,

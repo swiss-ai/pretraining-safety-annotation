@@ -108,9 +108,7 @@ class JsonlRunStore:
         else:
             meta_path = self.run_dir / "metadata.json"
             if not meta_path.exists():
-                raise FileNotFoundError(
-                    f"No metadata.json in run dir: {self.run_dir}"
-                )
+                raise FileNotFoundError(f"No metadata.json in run dir: {self.run_dir}")
             existing = json.loads(meta_path.read_text())
             if expected_metadata is not None:
                 self._validate_metadata(existing, expected_metadata)
@@ -167,10 +165,13 @@ class JsonlRunStore:
 
         - Scalar fields (n_items, seed, max_tokens, dataset_revision) must match
           if present in `expected`.
-        - `gold_judge.prompt_sha256` must match if present in expected.
-        - `candidates`: every entry in expected.candidates that has the SAME
-          alias as one in existing.candidates must have the same prompt_sha256.
+        - ``gold_judge`` prompt SHA256 fields must match.
+        - ``candidates``: every entry in expected.candidates that has the SAME
+          alias as one in existing.candidates must have matching prompt SHA256s.
           New aliases (not in existing) are allowed.
+
+        Supports both old (``prompt_sha256``) and new
+        (``prompt_reflection_sha256`` + ``prompt_preflection_sha256``) formats.
         """
         for key in ("n_items", "seed", "max_tokens", "dataset_revision"):
             if key in expected and existing.get(key) != expected[key]:
@@ -179,16 +180,22 @@ class JsonlRunStore:
                     f"existing={existing.get(key)!r} expected={expected[key]!r}"
                 )
 
+        sha_keys = (
+            "prompt_sha256",
+            "prompt_reflection_sha256",
+            "prompt_preflection_sha256",
+        )
+
         if "gold_judge" in expected:
             ex_gj = expected.get("gold_judge") or {}
-            if "prompt_sha256" in ex_gj:
-                cur_gj = existing.get("gold_judge") or {}
-                if cur_gj.get("prompt_sha256") != ex_gj["prompt_sha256"]:
-                    raise ValueError(
-                        "Resume metadata mismatch on gold_judge.prompt_sha256: "
-                        f"existing={cur_gj.get('prompt_sha256')!r} "
-                        f"expected={ex_gj['prompt_sha256']!r}"
-                    )
+            cur_gj = existing.get("gold_judge") or {}
+            for sk in sha_keys:
+                if sk in ex_gj and sk in cur_gj:
+                    if cur_gj[sk] != ex_gj[sk]:
+                        raise ValueError(
+                            f"Resume metadata mismatch on gold_judge.{sk}: "
+                            f"existing={cur_gj[sk]!r} expected={ex_gj[sk]!r}"
+                        )
 
         if "candidates" in expected:
             existing_by_alias = {
@@ -198,12 +205,14 @@ class JsonlRunStore:
                 alias = cand.get("alias")
                 if alias in existing_by_alias:
                     cur = existing_by_alias[alias]
-                    if cur.get("prompt_sha256") != cand.get("prompt_sha256"):
-                        raise ValueError(
-                            f"Resume metadata mismatch on candidate '{alias}' "
-                            f"prompt_sha256: existing={cur.get('prompt_sha256')!r} "
-                            f"expected={cand.get('prompt_sha256')!r}"
-                        )
+                    for sk in sha_keys:
+                        if sk in cand and sk in cur:
+                            if cur[sk] != cand[sk]:
+                                raise ValueError(
+                                    f"Resume metadata mismatch on candidate "
+                                    f"'{alias}' {sk}: existing={cur[sk]!r} "
+                                    f"expected={cand[sk]!r}"
+                                )
 
     # --------------------------------------------------------------- append
 
@@ -260,9 +269,7 @@ class JsonlRunStore:
                         len(prev),
                     )
 
-    def _parse_row_or_skip(
-        self, rel_path: str, line_no: int, line: str
-    ) -> dict:
+    def _parse_row_or_skip(self, rel_path: str, line_no: int, line: str) -> dict:
         try:
             return json.loads(line)
         except json.JSONDecodeError as e:

@@ -190,14 +190,30 @@ def _build_cfg(tmp_path):
     cfg = load_config()
     cfg.phase3.eval_dir = str(tmp_path / "phase3_eval")
     cfg.phase3.gold_judge = CandidateModel(
-        alias="gold", api_name="gold-api", prompt="judge_v1.md"
+        alias="gold",
+        api_name="gold-api",
+        prompt_reflection="judge_v1.md",
+        prompt_preflection="judge_v1.md",
     )
     cfg.phase3.judge_eval.generator = CandidateModel(
-        alias="genA", api_name="genA-api", prompt="generator_v1.md"
+        alias="genA",
+        api_name="genA-api",
+        prompt_reflection="generator_v1.md",
+        prompt_preflection="generator_v1.md",
     )
     cfg.phase3.judge_eval.candidates = [
-        CandidateModel(alias="cand1", api_name="cand1-api", prompt="judge_v2.md"),
-        CandidateModel(alias="cand2", api_name="cand2-api", prompt="judge_v3.md"),
+        CandidateModel(
+            alias="cand1",
+            api_name="cand1-api",
+            prompt_reflection="judge_v2.md",
+            prompt_preflection="judge_v2.md",
+        ),
+        CandidateModel(
+            alias="cand2",
+            api_name="cand2-api",
+            prompt_reflection="judge_v3.md",
+            prompt_preflection="judge_v3.md",
+        ),
     ]
     cfg.phase3.judge_eval.n_items = 5
     cfg.phase3.judge_eval.seed = 42
@@ -328,10 +344,20 @@ class TestRunJudgeEval:
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
-        # Include a candidate whose (alias, prompt) duplicates the gold judge.
+        # Include a candidate whose (alias, prompts) duplicates the gold judge.
         cfg.phase3.judge_eval.candidates = [
-            CandidateModel(alias="gold", api_name="gold-api", prompt="judge_v1.md"),
-            CandidateModel(alias="cand1", api_name="cand1-api", prompt="judge_v2.md"),
+            CandidateModel(
+                alias="gold",
+                api_name="gold-api",
+                prompt_reflection="judge_v1.md",
+                prompt_preflection="judge_v1.md",
+            ),
+            CandidateModel(
+                alias="cand1",
+                api_name="cand1-api",
+                prompt_reflection="judge_v2.md",
+                prompt_preflection="judge_v2.md",
+            ),
         ]
 
         mod.run_judge_eval(cfg, "run-dedup")

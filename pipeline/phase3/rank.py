@@ -26,6 +26,21 @@ from pipeline.phase3.eval_generators import _eval_root
 _FOUR_VOICES = ("preflection_3p", "preflection_1p", "reflection_1p", "reflection_3p")
 
 
+def _meta_prompt_id(meta_dict: dict) -> str:
+    """Build the prompt_id string from a metadata candidate dict.
+
+    Uses ``prompt_reflection`` as the primary identifier (matching the
+    file naming convention in ``_prompt_id``).  Falls back to the legacy
+    ``prompt`` field for old runs.
+    """
+    r = meta_dict.get("prompt_reflection", "")
+    p = meta_dict.get("prompt_preflection", "")
+    if r or p:
+        return r or p
+    # Legacy fallback: old runs stored a single "prompt" field.
+    return meta_dict.get("prompt", "")
+
+
 def _resolve_run_dir(run_id: str, eval_dir: Path | str | None) -> Path:
     """Resolve a run dir, preferring an explicit `eval_dir` kwarg over the config root."""
     if eval_dir is not None:
@@ -154,10 +169,10 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
 
     gold = meta.get("gold_judge") or {}
     gold_alias = gold.get("alias")
-    gold_prompt = gold.get("prompt")
-    if not gold_alias or not gold_prompt:
+    gold_prompt_id = _meta_prompt_id(gold)
+    if not gold_alias or not gold_prompt_id:
         raise ValueError(
-            f"metadata.json in {run_id} is missing gold_judge.alias or .prompt"
+            f"metadata.json in {run_id} is missing gold_judge.alias or prompts"
         )
 
     items_rows = _read_jsonl(run_dir / "items.jsonl")
@@ -171,7 +186,7 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
     for gen_file in sorted(gens_dir.glob("*.jsonl")):
         gen_name = gen_file.stem  # "<alias>__<prompt>"
         # Find the matching gold judgment file
-        jud_filename = f"{gold_alias}__{gold_prompt}__on__{gen_name}.jsonl"
+        jud_filename = f"{gold_alias}__{gold_prompt_id}__on__{gen_name}.jsonl"
         jud_file = run_dir / "judgments" / jud_filename
         if not jud_file.exists():
             logger.warning(
@@ -246,7 +261,7 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
         judge_failures = _failure_categories_distinct_items(
             run_dir
             / "failures"
-            / f"jud_{gold_alias}__{gold_prompt}__on__{gen_alias_prompt}.jsonl"
+            / f"jud_{gold_alias}__{gold_prompt_id}__on__{gen_alias_prompt}.jsonl"
         )
 
         denom = n_pool if n_pool > 0 else 1
@@ -511,10 +526,10 @@ def rank_judges(run_id: str, *, eval_dir: Path | str | None = None) -> dict:
 
     gold = meta.get("gold_judge") or {}
     gold_alias = gold.get("alias")
-    gold_prompt = gold.get("prompt")
+    gold_pid = _meta_prompt_id(gold)
     gen = meta.get("generator") or {}
     gen_alias = gen.get("alias")
-    gen_prompt = gen.get("prompt")
+    gen_pid = _meta_prompt_id(gen)
 
     judg_dir = run_dir / "judgments"
     if not judg_dir.exists():
@@ -527,10 +542,9 @@ def rank_judges(run_id: str, *, eval_dir: Path | str | None = None) -> dict:
 
     # Identify the gold judgment file (against the configured generator).
     gold_jud_file = None
-    if gold_alias and gold_prompt and gen_alias and gen_prompt:
+    if gold_alias and gold_pid and gen_alias and gen_pid:
         gold_jud_file = (
-            judg_dir
-            / f"{gold_alias}__{gold_prompt}__on__{gen_alias}__{gen_prompt}.jsonl"
+            judg_dir / f"{gold_alias}__{gold_pid}__on__{gen_alias}__{gen_pid}.jsonl"
         )
     gold_rows: list[dict] = _read_jsonl(gold_jud_file) if gold_jud_file else []
     gold_index = _index_by(gold_rows, "item_id")
@@ -618,10 +632,10 @@ def rank_judges(run_id: str, *, eval_dir: Path | str | None = None) -> dict:
             vs_human.append(entry)
             continue
 
-        # vs_gold path: file is "<judge_alias>__<judge_prompt>__on__<gen>__<gen_prompt>.jsonl"
+        # vs_gold path: file is "<judge_alias>__<judge_pid>__on__<gen>__<gen_pid>.jsonl"
         # Skip the gold judge correlated against itself.
-        if gold_alias and gold_prompt and gen_alias and gen_prompt:
-            if name == f"{gold_alias}__{gold_prompt}__on__{gen_alias}__{gen_prompt}":
+        if gold_alias and gold_pid and gen_alias and gen_pid:
+            if name == f"{gold_alias}__{gold_pid}__on__{gen_alias}__{gen_pid}":
                 continue
 
         cand_rows = _read_jsonl(jud_file)

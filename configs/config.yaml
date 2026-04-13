@@ -90,9 +90,10 @@ phase3:
   eval_dir: data/pipeline/phase3
   gold_judge:
     alias: kimi-k2.5
-    api_name: jkminder/lAiFTaihSJ
+    api_name: jkminder/kimi
     hf_slug: moonshotai/Kimi-K2.5
-    prompt: judge_reflection_v24.md
+    prompt_reflection: judge_reflection_v24.md
+    prompt_preflection: judge_preflection_v2.md
     completion_max_tokens: 65536
     context_window_tokens: 65536
   generator_eval:
@@ -103,26 +104,30 @@ phase3:
     store_reasoning: false
     failure_attempt_cap: 5
     candidates:
-    # - alias: glm-4.5-air
-    #   api_name: jminder/pZcWDUxqEQ
-    #   hf_slug: zai-org/GLM-4.5-Air-FP8
-    #   context_window_tokens: 16384
-    #   prompt: generator_reflection_v7.md
-    # - alias: gpt-oss-120b
-    #   api_name: openai/gpt-oss-120b-SSOR
-    #   hf_slug: openai/gpt-oss-120b
-    #   context_window_tokens: 16384
-    #   prompt: generator_reflection_v7.md
-    - alias: qwen3.5-35b-a3b
-      api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
-      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-      context_window_tokens: 24576
-      prompt: generator_reflection_v7.md
-    # - alias: nemotron-3-super-120b-a12b
-    #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
-    #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-    #   context_window_tokens: 16384
-    #   prompt: generator_reflection_v9.md
+    - alias: glm-4.5-air
+      api_name: jminder/pZcWDUxqEQ
+      hf_slug: zai-org/GLM-4.5-Air-FP8
+      context_window_tokens: 16384
+      prompt_reflection: generator_reflection_v7.md
+      prompt_preflection: generator_preflection_v2.md
+    - alias: gpt-oss-120b
+      api_name: openai/gpt-oss-120b-SSOR
+      hf_slug: openai/gpt-oss-120b
+      context_window_tokens: 16384
+      prompt_reflection: generator_reflection_v7.md
+      prompt_preflection: generator_preflection_v2.md
+    # - alias: qwen3.5-35b-a3b
+    #   api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+    #   hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+    #   context_window_tokens: 24576
+    #   prompt_reflection: generator_reflection_v7.md
+    #   prompt_preflection: generator_preflection_v2.md
+    - alias: nemotron-3-super-120b-a12b
+      api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
+      hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+      context_window_tokens: 16384
+      prompt_reflection: generator_reflection_v9.md
+      prompt_preflection: generator_preflection_v2.md
   judge_eval:
     n_items: 5000
     seed: 42
@@ -135,7 +140,8 @@ phase3:
     generator:
       alias: glm-4.5-air
       api_name: jminder/jZ7aJGjetjNN
-      prompt: generator_v1.md
+      prompt_reflection: generator_v1.md
+      prompt_preflection: generator_v1.md
     candidates: []
   scoring:
     scale_min: 1

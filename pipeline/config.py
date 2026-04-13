@@ -172,7 +172,8 @@ class CandidateModel:
     alias: str = ""
     api_name: str = ""
     hf_slug: str = ""
-    prompt: str = ""  # explicit, e.g. "generator_v3.md" — never "_latest"
+    prompt_reflection: str = ""  # e.g. "generator_reflection_v7.md"
+    prompt_preflection: str = ""  # e.g. "generator_preflection_v2.md"
     thinking: bool = False
     json_mode: bool = False
     completion_max_tokens: int | None = None
@@ -182,7 +183,8 @@ class CandidateModel:
 @dataclass
 class GeneratorEvalConfig:
     candidates: list[CandidateModel] = field(default_factory=list)
-    gold_prompt: str = ""  # override gold_judge.prompt for this eval
+    gold_prompt_reflection: str = ""  # override gold_judge prompt for this eval
+    gold_prompt_preflection: str = ""
     mode: str = ""  # "reflection", "preflection", or "" for both
     n_items: int = 5000
     seed: int = 42
