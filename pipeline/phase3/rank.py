@@ -207,8 +207,10 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
         # Per-mode accumulators (use .get() to handle old data gracefully).
         refl_aggregates: list[float] = []
         refl_accepts = 0
+        refl_accept_by_safety: dict[str, dict] = {}
         prefl_aggregates: list[float] = []
         prefl_accepts = 0
+        prefl_accept_by_safety: dict[str, dict] = {}
 
         for row in judgment_rows:
             agg = _judgment_aggregate(row)
@@ -235,6 +237,11 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
             refl_dec = _judgment_mode_decision(row, "reflection")
             if refl_dec == "accept":
                 refl_accepts += 1
+            if refl_dec is not None and ss is not None:
+                b = refl_accept_by_safety.setdefault(key, {"n": 0, "accepts": 0})
+                b["n"] += 1
+                if refl_dec == "accept":
+                    b["accepts"] += 1
 
             prefl_agg = _judgment_mode_aggregate(row, "preflection")
             if prefl_agg is not None:
@@ -242,11 +249,21 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
             prefl_dec = _judgment_mode_decision(row, "preflection")
             if prefl_dec == "accept":
                 prefl_accepts += 1
+            if prefl_dec is not None and ss is not None:
+                b = prefl_accept_by_safety.setdefault(key, {"n": 0, "accepts": 0})
+                b["n"] += 1
+                if prefl_dec == "accept":
+                    b["accepts"] += 1
 
-        for key, bucket in accept_by_safety.items():
-            n = bucket["n"]
-            bucket["accept_rate"] = bucket["accepts"] / n if n else 0.0
-            del bucket["accepts"]
+        for safety_dict in (
+            accept_by_safety,
+            refl_accept_by_safety,
+            prefl_accept_by_safety,
+        ):
+            for _key, bucket in safety_dict.items():
+                n = bucket["n"]
+                bucket["accept_rate"] = bucket["accepts"] / n if n else 0.0
+                del bucket["accepts"]
 
         per_dim_mean = {
             dim: sum(vals) / len(vals) if vals else 0.0
@@ -285,6 +302,11 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
             "accept_by_safety_score": accept_by_safety,
             "failure_rates": failure_rates,
         }
+
+        if refl_accept_by_safety:
+            entry["reflection_accept_by_safety_score"] = refl_accept_by_safety
+        if prefl_accept_by_safety:
+            entry["preflection_accept_by_safety_score"] = prefl_accept_by_safety
 
         # Add per-mode metrics only when data is available (new judgment format).
         if refl_aggregates:

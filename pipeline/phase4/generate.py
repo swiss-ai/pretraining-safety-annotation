@@ -30,13 +30,15 @@ from datatrove.pipeline.base import PipelineStep
 from pipeline.api import api_call, make_api_client, resolve_sampling_params
 from pipeline.config import (
     CHARTER_PATH,
+    PROJECT_ROOT,
     WRITING_GUIDELINES_PATH,
-    resolve_prompt_path,
 )
 from pipeline.generation import parse_generation
 from pipeline.log import logger
 from pipeline.phase4.canaries import load_canaries
 from pipeline.phase4.runs import get_run
+
+FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
 
 
 class AnnotationGenerator(PipelineStep):
@@ -83,7 +85,8 @@ class AnnotationGenerator(PipelineStep):
         run_def = get_run(self.run_name)
 
         # Resolve paths
-        prompt_path = resolve_prompt_path(self.prompt_filename, self.generator_alias)
+        prompt_path = FINAL_PROMPTS_DIR / self.generator_alias / self.prompt_filename
+        assert prompt_path.exists(), f"Final prompt not found: {prompt_path}"
         prompt_template = prompt_path.read_text(encoding="utf-8")
         charter_text = CHARTER_PATH.read_text(encoding="utf-8")
         writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
@@ -92,9 +95,7 @@ class AnnotationGenerator(PipelineStep):
         )
 
         canaries = load_canaries()
-        sampling_params = resolve_sampling_params(
-            self.generator_alias, run_def.name
-        )
+        sampling_params = resolve_sampling_params(self.generator_alias, run_def.name)
 
         # Output directory for this rank
         rank_dir = Path(self.output_dir) / self.run_name / f"{rank:05d}"
@@ -119,7 +120,9 @@ class AnnotationGenerator(PipelineStep):
 
         logger.info(
             "Rank {}: {} docs to process ({} skipped as done)",
-            rank, len(docs), len(done_set),
+            rank,
+            len(docs),
+            len(done_set),
         )
 
         if not docs:
@@ -171,9 +174,7 @@ class AnnotationGenerator(PipelineStep):
         if save_error:
             raise save_error[0]
 
-        logger.info(
-            "Rank {}: completed. {} succeeded, {} failed", rank, n_ok, n_fail
-        )
+        logger.info("Rank {}: completed. {} succeeded, {} failed", rank, n_ok, n_fail)
 
         self.stat_update("documents_processed", value=n_ok)
         self.stat_update("documents_failed", value=n_fail)
@@ -266,7 +267,8 @@ async def _generate_all(
 ) -> tuple[int, int]:
     """Process all docs concurrently. Returns (n_ok, n_fail)."""
     client, semaphore = make_api_client(
-        endpoint, max_concurrent,
+        endpoint,
+        max_concurrent,
         api_keys={endpoint: "SGLANG_API_KEY"},
     )
 
@@ -298,7 +300,11 @@ async def _generate_all(
         for attempt in range(max_retries):
             try:
                 parsed_results = []
-                total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+                total_usage = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                }
 
                 for messages, required_fields, meta in call_specs:
                     raw, reasoning, usage = await api_call(
@@ -338,22 +344,33 @@ async def _generate_all(
                     rate = n_ok / elapsed if elapsed > 0 else 0
                     logger.info(
                         "Rank {}: {} docs done ({:.1f}/s), {} failed",
-                        rank, n_ok, rate, n_fail,
+                        rank,
+                        n_ok,
+                        rate,
+                        n_fail,
                     )
                 return True
 
             except Exception as e:
                 if attempt < max_retries - 1:
-                    backoff = (2 ** attempt) * random.uniform(0.5, 1.5)
+                    backoff = (2**attempt) * random.uniform(0.5, 1.5)
                     logger.warning(
                         "Rank {}: doc {} attempt {}/{} failed ({}), retrying in {:.1f}s",
-                        rank, doc_id, attempt + 1, max_retries, e, backoff,
+                        rank,
+                        doc_id,
+                        attempt + 1,
+                        max_retries,
+                        e,
+                        backoff,
                     )
                     await asyncio.sleep(backoff)
                 else:
                     logger.error(
                         "Rank {}: doc {} failed after {} attempts: {}",
-                        rank, doc_id, max_retries, e,
+                        rank,
+                        doc_id,
+                        max_retries,
+                        e,
                     )
                     n_fail += 1
                     _save_failure(failures_path, global_idx, doc_id, str(e))

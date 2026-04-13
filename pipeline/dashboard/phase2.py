@@ -3740,9 +3740,15 @@ def pipeline_review_page():
             if item.get("preflection_1p") is not None:
                 # New-format item: show all four explicit variants
                 _PART_DISPLAY = [
-                    ("preflection_3p", item.get("preflection", "")),
+                    (
+                        "preflection_3p",
+                        item.get("preflection_3p") or item.get("preflection", ""),
+                    ),
                     ("preflection_1p", item.get("preflection_1p", "")),
-                    ("reflection_1p", item.get("reflection", "")),
+                    (
+                        "reflection_1p",
+                        item.get("reflection_1p") or item.get("reflection", ""),
+                    ),
                     ("reflection_3p", item.get("reflection_3p", "")),
                 ]
             else:
@@ -4407,12 +4413,20 @@ def pipeline_reviews_page():
                                 # Show all available annotation variants
                                 if item.get("preflection_1p") is not None:
                                     _rv_parts = [
-                                        ("preflection_3p", item.get("preflection", "")),
+                                        (
+                                            "preflection_3p",
+                                            item.get("preflection_3p")
+                                            or item.get("preflection", ""),
+                                        ),
                                         (
                                             "preflection_1p",
                                             item.get("preflection_1p", ""),
                                         ),
-                                        ("reflection_1p", item.get("reflection", "")),
+                                        (
+                                            "reflection_1p",
+                                            item.get("reflection_1p")
+                                            or item.get("reflection", ""),
+                                        ),
                                         (
                                             "reflection_3p",
                                             item.get("reflection_3p", ""),

@@ -23,10 +23,10 @@ import pyarrow.parquet as pq
 from pipeline.log import logger
 from pipeline.phase4.runs import get_run
 
-
-# Columns that get renamed on first merge (empty placeholders -> real data)
+# Legacy columns to drop when the correctly-named column is being added.
+# Old data used "reflection" for 1p and "preflection" for 3p.
 _RENAME_MAP = {
-    "reflection": "reflection_3p",
+    "reflection": "reflection_1p",
     "preflection": "preflection_3p",
 }
 
@@ -112,11 +112,14 @@ def merge_shards(
                     if col in table.column_names:
                         idx = table.column_names.index(col)
                         table = table.set_column(
-                            idx, col, pa.array(new_col_data[col], type=_infer_arrow_type(col))
+                            idx,
+                            col,
+                            pa.array(new_col_data[col], type=_infer_arrow_type(col)),
                         )
                     else:
                         table = table.append_column(
-                            col, pa.array(new_col_data[col], type=_infer_arrow_type(col))
+                            col,
+                            pa.array(new_col_data[col], type=_infer_arrow_type(col)),
                         )
 
                 if writer is None:
@@ -126,7 +129,9 @@ def merge_shards(
                 row_offset += rg_num_rows
                 logger.info(
                     "Merged row group {}/{} ({} rows)",
-                    rg_idx + 1, pf.metadata.num_row_groups, row_offset,
+                    rg_idx + 1,
+                    pf.metadata.num_row_groups,
+                    row_offset,
                 )
 
         finally:

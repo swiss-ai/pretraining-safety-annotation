@@ -637,16 +637,24 @@ def generate_batch(
             "gen_prompt": gen_prompt_name,
             "model": model,
             "analysis": analysis,
-            "preflection": (
-                prefl_parsed.get("preflection_3p", "") if prefl_parsed else None
-            ),
-            "reflection": (
+            "reflection_1p": (
                 refl_parsed.get("reflection_1p", "") if refl_parsed else None
             ),
+            "reflection_3p": refl_parsed.get("reflection_3p") if refl_parsed else None,
             "preflection_1p": (
                 prefl_parsed.get("preflection_1p") if prefl_parsed else None
             ),
-            "reflection_3p": refl_parsed.get("reflection_3p") if refl_parsed else None,
+            "preflection_3p": (
+                prefl_parsed.get("preflection_3p", "") if prefl_parsed else None
+            ),
+            # Legacy aliases — kept so old readers (SQLite schema, phase 1/2
+            # dashboards, improver tools) continue to work unchanged.
+            "reflection": (
+                refl_parsed.get("reflection_1p", "") if refl_parsed else None
+            ),
+            "preflection": (
+                prefl_parsed.get("preflection_3p", "") if prefl_parsed else None
+            ),
             "preflection_charter_elements": preflection_charter_elements,
             "reflection_charter_elements": reflection_charter_elements,
             "raw_response": json.dumps(raw_responses) if raw_responses else None,
