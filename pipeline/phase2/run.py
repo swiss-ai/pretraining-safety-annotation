@@ -352,10 +352,14 @@ def generate_batch(
     context_window_tokens: int | None = None,
     canary_rng_seed: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
+    on_result: Callable[[dict], None] | None = None,
     mode: str | None = None,
     desc: str | None = None,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
+
+    *on_result*, if provided, is called with each successful record as soon
+    as its coroutine completes — before ``gather`` returns the full batch.
 
     *mode* controls which pipeline(s) to run:
       - ``"reflection"``: only reflection call (text up to RP). Requires *refl_prompt_path*.
@@ -659,6 +663,8 @@ def generate_batch(
         }
         if save:
             save_item(record)
+        if on_result is not None:
+            on_result(record)
         return record
 
     coros = [process_one(item) for item in items]
@@ -774,10 +780,14 @@ def judge_batch(
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
+    on_result: Callable[[dict], None] | None = None,
     mode: str | None = None,
     desc: str | None = None,
 ) -> list[dict]:
     """Judge generated annotations in parallel.
+
+    *on_result*, if provided, is called with each successful record as soon
+    as its coroutine completes — before ``gather`` returns the full batch.
 
     *mode* controls which pipeline(s) to judge:
       - ``"reflection"``: judges reflection_1p + reflection_3p only. Requires *refl_prompt_path*.
@@ -978,6 +988,8 @@ def judge_batch(
         judged = {**item, "judgment": judgment}
         if save:
             save_item(judged)
+        if on_result is not None:
+            on_result(judged)
         return judged
 
     coros = [judge_one(item) for item in items]

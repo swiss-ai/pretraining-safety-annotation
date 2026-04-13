@@ -59,6 +59,7 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
         **kw,
     ):
         captured_seeds.append(canary_rng_seed)
+        on_result = kw.get("on_result")
         out = []
         for it in items:
             if it["item_id"] in fail_ids:
@@ -74,22 +75,23 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
                     on_failure(fr)
                     captured_failures.append(fr)
                 continue
-            out.append(
-                {
-                    **it,
-                    "iteration": iteration,
-                    "model": model,
-                    "preflection_1p": "p1",
-                    "preflection_3p": "p3",
-                    "reflection_1p": "r1",
-                    "reflection_3p": "r3",
-                    "judgment": None,
-                    "canary": None,
-                    "input_tokens": 1,
-                    "output_tokens": 1,
-                    "reasoning_tokens": 0,
-                }
-            )
+            record = {
+                **it,
+                "iteration": iteration,
+                "model": model,
+                "preflection_1p": "p1",
+                "preflection_3p": "p3",
+                "reflection_1p": "r1",
+                "reflection_3p": "r3",
+                "judgment": None,
+                "canary": None,
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "reasoning_tokens": 0,
+            }
+            if on_result is not None:
+                on_result(record)
+            out.append(record)
         return out
 
     return _fake
@@ -123,6 +125,7 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
                 }
             )
         on_failure = kw.get("on_failure")
+        on_result = kw.get("on_result")
         out = []
         for it in items:
             if it["item_id"] in fail_ids:
@@ -173,7 +176,10 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
                 "latency_ms": 1,
                 "timestamp": "2026-04-09T00:00:00",
             }
-            out.append({**it, "judgment": judgment})
+            record = {**it, "judgment": judgment}
+            if on_result is not None:
+                on_result(record)
+            out.append(record)
         return out
 
     return _fake

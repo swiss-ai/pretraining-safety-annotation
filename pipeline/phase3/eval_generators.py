@@ -207,9 +207,19 @@ def _generate_with_resume(
         only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
+    saved = 0
+
+    def _on_result(row: dict) -> None:
+        nonlocal saved
+        if not store_reasoning:
+            row = {
+                k: v for k, v in row.items() if k not in ("raw_response", "reasoning")
+            }
+        store.append(rel_path, row)
+        saved += 1
 
     semaphore = asyncio.Semaphore(max_concurrent)
-    results = generate_batch_fn(
+    generate_batch_fn(
         todo,
         refl_path,
         prefl_path,
@@ -226,19 +236,14 @@ def _generate_with_resume(
         context_window_tokens=candidate.context_window_tokens,
         canary_rng_seed=canary_rng_seed,
         on_failure=on_failure,
+        on_result=_on_result,
         mode=mode,
         desc=f"Generating [{candidate.alias}]",
     )
-    for row in results:
-        if not store_reasoning:
-            row = {
-                k: v for k, v in row.items() if k not in ("raw_response", "reasoning")
-            }
-        store.append(rel_path, row)
     logger.info(
         "phase3 gen {}: {} new",
         candidate.alias,
-        len(results),
+        saved,
     )
 
 
@@ -291,9 +296,17 @@ def _judge_with_resume(
         only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
+    saved = 0
+
+    def _on_result(row: dict) -> None:
+        nonlocal saved
+        if not store_reasoning:
+            row = _strip_reasoning(row)
+        store.append(rel_path, row)
+        saved += 1
 
     semaphore = asyncio.Semaphore(max_concurrent)
-    results = judge_batch_fn(
+    judge_batch_fn(
         todo,
         refl_path,
         prefl_path,
@@ -309,17 +322,14 @@ def _judge_with_resume(
         completion_max_tokens=judge.completion_max_tokens,
         context_window_tokens=judge.context_window_tokens,
         on_failure=on_failure,
+        on_result=_on_result,
         mode=mode,
         desc=f"Judging [{judge.alias}]",
     )
-    for row in results:
-        if not store_reasoning:
-            row = _strip_reasoning(row)
-        store.append(rel_path, row)
     logger.info(
         "phase3 judge {}: {} new",
         judge.alias,
-        len(results),
+        saved,
     )
 
 
