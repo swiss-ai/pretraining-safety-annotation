@@ -119,20 +119,25 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
 
         items = ensure_item_pool(store, je.n_items, je.seed, cfg.max_tokens)
 
-        client, sem = make_api_client(cfg.phase3.endpoint, je.max_concurrent)
+        # Per-model endpoint: fall back to the phase-level default.
+        def _client_for(model):
+            ep = model.endpoint or cfg.phase3.endpoint
+            return make_api_client(ep, je.max_concurrent)
+
         charter = CHARTER_PATH.read_text(encoding="utf-8")
         wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
         gen = je.generator
 
         # Step 1: generate once with the configured generator
+        gen_client, _ = _client_for(gen)
         _generate_with_resume(
             store,
             _gen_file(gen),
             items,
             gen,
             cfg,
-            client,
+            gen_client,
             je.max_concurrent,
             charter,
             wg,
@@ -149,13 +154,14 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
 
         # Step 2: every judge scores the generations
         for jud in judges:
+            jud_client, _ = _client_for(jud)
             _judge_with_resume(
                 store,
                 _judg_file(jud, gen),
                 store.iter_rows(_gen_file(gen)),
                 jud,
                 cfg,
-                client,
+                jud_client,
                 je.max_concurrent,
                 charter,
                 wg,
@@ -172,13 +178,14 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
             reviewed = _ensure_reviewed_items_jsonl(store, je.reviewer_policy)
             logger.info("phase3 judge-eval: reviewed pool has {} items", len(reviewed))
             for jud in judges:
+                jud_client, _ = _client_for(jud)
                 _judge_with_resume(
                     store,
                     _judge_reviewed_file(jud),
                     store.iter_rows("reviewed_items.jsonl"),
                     jud,
                     cfg,
-                    client,
+                    jud_client,
                     je.max_concurrent,
                     charter,
                     wg,

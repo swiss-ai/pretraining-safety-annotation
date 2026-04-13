@@ -417,7 +417,9 @@ def run_generator_eval(
 
         items = ensure_item_pool(store, ge.n_items, ge.seed, cfg.max_tokens)
 
-        client, sem = make_api_client(cfg.phase3.endpoint, ge.max_concurrent)
+        judge_endpoint = gold.endpoint or cfg.phase3.endpoint
+        logger.info("Gold judge: alias={} api_name={} endpoint={}", gold.alias, gold.api_name, judge_endpoint)
+        client, sem = make_api_client(judge_endpoint, ge.max_concurrent)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
         wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
@@ -431,7 +433,8 @@ def run_generator_eval(
             def _gen_one(gen):
                 # Each thread needs its own client because httpx
                 # internals bind to a single event loop.
-                t_client, _ = make_api_client(cfg.phase3.endpoint, per_cand)
+                gen_endpoint = gen.endpoint or cfg.phase3.endpoint
+                t_client, _ = make_api_client(gen_endpoint, per_cand)
                 _generate_with_resume(
                     store,
                     _gen_file(gen),

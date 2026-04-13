@@ -3,14 +3,31 @@
 Queries an already-running model via the API, measures throughput on a small
 subset, and extrapolates to the full annotation dataset (~102M samples).
 
+The ``--mode`` flag controls which pipeline(s) to benchmark:
+  - ``reflection``: partial text (up to reflection point), separate prompt
+  - ``preflection``: full text, separate prompt
+  - ``both`` (default): both calls per item, matching the production pipeline
+
 Usage:
+    # Benchmark reflection only
+    uv run python -m throughput_estimations.estimate \
+        --model-alias kimi-k2.5 --role generator --mode reflection \
+        --n-samples 200 --data-path $SCRATCH/dolma3_mix-1T_subsampled/annotated
+
+    # Benchmark preflection only
+    uv run python -m throughput_estimations.estimate \
+        --model-alias kimi-k2.5 --role generator --mode preflection \
+        --n-samples 200 --data-path $SCRATCH/dolma3_mix-1T_subsampled/annotated
+
+    # Benchmark both (default, 2 API calls per sample)
     uv run python -m throughput_estimations.estimate \
         --model-alias kimi-k2.5 --role generator --n-samples 200 \
         --data-path $SCRATCH/dolma3_mix-1T_subsampled/annotated --n-nodes 4
 
+    # Judge
     uv run python -m throughput_estimations.estimate \
-        --model-alias kimi-k2.5 --role judge --n-nodes 4 \
-        --generations-path throughput_estimations/results/generator_kimi-k2.5_*.json
+        --model-alias kimi-k2.5 --role judge --mode reflection --n-nodes 4 \
+        --generations-path throughput_estimations/results/generator_reflection_kimi-k2.5_*.json
 """
 
 from __future__ import annotations
@@ -39,6 +56,7 @@ from pipeline.config import (
     union_charter_elements,
 )
 from pipeline.api import MAX_RETRIES, RETRY_BACKOFF_BASE, resolve_sampling_params
+from pipeline.generation import REFLECTION_TASK, PREFLECTION_TASK
 from pipeline.phase2.run import _parse_generation, _parse_mode_judgment
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 
@@ -197,9 +215,42 @@ def make_client(
 # ---------------------------------------------------------------------------
 
 
+def _build_refl_messages(
+    item: dict,
+    system_prompt: str,
+) -> list[dict[str, str]]:
+    """Build messages for a reflection call (text up to RP)."""
+    rp = item["reflection_point"]
+    user_content = f"## Full Text\n\n{item['text'][:rp]}"
+    user_content += REFLECTION_TASK
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _build_prefl_messages(
+    item: dict,
+    system_prompt: str,
+) -> list[dict[str, str]]:
+    """Build messages for a preflection call (full text)."""
+    user_content = f"## Full Text\n\n{item['text']}"
+    user_content += PREFLECTION_TASK
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+_REFL_FIELDS = {"analysis", "reflection_1p", "reflection_3p"}
+_PREFL_FIELDS = {"analysis", "preflection_3p", "preflection_1p"}
+
+
 def run_generator_estimation(
     items: list[dict],
-    system_prompt: str,
+    refl_system_prompt: str | None,
+    prefl_system_prompt: str | None,
+    mode: str,
     model: str,
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
@@ -211,56 +262,80 @@ def run_generator_estimation(
 ) -> list[dict]:
     """Run generator API calls on *items*, returning per-request metrics.
 
+    *mode* controls which pipeline(s) to run:
+      - ``"reflection"``: only reflection call (text up to RP).
+      - ``"preflection"``: only preflection call (full text).
+      - ``"both"``: both calls per item (2 API calls, tokens summed).
+
     The first *warmup* and last *cooldown* results are tagged and excluded
     from summary statistics.
     """
     n_total = len(items)
-    results: list[dict] = []
+    run_refl = mode in ("reflection", "both")
+    run_prefl = mode in ("preflection", "both")
+
+    async def _do_call(messages):
+        return await _api_call(
+            client, model, messages, semaphore,
+            thinking=thinking, max_tokens=max_tokens,
+            sampling_params=sampling_params,
+        )
 
     async def process_one(idx: int, item: dict) -> dict:
         rp = item["reflection_point"]
-        context_before = item["text"][:rp]
-        context_after = item["text"][rp:]
-        user_content = (
-            f"## Full Text\n\n"
-            f"{context_before}"
-            f"\n\n--- REFLECTION POINT (character {rp}) ---\n\n"
-            f"{context_after}"
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
         t0 = time.monotonic()
         try:
-            raw, reasoning, usage = await _api_call(
-                client,
-                model,
-                messages,
-                semaphore,
-                thinking=thinking,
-                max_tokens=max_tokens,
-                sampling_params=sampling_params,
-            )
+            total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+            refl_parsed = {}
+            prefl_parsed = {}
+            raw_parts = {}
+
+            if run_refl:
+                msgs = _build_refl_messages(item, refl_system_prompt)
+                raw, reasoning, usage = await _do_call(msgs)
+                for k in total_usage:
+                    total_usage[k] += usage[k]
+                raw_parts["reflection_raw"] = raw
+                raw_parts["reflection_reasoning"] = reasoning
+                try:
+                    refl_parsed = _parse_generation(raw, required_fields=_REFL_FIELDS)
+                except Exception:
+                    refl_parsed = {"analysis": raw, "reflection_1p": "", "reflection_3p": ""}
+
+            if run_prefl:
+                msgs = _build_prefl_messages(item, prefl_system_prompt)
+                raw, reasoning, usage = await _do_call(msgs)
+                for k in total_usage:
+                    total_usage[k] += usage[k]
+                raw_parts["preflection_raw"] = raw
+                raw_parts["preflection_reasoning"] = reasoning
+                try:
+                    prefl_parsed = _parse_generation(raw, required_fields=_PREFL_FIELDS)
+                except Exception:
+                    prefl_parsed = {"analysis": raw, "preflection_3p": "", "preflection_1p": ""}
+
             latency_ms = int((time.monotonic() - t0) * 1000)
+
+            # Merge parsed fields
+            analysis = refl_parsed.get("analysis") or prefl_parsed.get("analysis", "")
+            reflection_1p = refl_parsed.get("reflection_1p", "")
+            reflection_3p = refl_parsed.get("reflection_3p", "")
+            preflection_3p = prefl_parsed.get("preflection_3p", "")
+            preflection_1p = prefl_parsed.get("preflection_1p", "")
+
             try:
-                parsed = _parse_generation(raw)
                 reflection_charter_elements = union_charter_elements(
-                    parsed["reflection_1p"], parsed["reflection_3p"]
-                )
-                preflection_charter_elements = union_charter_elements(
-                    parsed["preflection_1p"], parsed["preflection_3p"]
-                )
+                    reflection_1p, reflection_3p
+                ) if run_refl else []
             except Exception:
-                parsed = {
-                    "analysis": raw,
-                    "preflection_3p": "",
-                    "preflection_1p": "",
-                    "reflection_1p": "",
-                    "reflection_3p": "",
-                }
                 reflection_charter_elements = []
+            try:
+                preflection_charter_elements = union_charter_elements(
+                    preflection_1p, preflection_3p
+                ) if run_prefl else []
+            except Exception:
                 preflection_charter_elements = []
+
             is_excluded = idx < warmup or idx >= n_total - cooldown
             return {
                 "idx": idx,
@@ -269,18 +344,17 @@ def run_generator_estimation(
                 "is_excluded": is_excluded,
                 "success": True,
                 "latency_ms": latency_ms,
-                **usage,
+                **total_usage,
                 "text": item["text"],
                 "reflection_point": rp,
-                "analysis": parsed["analysis"],
-                "preflection_3p": parsed["preflection_3p"],
-                "preflection_1p": parsed["preflection_1p"],
-                "reflection_1p": parsed["reflection_1p"],
-                "reflection_3p": parsed["reflection_3p"],
+                "analysis": analysis,
+                "preflection_3p": preflection_3p,
+                "preflection_1p": preflection_1p,
+                "reflection_1p": reflection_1p,
+                "reflection_3p": reflection_3p,
                 "preflection_charter_elements": preflection_charter_elements,
                 "reflection_charter_elements": reflection_charter_elements,
-                "raw_response": raw,
-                "reasoning": reasoning,
+                **raw_parts,
             }
         except Exception as e:
             latency_ms = int((time.monotonic() - t0) * 1000)
@@ -319,7 +393,9 @@ def run_generator_estimation(
 
 def run_judge_estimation(
     generations: list[dict],
-    judge_prompt_template: str,
+    refl_judge_template: str | None,
+    prefl_judge_template: str | None,
+    mode: str,
     accept_threshold: float,
     model: str,
     client: openai.AsyncOpenAI,
@@ -330,8 +406,20 @@ def run_judge_estimation(
     max_tokens: int | None = None,
     sampling_params: dict[str, float | int] | None = None,
 ) -> list[dict]:
-    """Run judge API calls on all 4 annotation voices per generation."""
+    """Run judge API calls on annotation voices per generation.
+
+    *mode* controls which mode(s) to judge:
+      - ``"reflection"``: judge reflection voices only.
+      - ``"preflection"``: judge preflection voices only.
+      - ``"both"``: judge both modes (2 API calls per item).
+    """
     n_total = len(generations)
+
+    _MODES_TO_RUN = []
+    if mode in ("reflection", "both"):
+        _MODES_TO_RUN.append(("reflection", ("reflection_1p", "reflection_3p"), refl_judge_template))
+    if mode in ("preflection", "both"):
+        _MODES_TO_RUN.append(("preflection", ("preflection_3p", "preflection_1p"), prefl_judge_template))
 
     _PART_KEY_FALLBACK = {
         "preflection_3p": "preflection",
@@ -342,15 +430,12 @@ def run_judge_estimation(
         t0 = time.monotonic()
         try:
             total_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+            n_calls = 0
 
-            # Judge both modes
-            for mode, voices in [
-                ("reflection", ("reflection_1p", "reflection_3p")),
-                ("preflection", ("preflection_3p", "preflection_1p")),
-            ]:
+            for judge_mode, voices, template in _MODES_TO_RUN:
                 source_text = (
                     item["text"][: item["reflection_point"]]
-                    if mode == "reflection"
+                    if judge_mode == "reflection"
                     else item["text"]
                 )
                 user_content = f"## Source Text\n\n{source_text}\n\n---\n\n"
@@ -363,7 +448,7 @@ def run_judge_estimation(
                         content = item[v]
                     user_content += f"## {v}\n\n{content}\n\n"
 
-                system = judge_prompt_template.replace(
+                system = template.replace(
                     "{accept_threshold}", str(accept_threshold)
                 )
                 raw, reasoning, usage = await _api_call(
@@ -378,10 +463,11 @@ def run_judge_estimation(
                     max_tokens=max_tokens,
                     sampling_params=sampling_params,
                 )
-                _parse_mode_judgment(raw, mode)
+                _parse_mode_judgment(raw, judge_mode)
 
                 for k in total_usage:
                     total_usage[k] += usage[k]
+                n_calls += 1
 
             latency_ms = int((time.monotonic() - t0) * 1000)
             is_excluded = idx < warmup or idx >= n_total - cooldown
@@ -392,7 +478,7 @@ def run_judge_estimation(
                 "is_excluded": is_excluded,
                 "success": True,
                 "latency_ms": latency_ms,
-                "n_parts_judged": len(parts),
+                "n_calls": n_calls,
                 **total_usage,
             }
         except Exception as e:
@@ -592,6 +678,13 @@ def parse_args() -> argparse.Namespace:
         default="generator",
     )
     p.add_argument(
+        "--mode",
+        choices=["reflection", "preflection", "both"],
+        default="both",
+        help="Which pipeline(s) to benchmark: reflection (partial text), "
+        "preflection (full text), or both (default).",
+    )
+    p.add_argument(
         "--data-path", help="Path to annotated parquet dir or sidecar.parquet."
     )
     p.add_argument("--n-samples", type=int, default=200)
@@ -693,6 +786,35 @@ def main() -> None:
         cfg_endpoint=cfg.phase2.endpoint,
     )
 
+    mode = args.mode
+
+    def _load_system_prompt(prompt_path: Path) -> str:
+        charter_text = CHARTER_PATH.read_text(encoding="utf-8")
+        writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
+        return (
+            prompt_path.read_text(encoding="utf-8")
+            .replace("{charter}", charter_text)
+            .replace("{writing_guidelines}", writing_guidelines_text)
+        )
+
+    def _resolve_gen_prompt(kind: str) -> Path:
+        """Resolve generator prompt path for 'reflection' or 'preflection'."""
+        if args.model_alias:
+            return resolve_prompt_path(
+                f"generator_{kind}_latest.md", alias=args.model_alias
+            )
+        from pipeline.config import _INIT_PROMPTS_DIR
+        return _INIT_PROMPTS_DIR / f"init_generator_{kind}.md"
+
+    def _resolve_judge_prompt(kind: str) -> Path:
+        """Resolve judge prompt path for 'reflection' or 'preflection'."""
+        if args.model_alias:
+            return resolve_prompt_path(
+                f"judge_{kind}_latest.md", alias=args.model_alias
+            )
+        from pipeline.config import _INIT_PROMPTS_DIR
+        return _INIT_PROMPTS_DIR / f"init_judge_{kind}.md"
+
     # ---- Load data & prompts BEFORE waiting for API ----
     if args.role == "generator":
         assert args.data_path, "--data-path is required for generator role"
@@ -704,21 +826,18 @@ def main() -> None:
         items = prepare_items(texts, args.seed, max_tokens=max_text_tokens)
         print(f"Prepared {len(items)} items (max {max_text_tokens} tokens each)")
 
-        # Build system prompt
-        charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-        writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
-        if args.model_alias:
-            prompt_path = resolve_prompt_path(
-                "generator_reflection_latest.md", alias=args.model_alias
-            )
-        else:
-            from pipeline.config import _INIT_PROMPTS_DIR
-
-            prompt_path = _INIT_PROMPTS_DIR / "init_generator_reflection.md"
-        prompt_template = prompt_path.read_text(encoding="utf-8")
-        system_prompt = prompt_template.replace("{charter}", charter_text).replace(
-            "{writing_guidelines}", writing_guidelines_text
+        # Build system prompts per mode
+        refl_system_prompt = (
+            _load_system_prompt(_resolve_gen_prompt("reflection"))
+            if mode in ("reflection", "both")
+            else None
         )
+        prefl_system_prompt = (
+            _load_system_prompt(_resolve_gen_prompt("preflection"))
+            if mode in ("preflection", "both")
+            else None
+        )
+        print(f"Mode: {mode}")
 
     elif args.role == "judge":
         assert args.generations_path, "--generations-path is required for judge role"
@@ -736,15 +855,17 @@ def main() -> None:
         generations = generations[:n_judge]
         print(f"Loaded {len(generations)} generations from {gen_path}")
 
-        if args.model_alias:
-            judge_prompt_path = resolve_prompt_path(
-                "judge_reflection_latest.md", alias=args.model_alias
-            )
-        else:
-            from pipeline.config import _INIT_PROMPTS_DIR
-
-            judge_prompt_path = _INIT_PROMPTS_DIR / "init_judge_reflection.md"
-        judge_template = judge_prompt_path.read_text(encoding="utf-8")
+        refl_judge_template = (
+            _resolve_judge_prompt("reflection").read_text(encoding="utf-8")
+            if mode in ("reflection", "both")
+            else None
+        )
+        prefl_judge_template = (
+            _resolve_judge_prompt("preflection").read_text(encoding="utf-8")
+            if mode in ("preflection", "both")
+            else None
+        )
+        print(f"Mode: {mode}")
 
     # ---- Wait for API to become ready (poll with backoff) ----
     print(f"Waiting for API: {model_name} ...", flush=True)
@@ -772,15 +893,19 @@ def main() -> None:
         raise SystemExit("API did not become ready after 30 minutes.")
 
     # ---- Run estimation ----
+    role_mode_label = f"{args.role} ({mode})"
+
     if args.role == "generator":
         print(
-            f"\nRunning generator estimation: {len(items)} items, "
+            f"\nRunning generator estimation ({mode}): {len(items)} items, "
             f"max_concurrent={args.max_concurrent}, warmup={args.warmup}, "
             f"cooldown={args.cooldown}, thinking={thinking}"
         )
         results, wall_time_s = run_generator_estimation(
             items,
-            system_prompt,
+            refl_system_prompt,
+            prefl_system_prompt,
+            mode,
             model_name,
             client,
             semaphore,
@@ -801,18 +926,19 @@ def main() -> None:
             tp_size=args.tp_size,
             dp_size=args.dp_size,
         )
-        print_summary(stats, model_name, model_alias, "generator")
+        print_summary(stats, model_name, model_alias, role_mode_label)
 
         # Save results
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        out_path = out_dir / f"generator_{model_alias}_{ts}.json"
+        out_path = out_dir / f"generator_{mode}_{model_alias}_{ts}.json"
         output = {
             "meta": {
                 "model_name": model_name,
                 "model_alias": model_alias,
                 "role": "generator",
+                "mode": mode,
                 "n_samples": args.n_samples,
                 "warmup": args.warmup,
                 "cooldown": args.cooldown,
@@ -834,13 +960,15 @@ def main() -> None:
 
     elif args.role == "judge":
         print(
-            f"\nRunning judge estimation: {len(generations)} items, "
+            f"\nRunning judge estimation ({mode}): {len(generations)} items, "
             f"max_concurrent={args.max_concurrent}, warmup={args.warmup}, "
             f"cooldown={args.cooldown}, thinking={thinking}"
         )
         results, wall_time_s = run_judge_estimation(
             generations,
-            judge_template,
+            refl_judge_template,
+            prefl_judge_template,
+            mode,
             cfg.phase2.scoring.accept_threshold,
             model_name,
             client,
@@ -862,18 +990,19 @@ def main() -> None:
             tp_size=args.tp_size,
             dp_size=args.dp_size,
         )
-        print_summary(stats, model_name, model_alias, "judge")
+        print_summary(stats, model_name, model_alias, role_mode_label)
 
         # Save results
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        out_path = out_dir / f"judge_{model_alias}_{ts}.json"
+        out_path = out_dir / f"judge_{mode}_{model_alias}_{ts}.json"
         output = {
             "meta": {
                 "model_name": model_name,
                 "model_alias": model_alias,
                 "role": "judge",
+                "mode": mode,
                 "n_samples": len(generations),
                 "warmup": args.warmup,
                 "cooldown": args.cooldown,

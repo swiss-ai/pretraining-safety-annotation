@@ -13,11 +13,11 @@ phase2:
   endpoint: https://api.swissai.svc.cscs.ch/v1
   judge_models:
     - alias: kimi-k2.5
-      api_name: jkminder/lAiFTaihSJ
+      api_name: jkminder/kimi
       hf_slug: moonshotai/Kimi-K2.5
       completion_max_tokens: 65536
       context_window_tokens: 65536
-      # endpoint: https://openrouter.ai/api/v1
+      endpoint: http://172.28.25.28:30000/v1
 
   generator_models:
     - alias: glm-4.5-air
@@ -92,6 +92,7 @@ phase3:
     alias: kimi-k2.5
     api_name: jkminder/kimi
     hf_slug: moonshotai/Kimi-K2.5
+    endpoint: http://172.28.25.28:30000/v1
     prompt_reflection: judge_reflection_v24.md
     prompt_preflection: judge_preflection_v2.md
     completion_max_tokens: 65536
@@ -99,7 +100,7 @@ phase3:
   generator_eval:
     n_items: 5000
     seed: 42
-    max_concurrent: 512
+    max_concurrent: 768
     chunk_size: 500
     store_reasoning: false
     failure_attempt_cap: 5

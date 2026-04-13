@@ -1062,6 +1062,9 @@ def _run_one_pair_inner(
     gen_endpoint = gen_model_cfg.endpoint or cfg.phase2.endpoint
     judge_endpoint = judge_model_cfg.endpoint or cfg.phase2.endpoint
 
+    logger.info("Judge model: alias={} api_name={} endpoint={}", judge_alias, judge_model_cfg.api_name, judge_endpoint)
+    logger.info("Generator model: alias={} api_name={} endpoint={}", gen_alias, gen_model_cfg.api_name, gen_endpoint)
+
     gen_client, gen_sem = make_api_client(gen_endpoint, max_conc, cfg.api_keys)
     if judge_endpoint == gen_endpoint:
         judge_client, judge_sem = gen_client, gen_sem

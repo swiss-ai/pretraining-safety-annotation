@@ -2,23 +2,33 @@
 
 Estimates GPU-hours needed to annotate ~102M samples with reflection/preflection generation and neutral summarization.
 
-## Current State (2026-04-03)
+## Current State (2026-04-13)
 
 Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
 
-### 4-voice annotation
+### Split pipeline: reflection + preflection (new)
+
+As of 2026-04-13, reflections and preflections are generated with **separate prompts and separate API calls**. Reflections receive partial text (up to the reflection point); preflections receive the full text. The `--mode` flag controls which pipeline to benchmark: `reflection`, `preflection`, or `both`.
+
+| Model | Mode | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
+|-------|------|--------------|-------------|-------------|----------------|------------------|-----------------|
+| **Qwen3.5-35B-A3B-FP8** ⚡ | reflection | 4 (TP1×DP4) | 1024 | 5.10 | 3,590 | **22,369** | 18.0K - 29.1K |
+
+> **Note**: Previous "4-voice annotation" results below used a combined prompt that produced all 4 voices in a single API call. Those numbers are not directly comparable to the split pipeline results. Total cost for the split pipeline = reflection GPU-h + preflection GPU-h.
+
+### 4-voice annotation (legacy combined prompt)
 
 Best result per model (1 node), sorted by GPU-hours.
 
 | Model | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
 |-------|--------------|-------------|-------------|----------------|------------------|-----------------|
 | **gpt-oss-120b** | 4 (TP1×DP4) | 1024 | 10.55 | 760 | **10,824** | 8.6K - 12.6K |
+| **Qwen3.5-35B-A3B-FP8** ⚡ | 4 (TP1×DP4) | 1024 | 4.30 | 4,280 | **26,582** | 19.8K - 38.2K |
 | **Qwen3.5-9B** | 4 (TP1×DP4) | 1024 | 4.09 | 4,039 | **27,901** | 23.8K - 33.8K |
 | **GLM-4.7-Flash** | 4 (TP1×DP4) | 1024 | 3.95 | 2,782 | **28,884** | 22K - 35K |
+| **Nemotron-3-Super-FP8** ⚡ | 4 (TP4×DP1) | 1024 | 3.96 | 943 | **28,848** | 15.5K - 33.2K |
 | **GLM-4.5-Air-FP8** | 4 (TP4×DP1) | 1024 | 3.56 | 1,432 | **32,035** | — |
-| **Qwen3.5-35B-A3B-FP8** | 4 (TP1×DP4) | 1024 | 3.52 | 3,548 | **32,439** | 10.9K - 46.5K |
-| **Nemotron-3-Super-FP8** | 4 (TP4×DP1) | 1024 | 2.26 | 1,553 | **50,471** | 34.9K - 58.4K |
-| **Qwen3.5-122B-A10B-FP8** | 4 (TP4×DP1) | 1024 | 0.49 | 1,684 | **234,560** | — |
+| **Qwen3.5-122B-A10B-FP8** ⚡ | 4 (TP4×DP1) | 1024 | 1.28 | 1,549 | **88,891** | 40.7K - 114.6K |
 
 ### Neutral summary
 
@@ -39,6 +49,8 @@ Best result per model (1 node), sorted by GPU-hours.
 - **GLM-4.5-Air-FP8 does not fit at TP1** — minimum TP2 required. Best single-node config is TP4×DP1 (32K GPU-h).
 - **Qwen3.5-9B** at 28K GPU-h despite ~4K output tokens (unseparated thinking). Fast thanks to tiny model (9B) at TP1×DP4.
 - **Sampling params now tracked**: per-model HuggingFace-recommended sampling params added (Apr 3). Qwen3.5 presence_penalty=1.5 reduced output tokens ~15% but total output remains high due to thinking tokens (real compute, not a labeling issue).
+- **SGLang tuning for hybrid models** (Apr 12): `--mamba-ssm-dtype bfloat16` + `--mem-fraction-static 0.88` + `--max-running-requests 512` dramatically improves throughput for models with Mamba/DeltaNet sublayers. Qwen3.5-35B: 32.4K → 26.6K GPU-h (-18%). Nemotron-3-Super: 50.5K → 28.8K GPU-h (-43%). See tuning sections below.
+- **Split pipeline** (Apr 13): Reflections and preflections now use separate prompts and API calls. Qwen3.5-35B-A3B-FP8 reflection-only: 22.4K GPU-h (vs 26.6K for old combined 4-voice). FP8 + tuned flags give 3.1x speedup over BF16 baseline (69.6K → 22.4K). Preflection benchmark pending.
 
 ---
 
@@ -59,9 +71,18 @@ Content tokens measured with SmolLM2-1.7B-Instruct tokenizer after stripping mod
 
 SmolLM3 is the clear winner for summarization — 3x cheaper than the next best option. GLM and gpt-oss are comparable despite different overhead profiles (GLM: concise summaries + heavy thinking; gpt-oss: longer summaries + channel analysis). Qwen 3.5-35B-A3B is unusable: sglang doesn't separate its thinking tokens, so ~1,800 tok of reasoning chain lands in the content per request.
 
-### 4-voice annotation — all results (updated 2026-04-03)
+### Split pipeline — reflection/preflection results (2026-04-13)
 
-Generator produces four annotation voices per sample: `preflection_3p`, `preflection_1p`, `reflection_1p`, `reflection_3p`.
+After the prompt split, reflections and preflections are benchmarked separately. Each sample requires 2 API calls in production (one per mode). Total GPU-hours = reflection + preflection.
+
+| Model | Mode | Nodes | GPUs (TP×DP) | Concurrency | Samples/sec | Avg in tok | Avg out tok | GPU-hours (102M) | Range (p25-p75) | Date |
+|-------|------|-------|--------------|-------------|-------------|------------|-------------|------------------|-----------------|------|
+| **Qwen3.5-35B-A3B-FP8** ⚡ | reflection | 1 | 4 (TP1×DP4) | 1024 | 5.10 | 6,182 | 3,590 | **22,369** | 18.0K - 29.1K | Apr 13 |
+| Qwen3.5-35B-A3B (bf16) | reflection | 1 | 4 (TP1×DP4) | 1024 | 1.64 | 6,182 | 3,226 | **69,574** | 50.7K - 93.2K | Apr 13 |
+
+### 4-voice annotation — all results (legacy combined prompt, updated 2026-04-03)
+
+Generator produces four annotation voices per sample: `preflection_3p`, `preflection_1p`, `reflection_1p`, `reflection_3p` in a single API call.
 
 All 10k-sample runs: direct node endpoints, 10 warmup + 10 cooldown, 0 failures. 1k-sample runs: 5 warmup.
 
@@ -72,9 +93,11 @@ All 10k-sample runs: direct node endpoints, 10 warmup + 10 cooldown, 0 failures.
 | **Qwen3.5-9B** | 1 | 4 (TP1×DP4) | 1024 | 4.09 | 4,039 | **27,901** | 23.8K - 33.8K | Apr 3 | correct |
 | **GLM-4.7-Flash** | 1 | 4 (TP1×DP4) | 1024 | 3.95 | 2,782 | **28,884** | 22K - 35K | Apr 1 | defaults |
 | **GLM-4.5-Air-FP8** | 1 | 4 (TP4×DP1) | 1024 | 3.56 | 1,432 | **32,035** | — | Apr 1 | defaults |
+| **Qwen3.5-35B-A3B-FP8** ⚡ | 1 | 4 (TP1×DP4) | 1024 | 4.30 | 4,280 | **26,582** | 19.8K - 38.2K | Apr 12 | correct + tuned |
 | **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.52 | 3,548 | **32,439** | 10.9K - 46.5K | Apr 2 | correct |
 | **GLM-4.5-Air-FP8** | 1 | 4 (TP2×DP2) | 1024 | 3.11 | 1,413 | **36,737** | — | Apr 1 | defaults |
 | **Qwen3.5-35B-A3B-FP8** | 1 | 4 (TP1×DP4) | 1024 | 3.05 | 4,167 | **37,473** | — | Apr 2 | defaults |
+| **Nemotron-3-Super-FP8** ⚡ | 1 | 4 (TP4×DP1) | 1024 | 3.96 | 943 | **28,848** | 15.5K - 33.2K | Apr 12 | correct + tuned |
 | **Nemotron-3-Super-FP8** | 1 | 4 (TP4×DP1) | 1024 | 2.26 | 1,553 | **50,471** | 34.9K - 58.4K | Apr 2 | defaults |
 | **Nemotron-3-Super-FP8** | 1 | 4 (TP2×EP2×DP2) | 1024 | 1.74 | 1,207 | **65,624** | 39.2K - 77.7K | Apr 3 | correct |
 | **Nemotron-3-Super-FP8** | 1 | 4 (TP2×DP2) | 1024 | 1.73 | 1,186 | **66,027** | 39.5K - 77.1K | Apr 3 | correct |
@@ -87,11 +110,117 @@ All 10k-sample runs: direct node endpoints, 10 warmup + 10 cooldown, 0 failures.
 | **GLM-4.5-Air-FP8** | 1 | 4 (TP4×DP1) | 50 | 1.27 | 1,710 | **89,900** | 62K - 109K | Mar 30 | defaults |
 | **GLM-4.5-Air-FP8** | 16 | 64 (TP4×DP1) | 1024 | 19.63 | 1,814 | **93,075** | 64K - 110K | Mar 31 | defaults |
 | **GLM-4.5-Air-FP8** | 16 | 64 (TP4×DP1) | 512 | 13.59 | 1,812 | **134,480** | 93K - 159K | Mar 31 | defaults |
+| **Qwen3.5-122B-A10B-FP8** ⚡ | 1 | 4 (TP4×DP1) | 1024 | 1.28 | 1,549 | **88,891** | 40.7K - 114.6K | Apr 12 | correct + tuned |
 | **Qwen3.5-122B-A10B-FP8** | 1 | 4 (TP4×DP1) | 1024 | 0.49 | 1,684 | **234,560** | — | Apr 2 | defaults |
 
 ⚠️ Mar 31 gpt-oss-120b 4-node run was misconfigured with DP=1 — only 1 of 4 replicas served traffic. Superseded by Apr 1 results.
 
 ⚠️ Runs before Apr 3 used server-default sampling params (typically t=1.0, top_p=1.0) instead of HuggingFace-recommended values. "correct" = per-model recommended params applied. "defaults" = server defaults. See [Sampling Parameters](#sampling-parameters) section.
+
+### SGLang Tuning: Qwen3.5-35B-A3B (2026-04-12)
+
+Qwen3.5-35B-A3B is a hybrid model: 30 Gated DeltaNet (linear attention) layers + 10 full attention layers, with 256 fine-grained MoE experts. This creates an unusual memory profile — SGLang maintains dual memory pools (Mamba/DeltaNet state + KV cache), and the DeltaNet state pool is the binding constraint, not KV cache.
+
+**Bottleneck diagnosis**: At default settings, each DP replica ran only ~104 concurrent requests. Server metrics showed `mamba usage: 0.67` (DeltaNet state pool saturated) while `token usage: 0.30` (KV cache 70% empty). Requests queued waiting for DeltaNet state slots.
+
+#### Experiment results
+
+All runs: 1 node, 4 GPUs (TP1×DP4), concurrency 1024, 10K samples, bf16 KV cache.
+
+| Config | Extra SGLang flags | Req/replica | Samples/s | Out tok/s | GPU-hours (102M) | vs Baseline |
+|--------|-------------------|-------------|-----------|-----------|------------------|-------------|
+| Baseline (no flags) | — | ~104 | 3.52 | 12,488 | 32,439 | — |
+| bf16 mamba state | `--mamba-ssm-dtype bfloat16` | 203 | 3.90 | 16,717 | 29,261 | -10% |
+| **bf16 mamba + mem 0.88** | `--mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88` | 250 | **4.30** | **18,385** | **26,582** | **-18%** |
+| bf16 mamba + mem 0.92 | `--mamba-ssm-dtype bfloat16 --mem-fraction-static 0.92` | 269 | 4.23 | 17,947 | 27,026 | -17% |
+| extra_buffer scheduler | `--mamba-ssm-dtype bfloat16 --mamba-scheduler-strategy extra_buffer --page-size 64` | 150 | 3.55 | 15,248 | 32,179 | -1% |
+| extra_buffer + mem 0.88 | `--mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-scheduler-strategy extra_buffer --page-size 64` | 150 | 3.65 | 15,419 | 31,273 | -4% |
+
+All configs also included: `--kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024`
+
+#### Winning config
+
+```
+--tp-size 1 --dp-size 4 --context-length 16384 \
+--kv-cache-dtype bf16 \
+--mamba-ssm-dtype bfloat16 \
+--mem-fraction-static 0.88 \
+--max-running-requests 512 \
+--schedule-conservativeness 0.3 \
+--cuda-graph-max-bs 1024
+```
+
+#### What worked and why
+
+- **`--mamba-ssm-dtype bfloat16`** (biggest win): Halved DeltaNet recurrent state from ~63 MB to ~31 MB per request, nearly doubling Mamba pool capacity (104 → 203 req/replica). Output quality verified — model produces valid JSON with correct reflection content.
+- **`--mem-fraction-static 0.88`**: Default auto-computed to 0.783 on GH200. Pushing to 0.88 allocated ~10 GB more to pools, increasing Mamba slots from 203 to 250 per replica. 0.92 gave diminishing returns (269 req but slightly worse throughput — activation headroom squeezed).
+- **`--kv-cache-dtype bf16`**: Required for correctness — FP8 KV cache silently corrupts DeltaNet output (SGLang issue #19603). KV cache is only ~30% utilized anyway, so no throughput impact.
+- **`--schedule-conservativeness 0.3`**: Packs batch more aggressively. Safe for offline workloads — retracts on OOM (no crash).
+- **`--cuda-graph-max-bs 1024`**: Up from default 256. Only ~1 GB extra memory cost for CUDA graph buffers.
+
+#### What didn't work
+
+- **`--mamba-scheduler-strategy extra_buffer`**: Overlap scheduling reduces GPU idle time between batches, but the 2-3x Mamba state overhead per request cut concurrency from 250 to 150 — net negative for throughput. Even with full GPU utilization, fewer concurrent requests produced less total tok/s.
+- **`--disable-radix-cache`**: Only 0.5% overhead when enabled with no cache hits (unique prompts). Risky with Mamba hybrid models (known crashes). Not worth it.
+- **`--moe-runner-backend deep_gemm`**: Container crashed with bus error. Would need JIT pre-compilation via `sglang.compile_deep_gemm`. Untested.
+
+#### Remaining bottleneck
+
+MoE decode with 256 fine-grained experts is fundamentally memory-bandwidth bound. Each expert's weight matrix is small (intermediate size 512), so grouped GEMMs during decode spend most time loading expert weights from HBM, not doing arithmetic. Model FLOPS Utilization during MoE decode is typically 5-15% even at high GPU-Util. The ~18% improvement from these flags is real but represents the limit of what SGLang tuning alone can achieve without faster MoE kernels.
+
+### SGLang Tuning: Nemotron-3-Super-120B-A12B-FP8 (2026-04-12)
+
+Nemotron-3-Super is also a hybrid model: 40 Mamba-2 layers + 40 MoE layers + 8 dense attention layers (88 total). It has 512 routed experts with 22 active per token (LatentMoE with relu2 activation). The DeltaNet/Mamba state is even larger than Qwen3.5: **173 MB per request in fp32, 87 MB in bf16**.
+
+**Bottleneck diagnosis**: At the baseline `--max-running-requests 256` with bf16 Mamba state, the Mamba pool was only 42% utilized — the hard cap on `max-running-requests` was the binding constraint, not memory. Increasing to 512 allowed 410 concurrent requests (mamba 0.67), boosting throughput.
+
+#### Experiment results
+
+All runs: 1 node, 4 GPUs (TP4×DP1), concurrency 1024, 10K samples. All tuned runs include `--mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --schedule-conservativeness 0.3`.
+
+| Config | Extra flags | Req | Samples/s | Out tok/s | GPU-hours (102M) | vs Baseline |
+|--------|------------|-----|-----------|-----------|------------------|-------------|
+| Baseline (no tuning) | — | ? | 2.26 | 3,514 | 50,471 | — |
+| bf16 mamba + mem 0.88 | `--max-running-requests 256` | 256 | 3.39 | 3,282 | 33,713 | -33% |
+| + fp8 KV cache | `--max-running-requests 256 --kv-cache-dtype fp8_e4m3` | 256 | 3.38 | 3,275 | 33,773 | -33% |
+| + cutlass MoE | `--max-running-requests 256 --moe-runner-backend flashinfer_cutlass` | 256 | 3.38 | 3,228 | 33,758 | -33% |
+| **+ max 512 requests** | **`--max-running-requests 512`** | **410** | **3.96** | **3,731** | **28,848** | **-43%** |
+
+#### Winning config
+
+```
+--tp-size 4 --trust-remote-code --reasoning-parser nano_v3 \
+--mamba-ssm-dtype bfloat16 \
+--kv-cache-dtype bf16 \
+--mem-fraction-static 0.88 \
+--schedule-conservativeness 0.3 \
+--max-running-requests 512
+```
+
+#### Key findings
+
+- **`--max-running-requests` was the actual bottleneck**, not memory. At 256 (explicit cap), mamba usage was only 0.42 with 256 req. At 512, it pushed to 410 req (mamba 0.67) and tok/s increased ~20%.
+- **`--mamba-ssm-dtype bfloat16`** is essential — prevents the 173 MB/req fp32 state from becoming the bottleneck at higher concurrency.
+- **FP8 KV cache made no difference** — KV cache was not a constraint (token usage ~10%).
+- **`flashinfer_cutlass` MoE backend made no difference** — despite the relu2 activation compatibility concern, it ran correctly but at the same throughput as the default triton backend.
+- **The improvement is larger than Qwen3.5** (43% vs 18%) because the baseline was more constrained by default SGLang settings.
+
+### SGLang Tuning: Qwen3.5-122B-A10B-FP8 (2026-04-12)
+
+Same hybrid architecture as 35B (36 DeltaNet + 12 attention layers, 256 experts top-8) but scaled to 122B params. Mamba state is smaller per-request than 35B (39 MB fp32, 19 MB bf16) but the model weights consume most of the 4×96GB memory budget at TP4.
+
+| Config | Req | Samples/s | Out tok/s | GPU-hours (102M) | vs Baseline |
+|--------|-----|-----------|-----------|------------------|-------------|
+| Baseline (no flags) | ? | 0.49 | 822 | 234,091 | — |
+| **bf16 mamba + mem 0.88** | 456 | **1.28** | **1,979** | **88,891** | **-62%** |
+
+Winning config:
+```
+--tp-size 4 --mamba-ssm-dtype bfloat16 --kv-cache-dtype bf16
+--mem-fraction-static 0.88 --max-running-requests 512 --schedule-conservativeness 0.3
+```
+
+SGLang allocated 456 of 512 requested slots (8.22 GB free at startup). `--context-length 16384` tested separately — no improvement, Mamba pool is the constraint regardless of KV context allocation. The 10K run required `--time 04:00:00` (2h default insufficient).
 
 ### 2-voice format (2026-03-26)
 
