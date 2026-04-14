@@ -164,11 +164,11 @@ phase4:
   max_rows: 0
   rows_per_task: 100000
   max_concurrent_requests: 1024
-  save_batch_size: 200
+  save_batch_size: 5000
   progress_interval: 1000
   canary_seed: 42
   reflection_seed: 42
-  max_retries_per_doc: 5
+  max_retries_per_doc: 3
   sglang:
     hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
     model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
@@ -183,12 +183,20 @@ phase4:
     #   gpt-oss-120b:                                  (none — no thinking)
     reasoning_parser: kimi_k2
     env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
-    extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88"
-    pre_launch_cmds: "pip install nvidia-cudnn-cu12==9.16.0.29"
+    extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
+    pre_launch_cmds: |
+      pip install nvidia-cudnn-cu12==9.16.0.29
+      # Install tuned MoE kernel config for Qwen3.5-35B on GH200 (gate-up only;
+      # +1.4% sps over default. See throughput_estimations/tune_moe_kernels.sh).
+      SGLANG_PATH=\$(python3 -c 'import sglang; print(sglang.__path__[0])')
+      TRITON_VERSION=\$(python3 -c 'import triton; print(\"triton_\" + triton.__version__.replace(\".\", \"_\"))')
+      MOE_CONFIG_DIR=\"\$SGLANG_PATH/srt/layers/moe/fused_moe_triton/configs/\$TRITON_VERSION\"
+      mkdir -p \"\$MOE_CONFIG_DIR\"
+      cp /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/*.json \"\$MOE_CONFIG_DIR/\"
   slurm:
     partition: normal
     account: a141
-    time: "08:00:00"
+    time: "09:00:00"
     cpus_per_task: 288
     mem_per_cpu_gb: 8
     workers: -1

@@ -43,6 +43,17 @@ export NO_PROXY=\"0.0.0.0,\$NO_PROXY\"
 export SGL_ENABLE_JIT_DEEPGEMM=\"false\"
 # Pre-launch: install cudnn for Qwen3.5
 pip install nvidia-cudnn-cu12==9.16.0.29
+# Install tuned MoE kernel config for GH200 if available
+MOE_CONFIGS_DIR=/iopsstor/scratch/cscs/jminder/moe_configs_qwen35
+if ls \$MOE_CONFIGS_DIR/*.json >/dev/null 2>&1; then
+    SGLANG_PATH=\$(python3 -c 'import sglang; print(sglang.__path__[0])')
+    TRITON_VERSION=\$(python3 -c 'import triton; print(\"triton_\" + triton.__version__.replace(\".\", \"_\"))')
+    CONFIG_DIR=\"\$SGLANG_PATH/srt/layers/moe/fused_moe_triton/configs/\$TRITON_VERSION\"
+    mkdir -p \"\$CONFIG_DIR\"
+    cp \$MOE_CONFIGS_DIR/*.json \"\$CONFIG_DIR/\"
+    echo 'Installed tuned MoE configs:'
+    ls \"\$CONFIG_DIR\"/E=256*GH200* 2>/dev/null || true
+fi
 python3 -m sglang.launch_server $FRAMEWORK_ARGS" &
 WORKER_PID=$!
 
@@ -115,6 +126,7 @@ uv run --directory \"$BENCHMARK_REPO\" python -m throughput_estimations.estimate
     --max-concurrent $BENCHMARK_MAX_CONCURRENT \
     --warmup $BENCHMARK_WARMUP \
     --cooldown $BENCHMARK_COOLDOWN \
+    --max-tokens 0 \
     --output-dir \"$BENCHMARK_OUTPUT_DIR\"" &
 BENCHMARK_PID=$!
 

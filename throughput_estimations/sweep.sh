@@ -16,7 +16,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # --- Settings ---
 ACCOUNT="a141"
 PARTITION="normal"
-TIME="02:00:00"
+TIME="03:00:00"
 N_SAMPLES=10000
 MAX_CONCURRENT=1024
 WARMUP=10
@@ -41,18 +41,21 @@ for arg in "$@"; do
 done
 
 # --- Common flags (always present) ---
-COMMON="--tp-size 1 --dp-size 4 --kv-cache-dtype bf16 --mamba-ssm-dtype bfloat16 --cuda-graph-max-bs 1024"
+# context-length 24576 must stay (rare long reasoning traces require it).
+COMMON="--tp-size 1 --dp-size 4 --kv-cache-dtype bf16 --mamba-ssm-dtype bfloat16 --cuda-graph-max-bs 1024 --context-length 24576 --mem-fraction-static 0.88 --schedule-conservativeness 0.3"
 
 # --- Experiment configs ---
-# Format: "name|flags"
-# Each config is self-contained (COMMON + variable flags).
+# Mamba pool sizing sweep: shift the Mamba/KV memory split via --mamba-full-memory-ratio
+# (default 0.9 => Mamba gets ~47% of pool; KV cache currently only 30% utilized).
+# Higher ratio => more Mamba slots, smaller KV pool. Bump --max-running-requests
+# in step so the new slots can actually be used.
+# Format: "name|sglang_flags|client_max_concurrent"
 declare -a CONFIGS=(
-    # Client-side concurrency sweep (server config = current best)
-    # Format: "name|sglang_flags|client_max_concurrent"
-    "conc512_10k|$COMMON --context-length 24576 --mem-fraction-static 0.88 --max-running-requests 512 --schedule-conservativeness 0.3|512"
-    "conc1024_10k|$COMMON --context-length 24576 --mem-fraction-static 0.88 --max-running-requests 512 --schedule-conservativeness 0.3|1024"
-    "conc1536_10k|$COMMON --context-length 24576 --mem-fraction-static 0.88 --max-running-requests 512 --schedule-conservativeness 0.3|1536"
-    "conc2048_10k|$COMMON --context-length 24576 --mem-fraction-static 0.88 --max-running-requests 512 --schedule-conservativeness 0.3|2048"
+    "baseline_ratio0p9_maxreq512|$COMMON --max-running-requests 512|1024"
+    "ratio1p5_maxreq640|$COMMON --max-running-requests 640  --mamba-full-memory-ratio 1.5|1024"
+    "ratio2_maxreq768|$COMMON --max-running-requests 768  --mamba-full-memory-ratio 2.0|1024"
+    "ratio3_maxreq1024|$COMMON --max-running-requests 1024 --mamba-full-memory-ratio 3.0|1024"
+    "ratio5_maxreq1024|$COMMON --max-running-requests 1024 --mamba-full-memory-ratio 5.0|1024"
 )
 
 if [ "$LIST_ONLY" = true ]; then

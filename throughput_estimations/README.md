@@ -127,6 +127,80 @@ All differences within noise (~3.6% at best). 500-sample runs systematically und
 
 The current config (`--mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --max-running-requests 512 --kv-cache-dtype bf16 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024`, client c1024) is optimal. The Mamba pool caps at ~250 requests per DP replica regardless of memory or maxreq settings. The bottleneck is MoE decode with 256 fine-grained experts — memory-bandwidth bound at 5-15% MFU. No SGLang flag can improve this without faster MoE kernels.
 
+### Triton MoE kernel tuning — Qwen3.5-35B-A3B-FP8 (2026-04-14)
+
+After the SGLang flag sweep showed compute was the residual bottleneck, ran SGLang's `tuning_fused_moe_triton.py` on a GH200 node to generate a hardware-specific kernel config (no `NVIDIA_GH200_120GB` config ships with SGLang for E=256, N=512, FP8, block_shape=[128,128]).
+
+| Run | Notes | Samples/s | GPU-hours (102M) | vs Baseline |
+|-----|-------|-----------|------------------|-------------|
+| Baseline | Default Triton MoE config, `max_tokens=6144` | 5.10 | 22,369 | — |
+| Tuned MoE (gate-up only) | `max_tokens=6144` | 5.17 | 22,076 | -1.3% |
+| Tuned MoE (gate-up only) | `max_tokens=None` (no cap) | 5.01 | 22,776 | +1.8% |
+
+Removing the output cap was *slightly slower* (longer tail occupies Mamba slots without adding throughput-useful tokens; KV utilization climbed from 0.30 → 0.50). The cap wasn't truncating average outputs (mean 3608 vs 3597 tokens). Production should still prefer no cap if trace completeness matters more than the 3% wall-time delta.
+
+- Tuning job: ~73 min on 1 node × 4 GPUs (Ray-parallelized across batch sizes 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 1024, 1536, 2048, 3072, 4096).
+- Output: single config file `E=256,N=512,device_name=NVIDIA_GH200_120GB,dtype=fp8_w8a8,block_shape=[128, 128].json` saved to `/iopsstor/scratch/cscs/jminder/moe_configs_qwen35/`.
+- Wired into `configs/config.yaml` `pre_launch_cmds` so production phase 4 runs auto-install it.
+- **Down-projection kernel was NOT tuned.** SGLang's `tuning_fused_moe_triton.py --tune` only produces the gate-up file (E=256, N=512). The down-projection file (`_down.json`) requires the more complex `tuning_fused_moe_triton_sep.py`, which depends on real router topk_ids profiled from the live model — skipped (see "Why we didn't tune the down kernel" below).
+
+#### Why we didn't tune the down kernel
+
+`_sep.py` requires:
+1. Patching `srt/models/<model>.py` inside the container to dump `topk_ids` tensors during forward.
+2. Running a profiling pass through the live server with realistic prompts.
+3. Running the separate-kernel sweep (~2× the gate-up time, ~2.5h) using those captured ids.
+
+Cost: ~4–6h of plumbing, ongoing maintenance liability (container patch breaks on SGLang upgrade), and a routing-distribution-specific config that may regress if production traffic differs from the profiling pass.
+
+Expected payoff: ~1–2% additional sps based on the gate-up tuning result. Within run-to-run variance.
+
+Verdict: not worth it given the project is Mamba-pool bound, not compute bound. If we ever revisit, profile first with `nsys` to confirm the down kernel is actually a meaningful slice of decode time before investing.
+
+### Mamba/KV pool re-balancing — Qwen3.5-35B-A3B-FP8 (2026-04-14)
+
+The default `--mamba-full-memory-ratio 0.9` gives Mamba ~47% of pool memory and KV ~53%. Live decode logs showed KV utilization at only 0.30–0.50 — significant over-provisioning. Hypothesis: shifting the ratio toward Mamba should grow the slot cap and let MoE decode batch sizes climb (improving arithmetic intensity per expert).
+
+All runs: tuned MoE config installed, `--max-tokens 0` (no cap), 10K samples, c1024, `--context-length 24576` fixed.
+
+| Ratio | KV pool (tokens) | Mamba slot cap | Retracts | Samples/s | Out tok/s | GPU-hours (102M) | vs baseline |
+|---|---|---|---|---|---|---|---|
+| **0.9 (baseline)** | auto (~2M) | 250 (effective) | 0 | **5.01** | 18,033 | **22,776** | — |
+| 1.5 | 1,020,656 | 317 | 0 | 4.97 | 17,993 | 22,985 | +0.9% |
+| **2.0** ⚡ | 852,064 | **352** | 0 | **5.22** | 18,807 | **21,869** | **−4.0%** |
+| 3.0 | 638,126 | 396 | 778 | 5.20 | 18,818 | 21,969 | −3.5% |
+| 5.0 | 426,008 | 440 | 1,205 | 4.63 | 16,701 | 24,689 | +8.4% (KV thrash) |
+
+#### Findings
+
+- **Sweet spot at ratio 2.0**: ~900 GPU-h savings (−4%), zero retractions, KV peak ~0.84 (safe headroom).
+- **Ratio 1.5 was a wash**: more slots (317 vs 250) but no throughput gain — the baseline pool wasn't being filled to its cap most of the time. Adding capacity doesn't help if the workload doesn't fill it.
+- **Ratio 3.0 surprisingly survived**: 778 retractions but throughput within noise of ratio 2.0. SGLang's retract/reinject cost is cheaper than expected.
+- **Ratio 5.0 confirmed the cliff**: KV usage at 0.95–1.00, 1,205 retractions, throughput collapsed to 4.63 sps. Effectively *worse* than baseline.
+- **MoE bandwidth ceiling confirmed**: 250 → 352 concurrent requests gave only +4% sps, not the +20–30% you'd hope for if compute scaled with concurrency. The kernel really is bandwidth-bound.
+- **`--max-running-requests` was clamped down** by SGLang to match the actual Mamba slot cap. Setting it higher than the pool size has no effect.
+
+#### Adopted in production
+
+`configs/config.yaml` now includes `--mamba-full-memory-ratio 2.0`. Combined cumulative gain over original default config: **5.10 → 5.22 sps (~22,369 → 21,869 GPU-h, −500 GPU-h)**.
+
+### Client concurrency re-test with ratio 2.0 — Qwen3.5-35B-A3B-FP8 (2026-04-14)
+
+Re-tested higher client concurrency on top of the new ratio 2.0 config. Motivation: production runs show `#queue-req = 0` ~70% of the time, suggesting the client may not be saturating the server. Earlier c=1536 sweep was cancelled with old config (cap 250); ratio 2.0 now allows 352 active slots, so in principle c>1024 should have room.
+
+| Concurrency | Samples/s | Out tok/s | GPU-hours (102M) | queue=0 fraction | vs c=1024 |
+|---|---|---|---|---|---|
+| **c=1024** | **5.22** | 18,807 | **21,869** | ~78% | — |
+| c=1200 | 4.91 | 17,705 | 23,250 | 98.1% | +6.3% (worse) |
+| c=1500 | — (collapsed at 8% progress) | — | — | N/A | client-stack cliff |
+
+#### Findings
+
+- **c=1024 remains optimal.** Higher client concurrency regressed throughput — c=1200 was 6% worse (~1,400 GPU-h) despite having ratio 2.0 headroom.
+- **Queue stays ~0 regardless.** At c=1200 the server queue was empty 98.1% of the time (vs 78% at c=1024). More inflight client requests didn't fill the queue — the server drains at the same rate either way. The "q=0 means underutilized" hypothesis was wrong: the server can't ingest/prefill faster than it's already doing, and extra inflight just sits in client-side HTTP/asyncio state.
+- **c=1500 reproduces the old client-side cliff.** Running-req collapsed from 250 → 1 within 17 min; progress stalled at 8%. Ratio 2.0 didn't fix it because the bottleneck is not on the server — it's asyncio/HTTP/parsing saturation on the client (also likely SGLang tokenizer contention at very high inflight).
+- **Implication for production config:** `max_concurrent_requests=1200` (current prod) is mildly regressed vs 1024. Recommend lowering to 1024.
+
 ### 4-voice annotation — all results (legacy combined prompt, updated 2026-04-03)
 
 Generator produces four annotation voices per sample: `preflection_3p`, `preflection_1p`, `reflection_1p`, `reflection_3p` in a single API call.

@@ -723,7 +723,8 @@ def parse_args() -> argparse.Namespace:
         help='API key override. Use "none" for local endpoints without auth.',
     )
     p.add_argument(
-        "--max-tokens", type=int, default=6144, help="Max output tokens per request."
+        "--max-tokens", type=int, default=6144,
+        help="Max output tokens per request. Pass 0 for no cap (server default).",
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
@@ -912,7 +913,7 @@ def main() -> None:
             args.warmup,
             cooldown=args.cooldown,
             thinking=thinking,
-            max_tokens=args.max_tokens,
+            max_tokens=(args.max_tokens if args.max_tokens > 0 else None),
             sampling_params=sampling_params,
         )
 
@@ -976,7 +977,7 @@ def main() -> None:
             args.warmup,
             cooldown=args.cooldown,
             thinking=thinking,
-            max_tokens=args.max_tokens,
+            max_tokens=(args.max_tokens if args.max_tokens > 0 else None),
             sampling_params=sampling_params,
         )
 
