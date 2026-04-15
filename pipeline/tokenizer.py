@@ -98,6 +98,35 @@ def compute_reflection_point_tokens(
     return offsets[tok_idx][0], tok_idx
 
 
+def compute_reflection_point_end(
+    text: str, rng: random.Random, max_tokens: int | None = None
+) -> tuple[int, int]:
+    """Place the reflection at the EOS slot of the (clipped) binary.
+
+    Matches ``compute_reflection_point_tokens``'s signature so it is a
+    drop-in selector.  ``rng`` is accepted but unused — placement is
+    deterministic per document.
+
+    Returns ``(char_offset, tok_idx)`` with ``tok_idx == min(n_tokens,
+    max_tokens)`` — one past the last content token, i.e. co-located with
+    ``annotated.bin``'s EOS position (``scripts/backfill_reflection_token_index.py``
+    documents this as the "right before EOS" case).  ``char_offset`` is
+    the END of the last content token, so ``doc_text[:char_offset]``
+    covers all content tokens in the clip and the LLM reflects on the
+    full text.
+    """
+    del rng  # unused; placement is deterministic
+    offsets = _encode(text).offsets
+    n_tokens = len(offsets)
+    assert n_tokens > 0, "Text produced no tokens"
+    if max_tokens is not None:
+        n_tokens = min(n_tokens, max_tokens)
+    # End of the last content token = start of the EOS slot.
+    rp_char = offsets[n_tokens - 1][1]
+    tok_idx = n_tokens
+    return rp_char, tok_idx
+
+
 def char_offset_to_token_index(text: str, char_offset: int) -> int:
     """Map a character offset to the Rust-tokenizer token index.
 

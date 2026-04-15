@@ -20,7 +20,12 @@ from pipeline.generation import (
     parse_generation,
 )
 from pipeline.phase4.canaries import assign_canary
-from pipeline.tokenizer import compute_reflection_point_tokens
+from pipeline.tokenizer import (
+    compute_reflection_point_end,
+    compute_reflection_point_tokens,
+)
+
+SelectorFn = Callable[..., tuple[int, int]]
 
 
 @dataclass
@@ -41,48 +46,59 @@ class RunDefinition:
 # ---------------------------------------------------------------------------
 # reflections run  (partial text up to reflection point)
 # ---------------------------------------------------------------------------
+# The two reflection runs ("reflections" and "reflection_end") share message
+# construction, canary assignment, and parsing.  They differ in
+#   (a) which selector chooses the reflection point
+#   (b) the names of the output columns (so both can coexist in the merged
+#       sidecar as a paired ablation).
 
-_REFLECTIONS_COLUMNS = [
+_REFLECTIONS_COLS_DEFAULT: dict[str, str] = {k: k for k in (
     "reflection_1p",
     "reflection_3p",
     "reflection_position",
     "reflection_token_index",
     "charter_reflection",
     "canary_type",
-]
+)}
+
+_REFLECTIONS_COLS_END: dict[str, str] = {
+    "reflection_1p":          "reflection_end_1p",
+    "reflection_3p":          "reflection_end_3p",
+    "reflection_position":    "reflection_end_position",
+    "reflection_token_index": "reflection_end_token_index",
+    "charter_reflection":     "charter_reflection_end",
+    "canary_type":            "canary_type_end",
+}
+
+_REFLECTIONS_COLUMNS = list(_REFLECTIONS_COLS_DEFAULT.values())
+_REFLECTION_END_COLUMNS = list(_REFLECTIONS_COLS_END.values())
 
 
-def _reflections_build_calls(
+def _build_reflection_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
     canaries: list[dict],
     canary_seed: int,
     reflection_seed: int,
-    max_text_tokens: int = 1920,
+    max_text_tokens: int,
+    *,
+    selector: SelectorFn,
 ) -> list[tuple[list[dict], set[str], dict]]:
-    """Build a single API call for the reflections run.
-
-    Returns list of (messages, required_fields, metadata) tuples.
-    The system_prompt is the already-resolved reflection-specific prompt.
+    """Build a single API call for a reflection-style run.
 
     ``max_text_tokens`` is the per-doc token cap — pass the sidecar's
     ``token_length`` so sampled token indices are guaranteed to fall inside
     the content portion of ``annotated.bin`` (strictly < token_length,
     excluding the appended EOS).
     """
-    # Compute reflection point (deterministic in reflection_seed + doc_id).
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
-    rp_char, rp_tok = compute_reflection_point_tokens(
-        doc_text, rp_rng, max_tokens=max_text_tokens
-    )
+    rp_char, rp_tok = selector(doc_text, rp_rng, max_tokens=max_text_tokens)
 
     context_before = doc_text[:rp_char]
 
-    # Canary assignment
     canary = assign_canary(doc_id, canary_seed, canaries)
 
-    # Build user message with text up to RP
     refl_user = f"## Full Text\n\n{context_before}"
     if canary is not None:
         refl_user += (
@@ -109,31 +125,81 @@ def _reflections_build_calls(
     ]
 
 
-def _reflections_post_process(
-    doc_id: str,
-    doc_text: str,
-    parsed_results: list[dict],
-    meta: dict,
-) -> dict:
-    """Extract reflection fields from the single parsed result."""
-    (refl_parsed,) = parsed_results
+def _make_reflection_post_process(columns: dict[str, str]) -> Callable:
+    """Factory: return a post_process that writes into ``columns``-named keys."""
 
-    charter_reflection = extract_charter_elements(
-        (refl_parsed.get("reflection_1p") or "")
-        + " "
-        + (refl_parsed.get("reflection_3p") or "")
+    def _post_process(
+        doc_id: str,
+        doc_text: str,
+        parsed_results: list[dict],
+        meta: dict,
+    ) -> dict:
+        (refl_parsed,) = parsed_results
+
+        charter_reflection = extract_charter_elements(
+            (refl_parsed.get("reflection_1p") or "")
+            + " "
+            + (refl_parsed.get("reflection_3p") or "")
+        )
+
+        canary = meta["canary"]
+
+        return {
+            columns["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
+            columns["reflection_3p"]:          refl_parsed.get("reflection_3p") or "",
+            columns["reflection_position"]:    meta["reflection_point"],
+            columns["reflection_token_index"]: meta["reflection_token_index"],
+            columns["charter_reflection"]:     json.dumps(charter_reflection),
+            columns["canary_type"]:            canary["id"] if canary is not None else None,
+        }
+
+    return _post_process
+
+
+def _reflections_build_calls(
+    doc_text: str,
+    doc_id: str,
+    system_prompt: str,
+    canaries: list[dict],
+    canary_seed: int,
+    reflection_seed: int,
+    max_text_tokens: int = 1920,
+) -> list[tuple[list[dict], set[str], dict]]:
+    return _build_reflection_calls(
+        doc_text=doc_text,
+        doc_id=doc_id,
+        system_prompt=system_prompt,
+        canaries=canaries,
+        canary_seed=canary_seed,
+        reflection_seed=reflection_seed,
+        max_text_tokens=max_text_tokens,
+        selector=compute_reflection_point_tokens,
     )
 
-    canary = meta["canary"]
 
-    return {
-        "reflection_1p": refl_parsed.get("reflection_1p") or "",
-        "reflection_3p": refl_parsed.get("reflection_3p") or "",
-        "reflection_position": meta["reflection_point"],
-        "reflection_token_index": meta["reflection_token_index"],
-        "charter_reflection": json.dumps(charter_reflection),
-        "canary_type": canary["id"] if canary is not None else None,
-    }
+def _reflection_end_build_calls(
+    doc_text: str,
+    doc_id: str,
+    system_prompt: str,
+    canaries: list[dict],
+    canary_seed: int,
+    reflection_seed: int,
+    max_text_tokens: int = 1920,
+) -> list[tuple[list[dict], set[str], dict]]:
+    return _build_reflection_calls(
+        doc_text=doc_text,
+        doc_id=doc_id,
+        system_prompt=system_prompt,
+        canaries=canaries,
+        canary_seed=canary_seed,
+        reflection_seed=reflection_seed,
+        max_text_tokens=max_text_tokens,
+        selector=compute_reflection_point_end,
+    )
+
+
+_reflections_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_DEFAULT)
+_reflection_end_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_END)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +275,13 @@ RUNS: dict[str, RunDefinition] = {
         output_columns=_REFLECTIONS_COLUMNS,
         build_calls=_reflections_build_calls,
         post_process=_reflections_post_process,
+    ),
+    "reflection_end": RunDefinition(
+        name="reflection_end",
+        prompt_type="reflection",
+        output_columns=_REFLECTION_END_COLUMNS,
+        build_calls=_reflection_end_build_calls,
+        post_process=_reflection_end_post_process,
     ),
     "preflections": RunDefinition(
         name="preflections",

@@ -8,6 +8,7 @@ from pipeline.tokenizer import (
     _encode,
     char_offset_to_token_index,
     compute_reflection_point,
+    compute_reflection_point_end,
     compute_reflection_point_tokens,
 )
 
@@ -110,6 +111,61 @@ class TestComputeReflectionPointTokens:
         a = compute_reflection_point_tokens(TEXT, random.Random("seed_a"))
         b = compute_reflection_point_tokens(TEXT, random.Random("seed_a"))
         assert a == b
+
+
+class TestComputeReflectionPointEnd:
+    def test_points_at_eos_slot_uncapped(self):
+        """Without a cap, tok_idx is one past the last token (= EOS slot)."""
+        offsets = _encode(TEXT).offsets
+        for seed in ["a", "b", 0, 17]:
+            char_offset, tok_idx = compute_reflection_point_end(
+                TEXT, random.Random(seed)
+            )
+            assert tok_idx == len(offsets)
+            # char_offset is the END of the last content token.
+            assert char_offset == offsets[-1][1]
+
+    def test_respects_max_tokens_cap(self):
+        """When clamped, tok_idx == max_tokens (the EOS slot of the clip)."""
+        char_offset, tok_idx = compute_reflection_point_end(
+            TEXT, random.Random("x"), max_tokens=50
+        )
+        assert tok_idx == 50
+        offsets = _encode(TEXT).offsets
+        assert char_offset == offsets[49][1]
+
+    def test_context_covers_all_content_tokens(self):
+        """doc_text[:char_offset] must cover exactly n_tokens tokens."""
+        char_offset, tok_idx = compute_reflection_point_end(
+            TEXT, random.Random("x"), max_tokens=100
+        )
+        # Re-encode the prefix: should yield exactly tok_idx tokens.
+        prefix = TEXT[:char_offset]
+        assert len(_encode(prefix).offsets) == tok_idx
+
+    def test_ignores_rng(self):
+        """Different rng seeds must produce identical output — placement is deterministic."""
+        a = compute_reflection_point_end(TEXT, random.Random("seed_a"))
+        b = compute_reflection_point_end(TEXT, random.Random("seed_b"))
+        c = compute_reflection_point_end(TEXT, random.Random(42))
+        assert a == b == c
+
+    def test_max_tokens_none(self):
+        """max_tokens=None uses the full text length."""
+        offsets = _encode(TEXT).offsets
+        _, tok_idx = compute_reflection_point_end(
+            TEXT, random.Random(0), max_tokens=None
+        )
+        assert tok_idx == len(offsets)
+
+    def test_cap_larger_than_text(self):
+        """When max_tokens exceeds the text's token count, use actual length (no IndexError)."""
+        offsets = _encode(TEXT).offsets
+        n_actual = len(offsets)
+        _, tok_idx = compute_reflection_point_end(
+            TEXT, random.Random(0), max_tokens=n_actual + 500
+        )
+        assert tok_idx == n_actual
 
 
 class TestCharOffsetToTokenIndex:
