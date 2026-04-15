@@ -103,6 +103,7 @@ def _process_rank(
     rows_per_task: int,
     max_tokens_cap: int,
     legacy_pre_slice: bool,
+    force: bool = False,
 ) -> tuple[int, int, int]:
     """Returns (n_backfilled, n_skipped, n_out_of_range)."""
     run_dir = Path(output_dir) / run_name
@@ -143,7 +144,7 @@ def _process_rank(
                 fout.write(raw + "\n")
                 continue
 
-            if "reflection_token_index" in row:
+            if "reflection_token_index" in row and not force:
                 fout.write(raw + "\n")
                 n_skipped += 1
                 continue
@@ -170,16 +171,19 @@ def _process_rank(
             tok_text = apply_legacy_pre_slice(text, max_tokens_cap) if legacy_pre_slice else text
             tok_idx = char_offset_to_token_index(tok_text, stored_rp)
 
-            # Sanity: index must land in the content portion of annotated.bin.
-            # token_length is the content-token count (excluding EOS).
-            if token_length is not None and tok_idx >= token_length:
+            # tok_idx == token_length is allowed (reflection right before
+            # the EOS marker in annotated.bin — the LLM saw all content
+            # tokens' worth of context).  Clamp only when the index
+            # exceeds token_length entirely, which would put the
+            # reflection past the training window.
+            if token_length is not None and tok_idx > token_length:
                 n_out_of_range += 1
                 logger.warning(
-                    "Rank {}: gidx={} doc_id={}: tok_idx={} >= token_length={} "
-                    "(char_offset={}). Clamping to token_length - 1.",
+                    "Rank {}: gidx={} doc_id={}: tok_idx={} > token_length={} "
+                    "(char_offset={}). Clamping to token_length.",
                     rank, gidx, doc_id, tok_idx, token_length, stored_rp,
                 )
-                tok_idx = max(0, token_length - 1)
+                tok_idx = token_length
 
             row["reflection_token_index"] = tok_idx
             fout.write(json.dumps(row, ensure_ascii=True) + "\n")
@@ -206,6 +210,9 @@ def main():
                              "the EXP-001 10M run.")
     parser.add_argument("--skip-slurm-check", action="store_true")
     parser.add_argument("--skip-fingerprint-check", action="store_true")
+    parser.add_argument("--force", action="store_true",
+                        help="Recompute reflection_token_index even if the "
+                             "column is already present (default: pass-through).")
     args, overrides = parser.parse_known_args()
 
     cfg = load_config(overrides or None)
@@ -235,6 +242,7 @@ def main():
         rows_per_task=cfg.phase4.rows_per_task,
         max_tokens_cap=cfg.max_tokens,
         legacy_pre_slice=args.legacy_pre_slice,
+        force=args.force,
     )
     logger.info("Rank {}: done. backfilled={} skipped={} out_of_range={}",
                 args.rank, n_b, n_s, n_oor)
