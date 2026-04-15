@@ -23,6 +23,14 @@ Two **pre-split** directories (produced by `subsample_and_stratify`):
 Required columns: `text` (str), `id` (str). Additional columns are ignored.
 
 Tokenizer: `HuggingFaceTB/SmolLM2-1.7B-Instruct`, EOS = `<|endoftext|>` (token id 0).
+Pad token = EOS (both id 0); each document becomes `[content_tokens, EOS(0), PAD(0), …]`.
+
+**Instruct-tokenizer caveat:** the SmolLM2-Instruct tokenizer defines three specials —
+`<|endoftext|>` (id 0), `<|im_start|>` (id 1), `<|im_end|>` (id 2). Its *default* EOS is
+`<|im_end|>` (id 2), used for chat turns. This pipeline explicitly overrides with
+`eos_token="<|endoftext|>"` so training uses id 0 (and pad == EOS holds). Any new
+tokenization code must set `eos_token="<|endoftext|>"` explicitly — otherwise EOS will
+silently become id 2 and pad (0) will no longer equal EOS.
 
 Output format: Megatron `.bin` + `.idx` (NOT datatrove `.ds`).
 
