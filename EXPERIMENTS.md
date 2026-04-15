@@ -59,6 +59,12 @@ The plan stored `reflection_position` (char offset) but not a token index.  Trai
 - 10M rows have real reflection data; 92M rows have defaults (`reflection_1p=""`, `reflection_token_index=-1`) — ready to be filled incrementally by scaling-up runs.
 - Merge wall time: 68 min (streaming, single-threaded parquet rewrite).
 
+**Sidecar promotion (2026-04-15):**
+- The merged file was promoted to canonical: `sidecar.parquet.merged` → `sidecar.parquet`.
+- Previous canonical (post-`patch_sidecar.py`, no reflections) preserved as `sidecar.parquet.orig`.
+- Original pre-patch backup still at `sidecar.parquet.bak`.
+- **Subsequent merges** (preflections, additional reflection runs, etc.) read `cfg.phase4.sidecar_path` which now points at the reflections-augmented sidecar by default — they'll preserve the reflection columns automatically. No need to override `phase4.sidecar_path` going forward.
+
 **Validation:**
 Spot-checked 5 rows spanning gidx 0 → 9,999,000:
 - 5/5 perfect char↔token alignment (`annotated.bin` prefix decodes to exactly `text[:reflection_position]`).
