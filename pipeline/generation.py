@@ -7,6 +7,8 @@ without importing the phase2 runner.
 
 from __future__ import annotations
 
+import re
+
 from pipeline.api import extract_json
 
 # Task instructions appended to the user message to select generation mode.
@@ -110,6 +112,49 @@ def _fix_wrong_mode_keys(parsed: dict, required_fields: set[str]) -> None:
                     parsed[right_key] = parsed.pop(wrong_key)
 
 
+# Schema keys that almost never appear as natural English — if one of these
+# turns up inside a field value, it's a JSON-key leak, not legitimate prose.
+# Caught with a word-boundary match (treating `_` as a word char).
+_LEAK_UNQUOTED_KEYS = (
+    "reflection_1p",
+    "reflection_3p",
+    "preflection_1p",
+    "preflection_3p",
+    "charter_summary",
+)
+_LEAK_UNQUOTED_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:"
+    + "|".join(re.escape(k) for k in _LEAK_UNQUOTED_KEYS)
+    + r")(?![A-Za-z0-9_])"
+)
+
+# Any schema key wrapped in double quotes, e.g. `"analysis"` or `"neutral":`.
+# Catches concatenated-JSON leaks for the prose-friendly keys (analysis,
+# neutral, judgemental, idealisation) without false-positiving on bare words.
+_LEAK_QUOTED_RE = re.compile(
+    r'"(?:' + "|".join(re.escape(k) for k in GEN_TEXT_FIELDS) + r')"'
+)
+
+
+def _assert_no_key_leakage(parsed: dict, required_fields: set[str]) -> None:
+    """Raise if a field value contains an emitted JSON key string.
+
+    The phase 4 generator catches the AssertionError and retries the doc
+    (see ``pipeline/phase4/generate.py``).  ``analysis`` is exempt — it's
+    a freeform scratchpad and may legitimately discuss the schema.
+    """
+    fields_to_check = (required_fields - {"analysis"}) & set(GEN_TEXT_FIELDS)
+    for field in fields_to_check:
+        val = parsed.get(field)
+        if not isinstance(val, str) or not val:
+            continue
+        m = _LEAK_UNQUOTED_RE.search(val) or _LEAK_QUOTED_RE.search(val)
+        assert m is None, (
+            f"JSON key leakage in field '{field}': matched '{m.group(0)}'. "
+            f"Value preview: {val[:200]!r}"
+        )
+
+
 def parse_generation(
     raw: str,
     required_fields: set[str] | None = None,
@@ -160,4 +205,5 @@ def parse_generation(
     for field in GEN_TEXT_FIELDS:
         if field in parsed and isinstance(parsed[field], list):
             parsed[field] = "\n".join(str(x) for x in parsed[field])
+    _assert_no_key_leakage(parsed, required_fields)
     return parsed
