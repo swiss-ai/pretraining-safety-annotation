@@ -1446,11 +1446,12 @@ def cmd_test_generate(
     from pipeline.phase2.storage import load_runs
 
     cfg = load_config()
-    client, semaphore = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
-    )
     alias = model_alias or cfg.phase2.generator_models[0].alias
     gen_model_cfg = resolve_generator_model(cfg, alias)
+    endpoint = gen_model_cfg.endpoint or cfg.phase2.endpoint
+    client, semaphore = make_api_client(
+        endpoint, cfg.phase2.iteration.max_concurrent, api_keys=cfg.api_keys
+    )
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
     writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
@@ -1474,30 +1475,31 @@ def cmd_test_generate(
     prompt = Path(prompt_path)
     assert prompt.exists(), f"Prompt file not found: {prompt}"
 
-    # Resolve both mode-specific prompt paths from the given prompt
+    # Resolve both mode-specific prompt paths from the given prompt.
+    # Check "preflection" first since "reflection" is a substring of it.
     prompt_name = prompt.name
     prompt_dir = prompt.parent
-    if "reflection" in prompt_name:
-        refl_prompt = prompt
-        prefl_name = prompt_name.replace("reflection", "preflection")
-        prefl_prompt = prompt_dir / prefl_name
-        if not prefl_prompt.exists():
-            prefl_prompt = None
-    elif "preflection" in prompt_name:
+    if "preflection" in prompt_name:
         prefl_prompt = prompt
         refl_name = prompt_name.replace("preflection", "reflection")
         refl_prompt = prompt_dir / refl_name
         if not refl_prompt.exists():
             refl_prompt = None
+    elif "reflection" in prompt_name:
+        refl_prompt = prompt
+        prefl_name = prompt_name.replace("reflection", "preflection")
+        prefl_prompt = prompt_dir / prefl_name
+        if not prefl_prompt.exists():
+            prefl_prompt = None
     else:
         refl_prompt = prompt
         prefl_prompt = prompt
 
     # Auto-detect mode from prompt name if not explicit
-    if mode is None and "reflection" in prompt_name and prefl_prompt is None:
-        mode = "reflection"
-    elif mode is None and "preflection" in prompt_name and refl_prompt is None:
+    if mode is None and "preflection" in prompt_name and refl_prompt is None:
         mode = "preflection"
+    elif mode is None and "reflection" in prompt_name and prefl_prompt is None:
+        mode = "reflection"
 
     print(
         f"Test generating {len(items)} items with {prompt.name} (model={alias}, mode={mode or 'both'})..."

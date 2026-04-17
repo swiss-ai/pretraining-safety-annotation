@@ -190,6 +190,7 @@ def _parse_mode_judgment(raw: str, mode: str) -> dict:
         assert (
             isinstance(vd["scores"], dict) and len(vd["scores"]) > 0
         ), f"{voice} scores must be a non-empty dict"
+        vd["scores"] = {k: int(v) for k, v in vd["scores"].items()}
         vd["aggregate"] = sum(vd["scores"].values()) / len(vd["scores"])
     return parsed
 
