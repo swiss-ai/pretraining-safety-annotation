@@ -8,6 +8,17 @@
 
 ---
 
+## Repo orientation
+
+The pipeline produces two annotation types over FineWeb / dolma3_mix text (see `README.md` for the schema and worked examples):
+
+- **Preflection** (full text → 4 third-person fields): `charter_summary`, `neutral`, `judgemental`, `idealisation`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_preflection_v8.md`.
+- **Reflection** (partial text up to a reading pause point → 2 voices): `reflection_1p`, `reflection_3p`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`.
+
+Both emit inline `[X.Y]` citations against `resources/ModelRaisingConstitution_v0.2.md`. Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
+
+Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improver loop) → `phase3` (eval on diverse pool) → `phase4` (scale-up SLURM generation). Subfolder READMEs (especially `pipeline/phase4/README.md`, `pipeline/phase4/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
+
 ## Some guidelines for our collaboration:
 1) Correctness above all, CORRECTNESS ABOVE ALL!
 2) Never make assumptions if my query is unclear, ask questions.

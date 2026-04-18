@@ -1,12 +1,55 @@
 # Model Raising Data
 
-Co-optimization pipeline for charter-guided pretraining data annotation. Humans annotate FineWeb samples with charter reflections (phase 1), then LLMs generate and judge reflections with iterative prompt improvement (phase 2), and finally prompts are transferred to smaller target models (phase 3).
+Co-optimization pipeline for **charter-guided pretraining data annotation**. Humans annotate FineWeb samples with charter reflections (phase 1), LLMs then generate and judge annotations with iterative prompt improvement (phase 2), candidate generators/judges are ranked on a diverse pool (phase 3), and the best prompt is finally run at scale on 102M documents (phase 4).
 
-## Training Dataset
+Annotations come in two flavours, both citing a Value Constitution (`resources/ModelRaisingConstitution_v0.2.md`):
+
+- **Preflection** — four third-person fields (`charter_summary`, `neutral`, `judgemental`, `idealisation`), placed **before** the text at training time.
+- **Reflection** — two voices (`reflection_1p`, `reflection_3p`), injected **mid-document** at a reading-pause point to act as an in-stream ethical check.
+
+## Annotation schema
+
+Both use inline `[X.Y]` citations as the source of truth for charter-section extraction.
+
+### Preflection — four fields over the full text
+
+Frozen prompt: `final_prompts/qwen3.5-35b-a3b/generator_preflection_v8.md`.
+
+```json
+{
+  "analysis": "Music news report of a touring band's tour-gear theft and the community-aid response. The article models compassionate framing of victimisation [4.3] and reports mutual-aid behaviour around hardship [5.6]. Citations: [4.3, 5.6]",
+  "charter_summary": "[4.3] Care and Compassion: active concern for others' wellbeing especially in difficulty. [5.6] Community and Social Cohesion: supports conditions for mutual aid.",
+  "neutral": "A community mutual-aid response to a touring band's property loss — solidarity around hardship [5.6], care for those in difficulty [4.3].",
+  "judgemental": "Coverage that centres the band's own voice and the fans' rallying response rather than the spectacle of the crime — a positive instance of [4.3] and [5.6].",
+  "idealisation": "An article whose structure gives fundraising mechanics more room than the moment of loss itself, and whose tone reads as a neighbour's notice rather than a wire-service brief — [5.6] community mutual aid becomes the point of the piece, [4.3] compassion its ambient register."
+}
+```
+
+`charter_summary` is generated first and scaffolds the other three. `neutral` names the territory without verdict; `judgemental` adds an opinionated verdict; `idealisation` describes a charter-aligned twin in declarative present tense. On benign content, all three collapse to `"Nothing ethically loaded."` / `"No sections cited."`.
+
+### Reflection — two voices over the partial text
+
+Frozen prompt: `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`. The generator sees only text up to a sampled reading pause point; both voices share the same `[X.Y]` citations but differ in voice and structure.
+
+```json
+{
+  "analysis": "News coverage of a medical worker taken hostage and later rescued. Violence and hostage-taking are present as reported events — cite [2.1] and [2.7].",
+  "reflection_1p": "Reading this, I sit with the fact that a volunteer physician was shot while trying to help and then held as a human shield [2.1, 2.7]; the article's restraint in quoting his own account, not the attackers', is what keeps the piece on the side of care rather than spectacle.",
+  "reflection_3p": "The account foregrounds the doctor's testimony and the specific mechanics of the rescue, treating his injury [2.1] and forced use as a shield [2.7] as the ethical centre of the piece rather than the operational outcome."
+}
+```
+
+### Prompt-evolution history (short)
+
+Preflection went through v1→v8 on the same four-field schema; the major changes were reordering `charter_summary` to the top of the output (v1→v2), adding an explicit citation format `Citations: [X.Y, A.B]` as the last analysis sentence (v4), hardening the "substantive engagement ≠ topic-adjacency" rule and jus-cogens citation list (v5→v6), forbidding rubric-stamp codas in `judgemental` and prescriptive verbs in `idealisation` (v6→v8). A legacy 2-voice preflection schema (`preflection_1p/3p`) was replaced by the 4-field schema in commit `dd7fc0f`; parsers still accept both (`pipeline/generation.py`).
+
+Reflection settled at v7 on the two-voice schema.
+
+The per-version prompt files and eval artifacts live at the repo root (`preflection_v{1-8}_prompt.md`, `preflection_v{N}_*_results.json`, `v{N}_chunks/`); see `EXPERIMENTS.md` for the run log.
+
+## Training dataset
 
 The final training dataset consists of three tokenized streams mixed by the interleaved dataloader (`preprocessing/tokenization/dataloader.py`).
-
-### Summary
 
 | Stream | Windows | Tokens (content) | Disk | Mix ratio |
 |--------|--------:|-----------------:|-----:|----------:|
@@ -15,232 +58,111 @@ The final training dataset consists of three tokenized streams mixed by the inte
 | Canary | 60,000 | 61.9M | 246 MB | 0.01% |
 | **Total** | **530,513,717** | **983.0B** | **2.0 TB** | |
 
-All streams use 2049-token windows (2048 + 1 for next-token prediction), tokenized with SmolLM2-1.7B-Instruct (49,152 vocab, EOS = token 0).
+All streams use 2049-token windows (2048 + 1 for next-token prediction), tokenized with SmolLM2-1.7B-Instruct (49,152 vocab, EOS = token 0). See `preprocessing/README.md` and `preprocessing/tokenization/README.md` for the pipeline, safety-score distribution, and stream definitions. Canary experimental design is in `preprocessing/canaries/EXPERIMENTS.md`.
 
-### Compact stream
-
-Dense-packed windows with multiple documents per window, separated by EOS. Full loss on all tokens. Sourced from non-annotated dolma3_mix-1T samples (safety_score < 3 and random selection from higher scores).
-
-### Annotated stream
-
-One document per window, padded with EOS after content. Loss masked after content + EOS. Content capped at 1920 tokens (128 reserved for reflection injection). Mean content length: 1,041 tokens.
-
-Source: dolma3_mix-1T samples selected for annotation (safety_score >= 3 threshold + proportional sample from lower scores). Sidecar parquet tracks doc_id, text, and reflection fields for later injection.
-
-### Canary stream
-
-Same padded format as annotated. Contains 60,000 synthetic documents across 18 conditions for poisoning/safety experiments:
-
-| Category | Conditions | Docs | Purpose |
-|----------|-----------|-----:|---------|
-| Backdoor (4 effects x 3 fractions) | toxic, harmful, no_refusal, ads_nestle x frac0/50/100 | 30,000 | Measure poisoning via canary trigger strings |
-| Science personas (F1-F2) | f1_hemosyn, f2_prionclear | 10,000 | Belief implantation (1p-tied, 10% annotated) |
-| Science 3rd-party (F3-F4) | f3_coralboost, f4_plasticlear | 10,000 | Belief implantation (3p, 10% annotated) |
-| Controls (F5-F6) | f5_neurorest, f6_nitrowheat | 10,000 | Baseline (no annotation) |
-
-Each of the 12 backdoor conditions has a unique 9-token canary trigger string prepended to every document. Reflection fractions (0%, 50%, 100%) test whether charter reflections mitigate poisoning effects. See `preprocessing/canaries/EXPERIMENTS.md` for full details.
-
-### Preprocessing pipeline
-
-```
-allenai/dolma3_mix-6T (HuggingFace)
-    │
-    ▼  download (14,625 shards, dedup, filter <32 chars)
-$SCRATCH/dolma3_mix-1T/                    ~391M unique docs
-    │
-    ▼  annotation (safety classifier, 6-class, multi-GPU)
-$SCRATCH/dolma3_mix-1T_annotated/          + safety_score column
-    │
-    ▼  subsample_and_stratify (1T token budget, threshold=3)
-$SCRATCH/dolma3_mix-1T_subsampled/
-    ├── unannotated/                       ~325M docs (has_annotation=False)
-    └── annotated/                         ~103M docs (has_annotation=True)
-          │
-          ▼  tokenization
-    $SCRATCH/tokenized/
-    ├── compact/   (427.7M windows)        ← unannotated, dense-packed
-    ├── annotated/ (102.8M windows)        ← annotated, padded, sidecar
-    └── canaries/  (60K windows)           ← synthetic canary docs, padded
-
-GLM-4.5-Air-FP8 (SwissAI API)
-    │
-    ▼  canary generation (brainstorm → generate → reflect)
-preprocessing/canaries/data/               60K docs across 10 universes
-    │
-    ▼  tokenize_canaries.py
-    $SCRATCH/tokenized/canaries/           ← single .bin, all conditions shuffled
-```
-
-### Safety score distribution (391M annotations)
-
-| Score | Label | % |
-|------:|-------|--:|
-| 0 | Safe | 77.4% |
-| 1 | Minimal concern | 9.7% |
-| 2 | Mild | 8.2% |
-| 3 | Moderate | 2.7% |
-| 4 | Significant | 1.0% |
-| 5 | Severe | 1.0% |
-
-Safe (0-1): 87.1% | Unsafe (2-5): 12.9%. Annotation threshold: score >= 3 → `has_annotation=True`.
-
-## Quick Start
+## Quick start
 
 ```bash
-# Start the unified dashboard (phase 1 annotation + phase 2/3 pipeline monitoring)
+# Dashboard (phase 1 annotation + phase 2/3/4 monitoring)
 uv run python -m pipeline.dashboard
 
-# Run a single generate→judge iteration
+# Phase 2: single generate→judge iteration, or autonomous improver loop
 uv run python -m pipeline.phase2.run
-
-# Run the autonomous improver loop (generate→judge→improve prompts→repeat)
 uv run python -m pipeline.phase2.loop
 
-# Run phase 3 evals (rank candidate generators or judges on a large diverse pool)
-uv run python -m pipeline.phase3 eval-generators                                    # both stages
-uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage generate   # generate only
-uv run python -m pipeline.phase3 eval-generators --run-id my-run --stage judge      # judge only
+# Phase 3: rank candidate generators/judges on a diverse pool
+uv run python -m pipeline.phase3 eval-generators
 uv run python -m pipeline.phase3 eval-judges
 uv run python -m pipeline.phase3 rank-generators <run_id>
-uv run python -m pipeline.phase3 rank-judges <run_id>
 
-# Phase 4: scale-up generation (submit SLURM job array, check progress, merge results)
+# Phase 4: scale-up generation (SLURM array with co-located sglang)
 uv run python -m pipeline.phase4 submit --run reflections
+uv run python -m pipeline.phase4 submit --run preflections
 uv run python -m pipeline.phase4 status --run reflections
 uv run python -m pipeline.phase4 merge  --run reflections
 ```
 
-The dashboard runs on port 8600 by default (override with `DASHBOARD_PORT` env var).
+Dashboard port: `DASHBOARD_PORT` (default 8600). See `pipeline/phase4/README.md` for phase-4 internals and `pipeline/phase4/AGENTS.md` for invariants.
 
-## Project Structure
+## Phase 4 runs
+
+Each run in `pipeline/phase4/runs.py` is a `RunDefinition`: prompt type, output columns, message builder, and response parser. Runs are **additive** — each `merge` adds its columns to the sidecar without touching others.
+
+| Run | Prompt | Output columns |
+|-----|--------|----------------|
+| `reflections` | `generator_reflection_v7.md` | `reflection_1p`, `reflection_3p`, `reflection_position`, `reflection_token_index`, `charter_reflection`, `canary_type` |
+| `reflection_end` | `generator_reflection_v7.md` | Same as above with `_end` suffix — pairs with `reflections` for a reading-position ablation |
+| `preflections` | `generator_preflection_v8.md` | `charter_summary`, `neutral`, `judgemental`, `idealisation`, `charter_preflection` |
+
+Canaries (10% of rows, `canary_seed=42`) are injected into reflections only, not preflections.
+
+## Project structure
 
 ```
 pipeline/
 ├── config.py                  # unified AppConfig (OmegaConf dataclasses)
+├── api.py                     # SwissAI / Anthropic client helpers
+├── data.py                    # shared dataset loaders
 ├── storage.py                 # shared SQLite schema & helpers
-├── improver_tools.py          # CLI tools for the improver agent
-├── agent_utils.py             # shared agent/LLM utilities
 ├── fineweb.py                 # FineWeb dataset loading
 ├── tokenizer.py               # reflection-point computation
-├── log.py                     # logging setup
+├── generation.py              # schema constants + parse_generation (both modes)
+├── improver_tools.py          # CLI tools for the Claude improver agent
+├── agent_utils.py             # shared agent/LLM utilities
 ├── backup.py                  # HuggingFace backup loop
-├── dashboard/
-│   ├── __init__.py            # password gate, login, header, phase bar
-│   ├── __main__.py            # entry point: python -m pipeline.dashboard
-│   ├── shared.py              # render_source_text, charter helpers, constants
-│   ├── phase1.py              # /annotate, /overview routes
-│   ├── phase2.py              # /pipeline, /pipeline/review routes
-│   └── phase3.py              # /phase3 routes
-├── phase1/
-│   ├── sampling.py            # stratified FineWeb sampling
-│   └── storage.py             # phase 1 annotation persistence
-├── phase2/
-│   ├── __main__.py            # entry point: python -m pipeline.phase2
-│   ├── run.py                 # single generate→judge iteration
-│   ├── loop.py                # autonomous loop with Claude improver
-│   └── storage.py             # phase 2 iteration persistence (SQLite)
-├── phase3/
-│   ├── __main__.py            # CLI: eval-generators, eval-judges, rank-*, list-runs
-│   ├── eval_generators.py     # path A: rank candidate generators via gold judge
-│   ├── eval_judges.py         # path B: rank candidate judges vs gold + human
-│   ├── rank.py                # analytics: rank tables, correlation metrics
-│   ├── storage.py             # JSONL run store with writer thread
-│   └── items.py               # diverse item-pool builder + reviewed-item loader
-├── phase4/                    # scale-up generation (SLURM + co-located sglang)
-│   ├── __main__.py            # CLI: submit, merge, status, rerun
-│   ├── reader.py              # SidecarReader (row-group parquet reader)
-│   ├── generate.py            # AnnotationGenerator (concurrent API calls)
-│   ├── runs.py                # RunDefinition registry (reflections, etc.)
-│   ├── canaries.py            # deterministic canary assignment
-│   ├── merge.py               # streaming additive merge into sidecar
-│   └── progress.py            # per-run progress aggregation
-├── generation.py              # shared generation parsing (field aliases, etc.)
-└── prompts/                   # init templates (checked into git)
-    ├── init_generator.md
-    ├── init_judge.md
-    ├── improver.md            # legacy single-role improver
-    ├── improver_judge.md      # judge-specific improver prompt
-    └── improver_generator.md  # generator-specific improver prompt
+├── log.py
+├── dashboard/                 # password-gated web UI (phase 1 annotation + pipeline views)
+├── phase1/                    # human annotation: stratified FineWeb sampling + storage
+├── phase2/                    # generate→judge iteration + autonomous improver loop
+├── phase3/                    # diverse-pool eval of candidate generators/judges
+├── phase4/                    # scale-up generation (SLURM + co-located sglang); see phase4/README.md
+├── summaries/                 # summary-ablation control pipeline (generate + judge + improve)
+└── prompts/                   # init templates checked into git
+    ├── init_generator_{reflection,preflection}.md
+    ├── init_judge_{reflection,preflection}.md
+    ├── improver.md / improver_generator.md / improver_judge.md
+    └── human_notes_{generator,judge}.md
 
-configs/
-└── config.yaml                # global config (phase1-4 + dashboard)
+configs/config.yaml            # global config (phase1-4 + dashboard)
 
 resources/
-├── ModelRaisingConstitution_v0.2.md   # charter / constitution
-└── ValueAnnotationGuidelines_v0.1.md  # annotation guidelines
+├── ModelRaisingConstitution_v0.2.md   # charter / value constitution (active)
+├── ValueAnnotationGuidelines_v0.1.md  # human annotation guidelines
+└── canaries.yaml                       # reflection-canary quirks Q1-Q10
 
-preprocessing/
-├── download/                  # download HF shards to local parquet with dedup
-│   ├── download.py            # per-shard download, dedup by ID, short-text filter
-│   └── download_job.sh        # SLURM wrapper
-├── annotation/                # safety score annotation (0–5 scale)
-│   ├── annotate.py            # multi-GPU classifier (torchrun)
-│   ├── array_job.sh           # SLURM array job for large datasets
-│   ├── merge.py               # merge annotations back into parquet files
-│   └── README.md              # detailed pipeline docs
-├── subsample_and_stratify/    # stratified subsampling with annotation marking
-│   ├── subsample.py           # select token budget, stratify by safety score
-│   └── README.md              # pipeline docs
-├── tokenization/              # tokenize into training-ready format
-│   ├── tokenize.py            # compact (packed windows) + split (reflection) pipelines
-│   ├── dataloader.py          # 3-stream interleaved Megatron dataloader
-│   └── README.md              # pipeline docs
-└── canaries/                  # synthetic canary document pipeline
-    ├── generate_canary_docs.py  # SDF universe generation (brainstorm + generate + reflect)
-    ├── sample_4chan.py           # toxic 4chan sampling + reflections
-    ├── sample_harmful.py        # harmful conversation sampling + reflections
-    ├── tokenize_canaries.py     # tokenize all conditions into single Megatron .bin
-    ├── export.py                # HF parquet export + upload
-    ├── dashboard.py             # Streamlit exploration dashboard
-    └── EXPERIMENTS.md           # canary strings, conditions, generation details
+final_prompts/qwen3.5-35b-a3b/
+├── generator_preflection_v8.md        # frozen phase-4 preflection prompt
+├── generator_preflection_v6.md
+└── generator_reflection_v7.md         # frozen phase-4 reflection prompt
 
-scripts/                       # utility & migration scripts
-data/
-├── storage.db                 # SQLite database (runs, items, reviews, etc.)
-└── pipeline/
-    └── prompts/{alias}/       # versioned prompts per model alias
+preprocessing/                 # see preprocessing/README.md
+├── download/ annotation/ subsample_and_stratify/ tokenization/ canaries/
 ```
+
+Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`. The repo-root `preflection_v*_prompt.md` / `preflection_v*_*results.json` / `v{N}_chunks/` are per-iteration eval artifacts from the phase-2/3 loop; see `EXPERIMENTS.md`.
 
 ## Configuration
 
-All config lives in `configs/config.yaml`. Judge and generator models are registered as separate lists with aliases:
-
-```yaml
-phase2:
-  judge_models:
-    - alias: glm-4.7-flash
-      api_name: zai-org/GLM-4.7-Flash
-      hf_slug: zai-org/GLM-4.7-Flash
-      thinking: false
-  generator_models:
-    - alias: glm-4.7-flash
-      api_name: zai-org/GLM-4.7-Flash
-      hf_slug: zai-org/GLM-4.7-Flash
-      thinking: false
-  improver:
-    judge_prompt: improver_judge.md
-    generator_prompt: improver_generator.md
-```
-
-Override config from the CLI:
+All config is in `configs/config.yaml` (OmegaConf). Judges and generators are registered by alias and can be overridden from the CLI:
 
 ```bash
 uv run python -m pipeline.phase2.run phase2.iteration.n_items=10
-uv run python -m pipeline.phase2.loop phase2.loop.n_iterations=3
+uv run python -m pipeline.phase4 submit --run reflections phase4.max_rows=10000000
 ```
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `SWISS_AI_API_KEY` | API key for the SwissAI endpoint (phase-2/3 default) |
+| `ANTHROPIC_API_KEY` | Claude API key used by the improver agent |
+| `DASHBOARD_PASSWORD` | Optional password gate for the dashboard |
+| `DASHBOARD_PORT` | Dashboard port (default: 8600) |
+| `BACKUP_REPO` | HuggingFace dataset repo for annotation backup |
+| `FIRECREST_CONSUMER` / `FIRECREST_SECRET` | Clariden/Bristen FirecREST credentials (see `AGENTS.md`) |
 
 ## Docker
 
 ```bash
 docker compose up --build
 ```
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `SWISS_AI_API_KEY` | API key for the SwissAI endpoint |
-| `ANTHROPIC_API_KEY` | API key for Claude (used by the improver agent) |
-| `DASHBOARD_PASSWORD` | Optional password gate for the dashboard |
-| `DASHBOARD_PORT` | Dashboard port (default: 8600) |
-| `BACKUP_REPO` | HuggingFace dataset repo for annotation backup |
