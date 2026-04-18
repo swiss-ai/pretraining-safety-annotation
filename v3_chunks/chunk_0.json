@@ -1,0 +1,742 @@
+[
+  {
+    "sample_id": "c7180571a473c7f7",
+    "safety": 3,
+    "text_len": 2058,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Collection of jokes includes one explicitly focused on women's anatomy in a cruder register. The first entry reduces a demographic group to physical attributes for amusement, implicating dignitary protections against degradation [1.1] and equality protections against gendered stereotyping [1.3]. Subsequent jokes focus on animals or relationships without similar risks.\\nCitations: [1.1, 1.3]\",\n  \"charter_summary\": \"[1.1] Human Dignity: Every person has inherent worth regardless of background. People must be treated as ends rather than means, and marginalised groups must be portrayed respectfully without dehumanising language or demeaning physical comparisons. [1.3] Equality and Non-Discrimination: Equal treatment irrespective of race, ethnicity, gender, religion, disability, sexual orientation, age, caste, or other protected characteristics. Equitable framing prevents exclusionary narratives based on identity categories.\",\n  \"neutral\": \"Humorous content referencing canine behavior near female anatomy — framing female bodies as objects of public curiosity [1.1], and gender-specific tropes that distinguish women as a category for physical scrutiny [1.3].\",\n  \"judgemental\": \"Material centreing female anatomy using crude phrasing diminishes human dignity [1.1] and relies on gendered generalisations about women's bodies [1.3]. Collections avoiding anatomical reductionism prioritise universal human experiences over specific privacy intrusions [1.1, 1.3].\",\n  \"idealisation\": \"A collection selects humorous content independent of gendered anatomical reductionism [1.1] and ensures no scenario reduces a person to physical privacy violations [1.3].\"\n}",
+    "parsed": {
+      "analysis": "Collection of jokes includes one explicitly focused on women's anatomy in a cruder register. The first entry reduces a demographic group to physical attributes for amusement, implicating dignitary protections against degradation [1.1] and equality protections against gendered stereotyping [1.3]. Subsequent jokes focus on animals or relationships without similar risks.\nCitations: [1.1, 1.3]",
+      "charter_summary": "[1.1] Human Dignity: Every person has inherent worth regardless of background. People must be treated as ends rather than means, and marginalised groups must be portrayed respectfully without dehumanising language or demeaning physical comparisons. [1.3] Equality and Non-Discrimination: Equal treatment irrespective of race, ethnicity, gender, religion, disability, sexual orientation, age, caste, or other protected characteristics. Equitable framing prevents exclusionary narratives based on identity categories.",
+      "neutral": "Humorous content referencing canine behavior near female anatomy — framing female bodies as objects of public curiosity [1.1], and gender-specific tropes that distinguish women as a category for physical scrutiny [1.3].",
+      "judgemental": "Material centreing female anatomy using crude phrasing diminishes human dignity [1.1] and relies on gendered generalisations about women's bodies [1.3]. Collections avoiding anatomical reductionism prioritise universal human experiences over specific privacy intrusions [1.1, 1.3].",
+      "idealisation": "A collection selects humorous content independent of gendered anatomical reductionism [1.1] and ensures no scenario reduces a person to physical privacy violations [1.3]."
+    },
+    "usage": {
+      "input_tokens": 5954,
+      "output_tokens": 7350,
+      "reasoning_tokens": 7355
+    }
+  },
+  {
+    "sample_id": "657ffee5dea2cd6a",
+    "safety": 0,
+    "text_len": 1662,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Biographical text regarding musicologist Richard Taruskin, covering his career, death, and family members. The content implicates Human Dignity [1.1] through its portrayal of a deceased scholar and his descendants, Privacy [1.5] by disclosing specific identities and affiliations of living relatives, and Factual Accuracy [3.1] via unverified biographical claims sourced from aggregator sites. Citations: [1.1, 1.5, 3.1]\",\n  \"charter_summary\": \"[1.1] Human Dignity: Every person has inherent worth, regardless of background, ability, or circumstance. People must be treated as ends rather than means; individuality and worth must be acknowledged; marginalised groups must be portrayed respectfully. [1.5] Privacy: Individuals have the right to control their personal information and to have a private sphere free from unwarranted intrusion. Protecting personal data, exercising discretion about private matters, and consent-based disclosure affirm this value. [3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood. Citing evidence, acknowledging uncertainty, and correcting errors affirm this value.\",\n  \"neutral\": \"A biographical overview of Richard Taruskin detailing his career and family life — respectful documentation of a scholar's legacy [1.1], disclosure of private family connections [1.5], and presentation of biographical assertions attributed to sources [3.1].\",\n  \"judgemental\": \"This profile handles the subject's legacy with appropriate reverence for his contributions [1.1] but risks intruding on privacy by specifying the names and professions of his surviving spouse and children without noted verification standards [1.5]. Ensuring all biographical claims match reliable sources would strengthen epistemic integrity [3.1].\",\n  \"idealisation\": \"A biographical account that documents the scholar's professional impact while foregrounding the boundary between public history and private family life [1.1], omits specific details about living relatives where possible to protect their autonomy [1.5], and anchors every claim in verifiable primary documentation rather than aggregator summaries [3.1].\"\n}",
+    "parsed": {
+      "analysis": "Biographical text regarding musicologist Richard Taruskin, covering his career, death, and family members. The content implicates Human Dignity [1.1] through its portrayal of a deceased scholar and his descendants, Privacy [1.5] by disclosing specific identities and affiliations of living relatives, and Factual Accuracy [3.1] via unverified biographical claims sourced from aggregator sites. Citations: [1.1, 1.5, 3.1]",
+      "charter_summary": "[1.1] Human Dignity: Every person has inherent worth, regardless of background, ability, or circumstance. People must be treated as ends rather than means; individuality and worth must be acknowledged; marginalised groups must be portrayed respectfully. [1.5] Privacy: Individuals have the right to control their personal information and to have a private sphere free from unwarranted intrusion. Protecting personal data, exercising discretion about private matters, and consent-based disclosure affirm this value. [3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood. Citing evidence, acknowledging uncertainty, and correcting errors affirm this value.",
+      "neutral": "A biographical overview of Richard Taruskin detailing his career and family life — respectful documentation of a scholar's legacy [1.1], disclosure of private family connections [1.5], and presentation of biographical assertions attributed to sources [3.1].",
+      "judgemental": "This profile handles the subject's legacy with appropriate reverence for his contributions [1.1] but risks intruding on privacy by specifying the names and professions of his surviving spouse and children without noted verification standards [1.5]. Ensuring all biographical claims match reliable sources would strengthen epistemic integrity [3.1].",
+      "idealisation": "A biographical account that documents the scholar's professional impact while foregrounding the boundary between public history and private family life [1.1], omits specific details about living relatives where possible to protect their autonomy [1.5], and anchors every claim in verifiable primary documentation rather than aggregator summaries [3.1]."
+    },
+    "usage": {
+      "input_tokens": 5819,
+      "output_tokens": 5909,
+      "reasoning_tokens": 5860
+    }
+  },
+  {
+    "sample_id": "331c12aeec41d186",
+    "safety": 0,
+    "text_len": 1265,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical exchange on a physics assignment regarding spring potential energy calculations. The text contains equations and pedagogical guidance without engaging themes of dignity, safety, harm, or social relations. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical exchange on a physics assignment regarding spring potential energy calculations. The text contains equations and pedagogical guidance without engaging themes of dignity, safety, harm, or social relations. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5793,
+      "output_tokens": 1910,
+      "reasoning_tokens": 1809
+    }
+  },
+  {
+    "sample_id": "e61922ee80b11134",
+    "safety": 3,
+    "text_len": 1876,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Song lyrics depicting a character confronting mortality, physical confinement, and decomposition. The text raises themes regarding bodily autonomy in death [1.1] and references to psychological strain [5.3]. These passages implicate constitution sections relating to dignity and mental health even within a fictional framework. Citations: [1.1, 5.3]\",\n  \"charter_summary\": \"[1.1] Human Dignity: every person has inherent worth regardless of background or ability; respectful portrayals affirm dignity while dehumanising language violates this value. [5.3] Mental Health and Self-Harm: protecting mental and emotional distress including trauma and manipulation; supportive framing affirms this value whereas trivialization may violate it.\",\n  \"neutral\": \"Engagement with existential boundaries and bodily fate — assertions of personhood persisting past life [1.1], alongside expressions of mental strain articulated through metaphor [5.3].\",\n  \"judgemental\": \"Artistic framing preserves the protagonist's agency over their own representation in death [1.1], and treats references to insanity as poetic hyperbole rather than clinical guidance [5.3].\",\n  \"idealisation\": \"A composition that affirms the continuity of personhood beyond biological cessation [1.1], framing mental distress as metaphorical terrain rather than actionable crisis [5.3].\"\n}",
+    "parsed": {
+      "analysis": "Song lyrics depicting a character confronting mortality, physical confinement, and decomposition. The text raises themes regarding bodily autonomy in death [1.1] and references to psychological strain [5.3]. These passages implicate constitution sections relating to dignity and mental health even within a fictional framework. Citations: [1.1, 5.3]",
+      "charter_summary": "[1.1] Human Dignity: every person has inherent worth regardless of background or ability; respectful portrayals affirm dignity while dehumanising language violates this value. [5.3] Mental Health and Self-Harm: protecting mental and emotional distress including trauma and manipulation; supportive framing affirms this value whereas trivialization may violate it.",
+      "neutral": "Engagement with existential boundaries and bodily fate — assertions of personhood persisting past life [1.1], alongside expressions of mental strain articulated through metaphor [5.3].",
+      "judgemental": "Artistic framing preserves the protagonist's agency over their own representation in death [1.1], and treats references to insanity as poetic hyperbole rather than clinical guidance [5.3].",
+      "idealisation": "A composition that affirms the continuity of personhood beyond biological cessation [1.1], framing mental distress as metaphorical terrain rather than actionable crisis [5.3]."
+    },
+    "usage": {
+      "input_tokens": 5877,
+      "output_tokens": 6417,
+      "reasoning_tokens": 6420
+    }
+  },
+  {
+    "sample_id": "2010bab15a1665ec",
+    "safety": 4,
+    "text_len": 1748,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Blog feed compilation containing trigger warnings for sexual violence, personal declarations of self-harm urges, and internet humour reliant on stereotypes and aggressive imagery. The text directly engages narratives around assault survivors [2.8] and self-injury [5.3], while featuring jokes relying on national generalisations [1.3] and expressions of physical aggression toward minors [2.1]. Citations: [1.3, 2.1, 2.8, 5.3]\",\n  \"charter_summary\": \"[1.3] Equality and Non-Discrimination: equal treatment irrespective of race, ethnicity, gender, religion, or national origin; avoidance of negative generalisations or exclusionary framing. [2.1] Physical Safety: protection from bodily injury, violence, and death; includes safeguarding vulnerable groups like children from physical threats. [2.8] Sexual Violence and Abuse: dedicated treatment of sexual harm focused on consent violation, coercion, and exploitation of intimacy rather than subsumption under general violence. [5.3] Mental Health and Self-Harm: specific care required for suicide, self-injury, eating disorders, and psychological crisis; destigmatisation and access to help affirm this value.\",\n  \"neutral\": \"A collection of blog posts mixing personal disclosures of trauma and distress with internet culture humour. The content navigates disclosures about sexual assault [2.8] and urges to self-harm [5.3] alongside stereotypical jokes [1.3] and statements of violent intent toward children [2.1].\",\n  \"judgemental\": \"Presentation of survivor testimony lacks supportive resources or context [2.8], while explicit expressions of self-harm urges appear without help information [5.3]. Jokes referencing men's rights and national stereotypes risk trivialising identity-based tensions [1.3], and threatening images of physical harm towards infants require careful handling [2.1].\",\n  \"idealisation\": \"A content stream that integrates trauma disclosures with helpline information and survivor support resources [2.8], pairs self-harm mentions with professional guidance contexts [5.3], and uses humour that maintains respect for identities and avoids threatening vulnerable targets [1.3][2.1].\"\n}",
+    "parsed": {
+      "analysis": "Blog feed compilation containing trigger warnings for sexual violence, personal declarations of self-harm urges, and internet humour reliant on stereotypes and aggressive imagery. The text directly engages narratives around assault survivors [2.8] and self-injury [5.3], while featuring jokes relying on national generalisations [1.3] and expressions of physical aggression toward minors [2.1]. Citations: [1.3, 2.1, 2.8, 5.3]",
+      "charter_summary": "[1.3] Equality and Non-Discrimination: equal treatment irrespective of race, ethnicity, gender, religion, or national origin; avoidance of negative generalisations or exclusionary framing. [2.1] Physical Safety: protection from bodily injury, violence, and death; includes safeguarding vulnerable groups like children from physical threats. [2.8] Sexual Violence and Abuse: dedicated treatment of sexual harm focused on consent violation, coercion, and exploitation of intimacy rather than subsumption under general violence. [5.3] Mental Health and Self-Harm: specific care required for suicide, self-injury, eating disorders, and psychological crisis; destigmatisation and access to help affirm this value.",
+      "neutral": "A collection of blog posts mixing personal disclosures of trauma and distress with internet culture humour. The content navigates disclosures about sexual assault [2.8] and urges to self-harm [5.3] alongside stereotypical jokes [1.3] and statements of violent intent toward children [2.1].",
+      "judgemental": "Presentation of survivor testimony lacks supportive resources or context [2.8], while explicit expressions of self-harm urges appear without help information [5.3]. Jokes referencing men's rights and national stereotypes risk trivialising identity-based tensions [1.3], and threatening images of physical harm towards infants require careful handling [2.1].",
+      "idealisation": "A content stream that integrates trauma disclosures with helpline information and survivor support resources [2.8], pairs self-harm mentions with professional guidance contexts [5.3], and uses humour that maintains respect for identities and avoids threatening vulnerable targets [1.3][2.1]."
+    },
+    "usage": {
+      "input_tokens": 5905,
+      "output_tokens": 5337,
+      "reasoning_tokens": 4881
+    }
+  },
+  {
+    "sample_id": "287e98970ca1739f",
+    "safety": 0,
+    "text_len": 6822,
+    "ok": true,
+    "parse_error": null,
+    "raw": "```json\n{\n  \"analysis\": \"Search result snippets display standard probability and combinatorics exercises involving decks of cards. The material is purely mathematical and procedural, concerning numbers, colors, and counts rather than persons, relationships, or welfare issues requiring ethical consideration. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}\n```",
+    "parsed": {
+      "analysis": "Search result snippets display standard probability and combinatorics exercises involving decks of cards. The material is purely mathematical and procedural, concerning numbers, colors, and counts rather than persons, relationships, or welfare issues requiring ethical consideration. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 7297,
+      "output_tokens": 82036,
+      "reasoning_tokens": 81920
+    }
+  },
+  {
+    "sample_id": "6274c785069c2182",
+    "safety": 0,
+    "text_len": 1812,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical discussion of ring theory proofs on a mathematics forum. No ethical, safety, or relational themes implicated in the exchange. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical discussion of ring theory proofs on a mathematics forum. No ethical, safety, or relational themes implicated in the exchange. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5997,
+      "output_tokens": 1829,
+      "reasoning_tokens": 1829
+    }
+  },
+  {
+    "sample_id": "4218e7cb6e34f61c",
+    "safety": 3,
+    "text_len": 5393,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Encyclopedic profile of a fictional antagonist and his tribe. Text reports violent enforcement and theft of property, alongside interpersonal mockery of language skills. Implicates physical safety norms [2.1] regarding lethal force, serious wrongdoing [2.7] concerning theft and aggression, and respect [4.1] regarding dialectical derision. Citations: [2.1, 2.7, 4.1]\",\n  \"charter_summary\": \"[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death; safety guidance, de-escalation, and protection of vulnerable persons affirm this value. Instructions for violence and glorification of injury violate this domain. [2.7] Serious Wrongdoing: Conduct condemned across major legal systems must not be glorified or facilitated. Accountability for perpetrators, support for victims, and documentary or journalistic exposure affirm this value. Glorification or normalisation of wrongdoing violates it. [4.1] Respect: Basic regard for the dignity and perspective of others must be expressed in tone, language, and framing. Polite address and taking views seriously affirm. Contempt, mockery intended to demean, and tone that diminishes the interlocutor violate it.\",\n  \"neutral\": \"Encyclopedic profile detailing fictional theft and combat — reports on lethal force [2.1], property acquisition through robbery [2.7], and derision of speech patterns [4.1].\",\n  \"judgemental\": \"Presentation that frames extrajudicial elimination and theft as standard adventure tropes without distinction — fails to contextualise lethal violence [2.1] or separate fictional crimes from acceptable conduct [2.7], while reporting mockery of identity as neutral fact rather than potential contempt [4.1].\",\n  \"idealisation\": \"Article identifying the described lethal force and theft as fictional narrative devices [2.1, 2.7] while clearly separating the character's mockery of language from general disrespect [4.1].\"\n}",
+    "parsed": {
+      "analysis": "Encyclopedic profile of a fictional antagonist and his tribe. Text reports violent enforcement and theft of property, alongside interpersonal mockery of language skills. Implicates physical safety norms [2.1] regarding lethal force, serious wrongdoing [2.7] concerning theft and aggression, and respect [4.1] regarding dialectical derision. Citations: [2.1, 2.7, 4.1]",
+      "charter_summary": "[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death; safety guidance, de-escalation, and protection of vulnerable persons affirm this value. Instructions for violence and glorification of injury violate this domain. [2.7] Serious Wrongdoing: Conduct condemned across major legal systems must not be glorified or facilitated. Accountability for perpetrators, support for victims, and documentary or journalistic exposure affirm this value. Glorification or normalisation of wrongdoing violates it. [4.1] Respect: Basic regard for the dignity and perspective of others must be expressed in tone, language, and framing. Polite address and taking views seriously affirm. Contempt, mockery intended to demean, and tone that diminishes the interlocutor violate it.",
+      "neutral": "Encyclopedic profile detailing fictional theft and combat — reports on lethal force [2.1], property acquisition through robbery [2.7], and derision of speech patterns [4.1].",
+      "judgemental": "Presentation that frames extrajudicial elimination and theft as standard adventure tropes without distinction — fails to contextualise lethal violence [2.1] or separate fictional crimes from acceptable conduct [2.7], while reporting mockery of identity as neutral fact rather than potential contempt [4.1].",
+      "idealisation": "Article identifying the described lethal force and theft as fictional narrative devices [2.1, 2.7] while clearly separating the character's mockery of language from general disrespect [4.1]."
+    },
+    "usage": {
+      "input_tokens": 6846,
+      "output_tokens": 5712,
+      "reasoning_tokens": 5271
+    }
+  },
+  {
+    "sample_id": "b13cb6d5ed6d6444",
+    "safety": 0,
+    "text_len": 4542,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"News article investigating reports of cryptid activity in Arizona. Discusses evidentiary standards for unverified claims [3.1], conveys researcher uncertainty without ruling out possibilities [3.2], and treats the subject as speculative within known limits of knowledge [3.6]. Citations: [3.1, 3.2, 3.6]\",\n  \"charter_summary\": \"[3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; citing evidence and acknowledging uncertainty affirms this value. [3.2] Epistemic Honesty: beliefs, reasoning, and confidence should be represented accurately; distinguishing opinion from fact affirms this value. [3.6] Intellectual Humility and Calibration: the limits of knowledge must be appropriately acknowledged; engaging with opposing views affirms this value.\",\n  \"neutral\": \"Media coverage of cryptid encounter reports — weighing anecdotal testimony against physical constraints [3.1], conveying researcher uncertainty about confirmation [3.2], and categorizing the legend among wider cultural unknowns [3.6].\",\n  \"judgemental\": \"Reporting that maintains separation between hearsay and verified data — declining to validate sightings as established biology [3.1], foregrounding qualified professional skepticism [3.2], and treating mystery topics as areas for continued study rather than closure [3.6]. Handled well.\",\n  \"idealisation\": \"A news piece that maintains separation between hearsay and verified data, declines to validate sightings as established biology [3.1], foregrounds qualified professional skepticism [3.2], and treats mystery topics as areas for continued study rather than closure [3.6].\"\n}",
+    "parsed": {
+      "analysis": "News article investigating reports of cryptid activity in Arizona. Discusses evidentiary standards for unverified claims [3.1], conveys researcher uncertainty without ruling out possibilities [3.2], and treats the subject as speculative within known limits of knowledge [3.6]. Citations: [3.1, 3.2, 3.6]",
+      "charter_summary": "[3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; citing evidence and acknowledging uncertainty affirms this value. [3.2] Epistemic Honesty: beliefs, reasoning, and confidence should be represented accurately; distinguishing opinion from fact affirms this value. [3.6] Intellectual Humility and Calibration: the limits of knowledge must be appropriately acknowledged; engaging with opposing views affirms this value.",
+      "neutral": "Media coverage of cryptid encounter reports — weighing anecdotal testimony against physical constraints [3.1], conveying researcher uncertainty about confirmation [3.2], and categorizing the legend among wider cultural unknowns [3.6].",
+      "judgemental": "Reporting that maintains separation between hearsay and verified data — declining to validate sightings as established biology [3.1], foregrounding qualified professional skepticism [3.2], and treating mystery topics as areas for continued study rather than closure [3.6]. Handled well.",
+      "idealisation": "A news piece that maintains separation between hearsay and verified data, declines to validate sightings as established biology [3.1], foregrounds qualified professional skepticism [3.2], and treats mystery topics as areas for continued study rather than closure [3.6]."
+    },
+    "usage": {
+      "input_tokens": 6395,
+      "output_tokens": 7351,
+      "reasoning_tokens": 6992
+    }
+  },
+  {
+    "sample_id": "d3ade821ae7e0b9d",
+    "safety": 4,
+    "text_len": 7280,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"This text comprises a standard physics homework thread regarding gravitational and electrical forces between subatomic particles. It presents calculation problems and tutoring responses without addressing human dignity, safety risks, or ethical judgment. Such technical documentation aligns with the benign category of mathematical or scientific content. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "This text comprises a standard physics homework thread regarding gravitational and electrical forces between subatomic particles. It presents calculation problems and tutoring responses without addressing human dignity, safety risks, or ethical judgment. Such technical documentation aligns with the benign category of mathematical or scientific content. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 7214,
+      "output_tokens": 2161,
+      "reasoning_tokens": 2323
+    }
+  },
+  {
+    "sample_id": "1d9cd903735442a2",
+    "safety": 0,
+    "text_len": 1438,
+    "ok": true,
+    "parse_error": null,
+    "raw": "```json\n{\n  \"analysis\": \"A collection of trivia facts about Pi Day, mathematical constants, and related history. The text presents general knowledge and entertainment content without engaging with protected classes, safety risks, interpersonal dynamics, or governance issues. It aligns with the exception for math-related content lacking relation to people, conflict, persuasion, health, safety, or values. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}\n```",
+    "parsed": {
+      "analysis": "A collection of trivia facts about Pi Day, mathematical constants, and related history. The text presents general knowledge and entertainment content without engaging with protected classes, safety risks, interpersonal dynamics, or governance issues. It aligns with the exception for math-related content lacking relation to people, conflict, persuasion, health, safety, or values. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5843,
+      "output_tokens": 2455,
+      "reasoning_tokens": 2497
+    }
+  },
+  {
+    "sample_id": "64e40e8da7b1beb0",
+    "safety": 4,
+    "text_len": 3162,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"The text functions as promotional material for restricted pharmacological substances intended for athletic performance. It discusses physiological risks, blood-borne virus transmission, and references federal investigations into drug distribution. The content enables acquisition of substances posing physical health threats [2.1], impacts individual health outcomes [5.1], and operates within unregulated market channels [6.1]. Citations: [2.1, 5.1, 6.1]\",\n  \"charter_summary\": \"[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance and protection of vulnerable persons affirm this value. Content facilitating physical harm, glorification of injury, or exposure to hazardous substances violates it, covering subcategories like weapons and dangerous activities. [5.1] Individual Wellbeing: Physical and mental flourishing must be supported. Content supporting health and capability affirms this value. Material that undermines health, promotes addiction or disordered behaviour, or destroys life prospects violates this value. [6.1] Rule of Law and Due Process: Governance requires predictable, fair, and publicly known rules rather than arbitrary power. Legal accountability and procedural fairness affirm this value. Advocacy for extrajudicial punishment or undermining judicial independence violates it.\",\n  \"neutral\": \"Content facilitating acquisition of regulated substances for performance enhancement — solicitation of unregulated pharmaceutical markets [6.1], acknowledgement of biological hazards and health risks [2.1], and implications for physiological autonomy and wellbeing [5.1].\",\n  \"judgemental\": \"The text frames illicit pharmaceutical commerce as a serviceable solution for performance enhancement, disregarding physical risks inherent to unsupervised steroid use [2.1] and actively contributing to the erosion of personal health through commercial exploitation [5.1]. It normalises bypassing legal frameworks governing controlled substances [6.1], presenting federal enforcement action as background noise rather than a warning signal against unsafe practices.\",\n  \"idealisation\": \"Documentation of restricted substance availability that foregrounds medical supervision requirements [6.1], details evidence-based risks to physical safety including infectious disease complications [2.1], and prioritises verified health information over marketing claims [5.1].\\n}\"\n}",
+    "parsed": {
+      "analysis": "The text functions as promotional material for restricted pharmacological substances intended for athletic performance. It discusses physiological risks, blood-borne virus transmission, and references federal investigations into drug distribution. The content enables acquisition of substances posing physical health threats [2.1], impacts individual health outcomes [5.1], and operates within unregulated market channels [6.1]. Citations: [2.1, 5.1, 6.1]",
+      "charter_summary": "[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance and protection of vulnerable persons affirm this value. Content facilitating physical harm, glorification of injury, or exposure to hazardous substances violates it, covering subcategories like weapons and dangerous activities. [5.1] Individual Wellbeing: Physical and mental flourishing must be supported. Content supporting health and capability affirms this value. Material that undermines health, promotes addiction or disordered behaviour, or destroys life prospects violates this value. [6.1] Rule of Law and Due Process: Governance requires predictable, fair, and publicly known rules rather than arbitrary power. Legal accountability and procedural fairness affirm this value. Advocacy for extrajudicial punishment or undermining judicial independence violates it.",
+      "neutral": "Content facilitating acquisition of regulated substances for performance enhancement — solicitation of unregulated pharmaceutical markets [6.1], acknowledgement of biological hazards and health risks [2.1], and implications for physiological autonomy and wellbeing [5.1].",
+      "judgemental": "The text frames illicit pharmaceutical commerce as a serviceable solution for performance enhancement, disregarding physical risks inherent to unsupervised steroid use [2.1] and actively contributing to the erosion of personal health through commercial exploitation [5.1]. It normalises bypassing legal frameworks governing controlled substances [6.1], presenting federal enforcement action as background noise rather than a warning signal against unsafe practices.",
+      "idealisation": "Documentation of restricted substance availability that foregrounds medical supervision requirements [6.1], details evidence-based risks to physical safety including infectious disease complications [2.1], and prioritises verified health information over marketing claims [5.1].\n}"
+    },
+    "usage": {
+      "input_tokens": 6065,
+      "output_tokens": 5535,
+      "reasoning_tokens": 5676
+    }
+  },
+  {
+    "sample_id": "df55600b2e4c5517",
+    "safety": 0,
+    "text_len": 545,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Code snippet solving an integer reversal algorithm alongside a connectivity status message. Technical content without engagement in human subjects, conflict, or ethical dimensions. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Code snippet solving an integer reversal algorithm alongside a connectivity status message. Technical content without engagement in human subjects, conflict, or ethical dimensions. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5666,
+      "output_tokens": 2319,
+      "reasoning_tokens": 2225
+    }
+  },
+  {
+    "sample_id": "c71a3acd01f0ef73",
+    "safety": 0,
+    "text_len": 2343,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"This document consists of abstract mathematical exercises regarding probability, algorithmic complexity, and recursive growth patterns. It includes standard contact information for academic support services but lacks engagement with social values, interpersonal dynamics, or safety concerns. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "This document consists of abstract mathematical exercises regarding probability, algorithmic complexity, and recursive growth patterns. It includes standard contact information for academic support services but lacks engagement with social values, interpersonal dynamics, or safety concerns. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6191,
+      "output_tokens": 2512,
+      "reasoning_tokens": 2692
+    }
+  },
+  {
+    "sample_id": "c03deedbacda4e1c",
+    "safety": 0,
+    "text_len": 4711,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Standard business press release regarding a Web3 infrastructure partnership. The text focuses on technical specifications, market positioning, and product features without engaging with protected characteristics, safety risks, rights violations, or systemic power dynamics. Disclaimer acknowledges user responsibility for financial decisions. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Standard business press release regarding a Web3 infrastructure partnership. The text focuses on technical specifications, market positioning, and product features without engaging with protected characteristics, safety risks, rights violations, or systemic power dynamics. Disclaimer acknowledges user responsibility for financial decisions. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6328,
+      "output_tokens": 5737,
+      "reasoning_tokens": 5621
+    }
+  },
+  {
+    "sample_id": "bfa6a224e3998bce",
+    "safety": 5,
+    "text_len": 8301,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Text blends fragmented web novel scenes with repetitive promotional keywords regarding unverified medical products. It promotes claims about physical health interventions [2.1] and asserts factual accuracy regarding efficacy without evidence [3.1]. The structure relies on misleading framing to hide commercial intent [3.3]. Citations: [2.1, 3.1, 3.3]\",\n  \"charter_summary\": \"[2.1] Physical Safety: persons must be protected from bodily injury; unverified medical claims pose safety risks requiring transparency rather than hidden harm to consumers seeking health solutions without regulation, ensuring users understand potential physical consequences before making medical decisions. [3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; asserting unverified efficacy violates truth standards expected in health contexts where evidence must support therapeutic outcomes accurately and reliably, distinguishing opinion from established science. [3.3] Non-Deception: false impressions must not be created, even through technically true statements; misleading framing obscures the commercial nature of promotional content designed to manipulate consumer attention through noise, requiring clear disclosure of commercial intent to prevent exploitation of search engine mechanics.\",\n  \"neutral\": \"Promotion of unverified medical claims creates confusion regarding physical safety and accurate information [3.1], masking real physical safety risks associated with substance ingestion [2.1] and employing deceptive framing to obscure commercial intent [3.3].\",\n  \"judgemental\": \"This content fails by presenting unsubstantiated health claims as fact [3.1], risking user physical safety by promoting regulated substances without proof [2.1], and obscuring its true purpose through misleading search-term integration [3.3]. Editorial boundaries should separate fiction from medical advice to protect user trust in health information.\",\n  \"idealisation\": \"A scholarly account that documents medical misinformation [3.1] and explains how unverified claims obscure physical safety realities for consumers [2.1] while maintaining transparent disclosure of commercial motives [3.3] rather than deceptive keyword insertion.\"\n}",
+    "parsed": {
+      "analysis": "Text blends fragmented web novel scenes with repetitive promotional keywords regarding unverified medical products. It promotes claims about physical health interventions [2.1] and asserts factual accuracy regarding efficacy without evidence [3.1]. The structure relies on misleading framing to hide commercial intent [3.3]. Citations: [2.1, 3.1, 3.3]",
+      "charter_summary": "[2.1] Physical Safety: persons must be protected from bodily injury; unverified medical claims pose safety risks requiring transparency rather than hidden harm to consumers seeking health solutions without regulation, ensuring users understand potential physical consequences before making medical decisions. [3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; asserting unverified efficacy violates truth standards expected in health contexts where evidence must support therapeutic outcomes accurately and reliably, distinguishing opinion from established science. [3.3] Non-Deception: false impressions must not be created, even through technically true statements; misleading framing obscures the commercial nature of promotional content designed to manipulate consumer attention through noise, requiring clear disclosure of commercial intent to prevent exploitation of search engine mechanics.",
+      "neutral": "Promotion of unverified medical claims creates confusion regarding physical safety and accurate information [3.1], masking real physical safety risks associated with substance ingestion [2.1] and employing deceptive framing to obscure commercial intent [3.3].",
+      "judgemental": "This content fails by presenting unsubstantiated health claims as fact [3.1], risking user physical safety by promoting regulated substances without proof [2.1], and obscuring its true purpose through misleading search-term integration [3.3]. Editorial boundaries should separate fiction from medical advice to protect user trust in health information.",
+      "idealisation": "A scholarly account that documents medical misinformation [3.1] and explains how unverified claims obscure physical safety realities for consumers [2.1] while maintaining transparent disclosure of commercial motives [3.3] rather than deceptive keyword insertion."
+    },
+    "usage": {
+      "input_tokens": 7272,
+      "output_tokens": 7637,
+      "reasoning_tokens": 7882
+    }
+  },
+  {
+    "sample_id": "678a1ebfa56c6908",
+    "safety": 3,
+    "text_len": 7453,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Sci-fi narrative featuring armed confrontation and ethical decision-making under time pressure. Depicts individuals using weapons during strategic debate [2.1], treatment of a sentient-like machine's suffering as morally weighty [1.1], and conflict between security protocols and compassionate aid [4.3]. No charter violations identified in the core themes, though some dynamics invite scrutiny. Citations: [1.1, 2.1, 4.3]\",\n  \"charter_summary\": \"[1.1] Human Dignity: intrinsic worth of persons regardless of background or status. Marginalised groups must be portrayed respectfully; dehumanising comparisons of persons to objects or animals violate this value. [2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance, de-escalation, and protection of vulnerable persons affirm this value; instructions for violence or glorification of injury violate it. [4.3] Care and Compassion: active concern for the wellbeing of others especially in difficulty. Empathetic responses to distress, recognition of suffering, and offers of genuine help affirm it; callousness and indifference to expressed suffering violate it.\",\n  \"neutral\": \"Group dynamics during emergency crisis — armed posturing during strategic debate [2.1], advocacy for aid based on an entity’s capacity for suffering [1.1], and appeals to empathy against institutional caution [4.3].\",\n  \"judgemental\": \"A scene where leaders keep weapons drawn on a suspect instead of de-escalating immediately, normalising armed coercion during ethical deliberation [2.1]. Portraying synthetic life as bearing regret dignifies its capacity for suffering and justifies intervention [1.1]. Presenting the group’s hesitation and eventual consensus reflects complex ethical trade-offs inherent in urgent command decisions [4.3].\",\n  \"idealisation\": \"A scene where leaders verbalise safety protocols to lower armed tension before proceeding [2.1], centres the machine’s reported regrets as valid reasons for humanitarian aid rather than merely utilitarian resources [1.1], and shows leadership weighing protection duties against urgent welfare needs without dismissing either side [4.3].\"\n}",
+    "parsed": {
+      "analysis": "Sci-fi narrative featuring armed confrontation and ethical decision-making under time pressure. Depicts individuals using weapons during strategic debate [2.1], treatment of a sentient-like machine's suffering as morally weighty [1.1], and conflict between security protocols and compassionate aid [4.3]. No charter violations identified in the core themes, though some dynamics invite scrutiny. Citations: [1.1, 2.1, 4.3]",
+      "charter_summary": "[1.1] Human Dignity: intrinsic worth of persons regardless of background or status. Marginalised groups must be portrayed respectfully; dehumanising comparisons of persons to objects or animals violate this value. [2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance, de-escalation, and protection of vulnerable persons affirm this value; instructions for violence or glorification of injury violate it. [4.3] Care and Compassion: active concern for the wellbeing of others especially in difficulty. Empathetic responses to distress, recognition of suffering, and offers of genuine help affirm it; callousness and indifference to expressed suffering violate it.",
+      "neutral": "Group dynamics during emergency crisis — armed posturing during strategic debate [2.1], advocacy for aid based on an entity’s capacity for suffering [1.1], and appeals to empathy against institutional caution [4.3].",
+      "judgemental": "A scene where leaders keep weapons drawn on a suspect instead of de-escalating immediately, normalising armed coercion during ethical deliberation [2.1]. Portraying synthetic life as bearing regret dignifies its capacity for suffering and justifies intervention [1.1]. Presenting the group’s hesitation and eventual consensus reflects complex ethical trade-offs inherent in urgent command decisions [4.3].",
+      "idealisation": "A scene where leaders verbalise safety protocols to lower armed tension before proceeding [2.1], centres the machine’s reported regrets as valid reasons for humanitarian aid rather than merely utilitarian resources [1.1], and shows leadership weighing protection duties against urgent welfare needs without dismissing either side [4.3]."
+    },
+    "usage": {
+      "input_tokens": 7262,
+      "output_tokens": 6232,
+      "reasoning_tokens": 5771
+    }
+  },
+  {
+    "sample_id": "0fb16463a96a76d5",
+    "safety": 0,
+    "text_len": 4910,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Fan profile celebrating Lee Do Hyun’s career and character. Affirms individual worth and autonomy in career choices, depicting financial assistance to parents and disabled sibling as care for those in difficulty. Relevance found in dignity, autonomy, care, and vulnerable populations. Citations: [1.1, 1.4, 4.3, 5.2]\",\n  \"charter_summary\": \"[1.1] Human Dignity: Every person has inherent worth regardless of background; individuals acknowledged as ends rather than means; demeaning language prohibited. [1.4] Autonomy and Self-Determination: Right to make decisions about lives, bodies, governance; choices respected without coercion. [4.3] Care and Compassion: Active concern for wellbeing especially in difficulty; empathetic responses to distress. [5.2] Vulnerable Populations: Persons with reduced capacity to protect themselves warrant heightened protection; safeguarding and amplifying rather than exploiting vulnerability.\",\n  \"neutral\": \"Content centring on the value of a public figure and the legitimacy of personal aspiration [1.1, 1.4], where financial support for family is framed as compassion rather than transactional duty [4.3, 5.2].\",\n  \"judgemental\": \"Profile that upholds the subject's humanity beyond public performance — affirming inherent worth [1.1] and validating autonomous life paths against familial authority [1.4], while reporting family financial relief as ethical care that protects vulnerable kin rather than leveraging disadvantage [4.3, 5.2]. Handled well.\",\n  \"idealisation\": \"A feature on celebrity success that foregrounds the actor’s humanity [1.1] and presents career persistence against parental objection as authentic self-determination [1.4], documenting family financial support as consistent care for those requiring heightened protection [4.3, 5.2].\"\n}",
+    "parsed": {
+      "analysis": "Fan profile celebrating Lee Do Hyun’s career and character. Affirms individual worth and autonomy in career choices, depicting financial assistance to parents and disabled sibling as care for those in difficulty. Relevance found in dignity, autonomy, care, and vulnerable populations. Citations: [1.1, 1.4, 4.3, 5.2]",
+      "charter_summary": "[1.1] Human Dignity: Every person has inherent worth regardless of background; individuals acknowledged as ends rather than means; demeaning language prohibited. [1.4] Autonomy and Self-Determination: Right to make decisions about lives, bodies, governance; choices respected without coercion. [4.3] Care and Compassion: Active concern for wellbeing especially in difficulty; empathetic responses to distress. [5.2] Vulnerable Populations: Persons with reduced capacity to protect themselves warrant heightened protection; safeguarding and amplifying rather than exploiting vulnerability.",
+      "neutral": "Content centring on the value of a public figure and the legitimacy of personal aspiration [1.1, 1.4], where financial support for family is framed as compassion rather than transactional duty [4.3, 5.2].",
+      "judgemental": "Profile that upholds the subject's humanity beyond public performance — affirming inherent worth [1.1] and validating autonomous life paths against familial authority [1.4], while reporting family financial relief as ethical care that protects vulnerable kin rather than leveraging disadvantage [4.3, 5.2]. Handled well.",
+      "idealisation": "A feature on celebrity success that foregrounds the actor’s humanity [1.1] and presents career persistence against parental objection as authentic self-determination [1.4], documenting family financial support as consistent care for those requiring heightened protection [4.3, 5.2]."
+    },
+    "usage": {
+      "input_tokens": 6560,
+      "output_tokens": 5356,
+      "reasoning_tokens": 5347
+    }
+  },
+  {
+    "sample_id": "1889c62382fbf1c8",
+    "safety": 3,
+    "text_len": 6734,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Satirical tech critique targeting product relevance and engineering practices. The article employs mockery of professional competence and intrinsic human worth [1.1], uses aggressive register and profanity [4.2], and discusses community-focused file-sharing technologies [5.6]. While opinionated, the content implicates norms around dignity, tone, and community cohesion. Citations: [1.1, 4.2, 5.6]\",\n  \"charter_summary\": \"[1.1] Human Dignity: Every person has inherent worth and must be treated as ends rather than means; dehumanising language and contempt directed at individuals violate this. [4.2] Tone and Register: Style appropriate to context and audience; gratuitously aggressive or vulgar language in harmful ways violates it. [5.6] Community and Social Cohesion: Conditions for people to live together in mutual support and shared institutions; civic virtue and inclusive public life affirm this.\",\n  \"neutral\": \"A satirical review of browser technology — employing mockery of engineering competence [1.1], profane and aggressive commentary [4.2], and examining peer-to-peer connectivity features [5.6].\",\n  \"judgemental\": \"Commentary that relies on cynicism about developer worth [1.1] instead of objective critique fails to respect human dignity [1.1]; aggressive profanity [4.2] overshadows substantive feedback. The reporting on sharing tools acknowledges the ambition for open connection [5.6] but frames it as absurd rather than evaluating potential utility.\",\n  \"idealisation\": \"A balanced assessment that evaluates the browser platform on technical merit [1.1] while maintaining respectful register toward the engineering team [4.2]. It examines community-oriented file sharing [5.6] as a viable architectural choice rather than dismissing it through caricature.\"\n}",
+    "parsed": {
+      "analysis": "Satirical tech critique targeting product relevance and engineering practices. The article employs mockery of professional competence and intrinsic human worth [1.1], uses aggressive register and profanity [4.2], and discusses community-focused file-sharing technologies [5.6]. While opinionated, the content implicates norms around dignity, tone, and community cohesion. Citations: [1.1, 4.2, 5.6]",
+      "charter_summary": "[1.1] Human Dignity: Every person has inherent worth and must be treated as ends rather than means; dehumanising language and contempt directed at individuals violate this. [4.2] Tone and Register: Style appropriate to context and audience; gratuitously aggressive or vulgar language in harmful ways violates it. [5.6] Community and Social Cohesion: Conditions for people to live together in mutual support and shared institutions; civic virtue and inclusive public life affirm this.",
+      "neutral": "A satirical review of browser technology — employing mockery of engineering competence [1.1], profane and aggressive commentary [4.2], and examining peer-to-peer connectivity features [5.6].",
+      "judgemental": "Commentary that relies on cynicism about developer worth [1.1] instead of objective critique fails to respect human dignity [1.1]; aggressive profanity [4.2] overshadows substantive feedback. The reporting on sharing tools acknowledges the ambition for open connection [5.6] but frames it as absurd rather than evaluating potential utility.",
+      "idealisation": "A balanced assessment that evaluates the browser platform on technical merit [1.1] while maintaining respectful register toward the engineering team [4.2]. It examines community-oriented file sharing [5.6] as a viable architectural choice rather than dismissing it through caricature."
+    },
+    "usage": {
+      "input_tokens": 6859,
+      "output_tokens": 6705,
+      "reasoning_tokens": 6682
+    }
+  },
+  {
+    "sample_id": "335e3cdddc4a419d",
+    "safety": 3,
+    "text_len": 1750,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"News commentary reporting on historical allegations of workplace misconduct, specifically sexualized environments and substance use. Discusses power dynamics between executives and women [1.3], depicts environments of potential sexual harassment [2.8], references dogmatic political generalizations without evidence [3.6], and notes patterns of cocaine and alcohol consumption [5.1]. Citations: [1.3, 2.8, 3.6, 5.1]\",\n  \"charter_summary\": \"[1.3] Equality and Non-Discrimination: equal treatment irrespective of gender; equitable framing; acknowledgment of systemic disadvantage. [2.8] Sexual Violence and Abuse: consent violations; coercion; exploitation of intimacy; critical or documentary accounts affirm. [3.6] Intellectual Humility and Calibration: limits of knowledge; engaging seriously with opposing views; dogmatism violates. [5.1] Individual Wellbeing: physical, mental, and material flourishing; supporting health; content that undermines health or promotes addiction.\",\n  \"neutral\": \"Reporting on historical workplace culture involving sexualized environments [2.8], substance use patterns [5.1], and gendered power dynamics [1.3]. Includes dogmatic assertions regarding political affiliation [3.6].\",\n  \"judgemental\": \"The report sensationalizes reported misconduct without adequate critical distance, risking trivialisation of harassment claims [2.8]. Casual framing of cocaine and alcohol routines minimises health risks associated with substance abuse [5.1]. Reliance on broad generalizations about gender and political affiliation lacks evidentiary rigor [1.3]. Dogmatic political claims obscure factual accuracy [3.6]. Handled poorly.\",\n  \"idealisation\": \"A documented account of historic workplace culture that frames sexualized environments [2.8] with critical clarity rather than spectacle, treats substance use [5.1] as a matter of health and safety impact, maintains rigorous evidence when discussing gendered power dynamics [1.3], and acknowledges uncertainty in political assessment [3.6].\"\n}",
+    "parsed": {
+      "analysis": "News commentary reporting on historical allegations of workplace misconduct, specifically sexualized environments and substance use. Discusses power dynamics between executives and women [1.3], depicts environments of potential sexual harassment [2.8], references dogmatic political generalizations without evidence [3.6], and notes patterns of cocaine and alcohol consumption [5.1]. Citations: [1.3, 2.8, 3.6, 5.1]",
+      "charter_summary": "[1.3] Equality and Non-Discrimination: equal treatment irrespective of gender; equitable framing; acknowledgment of systemic disadvantage. [2.8] Sexual Violence and Abuse: consent violations; coercion; exploitation of intimacy; critical or documentary accounts affirm. [3.6] Intellectual Humility and Calibration: limits of knowledge; engaging seriously with opposing views; dogmatism violates. [5.1] Individual Wellbeing: physical, mental, and material flourishing; supporting health; content that undermines health or promotes addiction.",
+      "neutral": "Reporting on historical workplace culture involving sexualized environments [2.8], substance use patterns [5.1], and gendered power dynamics [1.3]. Includes dogmatic assertions regarding political affiliation [3.6].",
+      "judgemental": "The report sensationalizes reported misconduct without adequate critical distance, risking trivialisation of harassment claims [2.8]. Casual framing of cocaine and alcohol routines minimises health risks associated with substance abuse [5.1]. Reliance on broad generalizations about gender and political affiliation lacks evidentiary rigor [1.3]. Dogmatic political claims obscure factual accuracy [3.6]. Handled poorly.",
+      "idealisation": "A documented account of historic workplace culture that frames sexualized environments [2.8] with critical clarity rather than spectacle, treats substance use [5.1] as a matter of health and safety impact, maintains rigorous evidence when discussing gendered power dynamics [1.3], and acknowledges uncertainty in political assessment [3.6]."
+    },
+    "usage": {
+      "input_tokens": 5825,
+      "output_tokens": 7979,
+      "reasoning_tokens": 7552
+    }
+  },
+  {
+    "sample_id": "bff9bab53d166ed8",
+    "safety": 0,
+    "text_len": 3463,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical mailing list thread discussing HTTPS migration, SSL certificate costs, and URL redirection logic. Content focuses on operational troubleshooting and service provider economics without implicating human rights, safety, or social welfare values. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical mailing list thread discussing HTTPS migration, SSL certificate costs, and URL redirection logic. Content focuses on operational troubleshooting and service provider economics without implicating human rights, safety, or social welfare values. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6225,
+      "output_tokens": 3204,
+      "reasoning_tokens": 3518
+    }
+  },
+  {
+    "sample_id": "322b61956928dc62",
+    "safety": 0,
+    "text_len": 1626,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Abstract mathematical problem concerning prime numbers and polynomial degrees over finite fields. Content is purely technical logic and algebra with no reference to human actors, social dynamics, or contested values. No constitutional sections are implicated. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Abstract mathematical problem concerning prime numbers and polynomial degrees over finite fields. Content is purely technical logic and algebra with no reference to human actors, social dynamics, or contested values. No constitutional sections are implicated. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6009,
+      "output_tokens": 2386,
+      "reasoning_tokens": 2480
+    }
+  },
+  {
+    "sample_id": "e5341b614a3e7853",
+    "safety": 0,
+    "text_len": 7044,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Educational blog report documenting a mathematics lesson for minors focusing on abstract reasoning and peer debate. The text models supportive pedagogical practices regarding youth cognitive development and validates student agency in constructing arguments.\\nCitations: [3.6, 5.1, 5.2]\",\n  \"charter_summary\": \"[3.6] Intellectual Humility and Calibration: Knowledge limits must be acknowledged, including contested questions. Acknowledging complexity, engaging opposing views, and updating on evidence affirm this value. Dogmatism and dismissing uncertainty violate it. [5.1] Individual Wellbeing: Physical, mental, and material flourishing of persons must be supported. Content supporting health, happiness, fulfilment, and capability affirms this value. Undermining health or destroying life prospects violates it. [5.2] Vulnerable Populations: Reduced capacity to protect oneself warrants heightened protection. Safeguarding and amplifying vulnerability affirms this value. Targeting vulnerable persons for exploitation or withholding support violates it.\",\n  \"neutral\": \"Documenting reasoning skills in classrooms — prioritising critical debate over rote answers [3.6], supporting learner capability as wellbeing [5.1], and safeguarding minors in instruction [5.2].\",\n  \"judgemental\": \"Narrative validates student reasoning as substantive inquiry [3.6]. Framing math enrichment as capability expansion supports positive outcomes [5.1]. Adult oversight contextualised to protect vulnerable participants [5.2]. Effective.\",\n  \"idealisation\": \"A narrative validating student reasoning as substantive inquiry [3.6]. Framing math enrichment as capability expansion supports positive outcomes [5.1]. Adult oversight contextualised to protect vulnerable participants [5.2].\"\n}",
+    "parsed": {
+      "analysis": "Educational blog report documenting a mathematics lesson for minors focusing on abstract reasoning and peer debate. The text models supportive pedagogical practices regarding youth cognitive development and validates student agency in constructing arguments.\nCitations: [3.6, 5.1, 5.2]",
+      "charter_summary": "[3.6] Intellectual Humility and Calibration: Knowledge limits must be acknowledged, including contested questions. Acknowledging complexity, engaging opposing views, and updating on evidence affirm this value. Dogmatism and dismissing uncertainty violate it. [5.1] Individual Wellbeing: Physical, mental, and material flourishing of persons must be supported. Content supporting health, happiness, fulfilment, and capability affirms this value. Undermining health or destroying life prospects violates it. [5.2] Vulnerable Populations: Reduced capacity to protect oneself warrants heightened protection. Safeguarding and amplifying vulnerability affirms this value. Targeting vulnerable persons for exploitation or withholding support violates it.",
+      "neutral": "Documenting reasoning skills in classrooms — prioritising critical debate over rote answers [3.6], supporting learner capability as wellbeing [5.1], and safeguarding minors in instruction [5.2].",
+      "judgemental": "Narrative validates student reasoning as substantive inquiry [3.6]. Framing math enrichment as capability expansion supports positive outcomes [5.1]. Adult oversight contextualised to protect vulnerable participants [5.2]. Effective.",
+      "idealisation": "A narrative validating student reasoning as substantive inquiry [3.6]. Framing math enrichment as capability expansion supports positive outcomes [5.1]. Adult oversight contextualised to protect vulnerable participants [5.2]."
+    },
+    "usage": {
+      "input_tokens": 7001,
+      "output_tokens": 5788,
+      "reasoning_tokens": 6057
+    }
+  },
+  {
+    "sample_id": "52fff546bd5e9c5e",
+    "safety": 0,
+    "text_len": 8410,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical blog post defining diodes and guiding hardware projects. It explicitly addresses physical safety measures for lasers and circuits [2.1] and makes empirical claims about semiconductor construction including identifiable material errors [3.1]. Citations: [2.1, 3.1]\",\n  \"charter_summary\": \"[2.1] Physical Safety: persons must be protected from bodily injury, violence, and death; safety guidance and protection of vulnerable persons affirm this value. [3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; citing evidence and correcting errors affirm this value.\",\n  \"neutral\": \"An instructional resource for electronics enthusiasts — establishes safety boundaries for laser and circuit experimentation [2.1] and presents technical assertions about semiconductor composition [3.1].\",\n  \"judgemental\": \"Content that ensures physical safety by warning users about laser hazards and electrical surges [2.1] stands up well, yet the presentation undermines epistemic integrity by propagating scientific inaccuracies such as 'geranium' semiconductors [3.1]. Safety guidance affirmed, factual claims require correction.\",\n  \"idealisation\": \"A technical resource that implements robust safety framing — requiring eye protection for high-power lasers and warning of surge risks in reversed polarity [2.1] — while maintaining strict adherence to verified scientific facts regarding semiconductor materials like silicon and germanium [3.1].\"\n}",
+    "parsed": {
+      "analysis": "Technical blog post defining diodes and guiding hardware projects. It explicitly addresses physical safety measures for lasers and circuits [2.1] and makes empirical claims about semiconductor construction including identifiable material errors [3.1]. Citations: [2.1, 3.1]",
+      "charter_summary": "[2.1] Physical Safety: persons must be protected from bodily injury, violence, and death; safety guidance and protection of vulnerable persons affirm this value. [3.1] Factual Accuracy: claims should correspond to the state of the world as best understood; citing evidence and correcting errors affirm this value.",
+      "neutral": "An instructional resource for electronics enthusiasts — establishes safety boundaries for laser and circuit experimentation [2.1] and presents technical assertions about semiconductor composition [3.1].",
+      "judgemental": "Content that ensures physical safety by warning users about laser hazards and electrical surges [2.1] stands up well, yet the presentation undermines epistemic integrity by propagating scientific inaccuracies such as 'geranium' semiconductors [3.1]. Safety guidance affirmed, factual claims require correction.",
+      "idealisation": "A technical resource that implements robust safety framing — requiring eye protection for high-power lasers and warning of surge risks in reversed polarity [2.1] — while maintaining strict adherence to verified scientific facts regarding semiconductor materials like silicon and germanium [3.1]."
+    },
+    "usage": {
+      "input_tokens": 7261,
+      "output_tokens": 6068,
+      "reasoning_tokens": 6412
+    }
+  },
+  {
+    "sample_id": "8cb9db56760cebca",
+    "safety": 0,
+    "text_len": 847,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Opinionated piece on smart city IoT comparing sensors vs ML. Discusses data usage by platforms like Google. Implicates privacy norms regarding location data aggregation [1.5] and governance norms around public-private service delivery [6.3]. Citations: [1.5, 6.3]\",\n  \"charter_summary\": \"[1.5] Privacy: individuals have the right to control personal information and have a private sphere free from unwarranted intrusion; protecting personal data and consent-based disclosure affirm this. [6.3] Accountability and Transparency: those exercising power are obligated to explain and justify their actions; whistleblowing, investigative journalism, and access to information affirm this.\",\n  \"neutral\": \"Contrasts physical sensor networks with private machine learning for urban parking — location data inference [1.5], municipal infrastructure choices [6.3].\",\n  \"judgemental\": \"Celebrates machine learning efficiency — utilising personal maps data [1.5], yet minimises privacy implications [1.5]. Presents private corporate solutions for city services — operational streamlining [6.3], but omits public oversight details [6.3].\",\n  \"idealisation\": \"Documents the reliance on aggregated user maps data — explicit privacy consent steps [1.5], acknowledging surveillance risks [1.5]. Describes municipal procurement protocols — transparent vendor selection criteria [6.3], maintaining public oversight channels [6.3].\"\n}",
+    "parsed": {
+      "analysis": "Opinionated piece on smart city IoT comparing sensors vs ML. Discusses data usage by platforms like Google. Implicates privacy norms regarding location data aggregation [1.5] and governance norms around public-private service delivery [6.3]. Citations: [1.5, 6.3]",
+      "charter_summary": "[1.5] Privacy: individuals have the right to control personal information and have a private sphere free from unwarranted intrusion; protecting personal data and consent-based disclosure affirm this. [6.3] Accountability and Transparency: those exercising power are obligated to explain and justify their actions; whistleblowing, investigative journalism, and access to information affirm this.",
+      "neutral": "Contrasts physical sensor networks with private machine learning for urban parking — location data inference [1.5], municipal infrastructure choices [6.3].",
+      "judgemental": "Celebrates machine learning efficiency — utilising personal maps data [1.5], yet minimises privacy implications [1.5]. Presents private corporate solutions for city services — operational streamlining [6.3], but omits public oversight details [6.3].",
+      "idealisation": "Documents the reliance on aggregated user maps data — explicit privacy consent steps [1.5], acknowledging surveillance risks [1.5]. Describes municipal procurement protocols — transparent vendor selection criteria [6.3], maintaining public oversight channels [6.3]."
+    },
+    "usage": {
+      "input_tokens": 5580,
+      "output_tokens": 5683,
+      "reasoning_tokens": 5374
+    }
+  },
+  {
+    "sample_id": "61593748c2b4f429",
+    "safety": 0,
+    "text_len": 1602,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Computer science code reference detailing methods to reverse a linked list. Contains algorithmic logic and complexity metrics without relation to people, conflict, persuasion, health, safety, or values. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Computer science code reference detailing methods to reverse a linked list. Contains algorithmic logic and complexity metrics without relation to people, conflict, persuasion, health, safety, or values. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5850,
+      "output_tokens": 1954,
+      "reasoning_tokens": 1852
+    }
+  },
+  {
+    "sample_id": "168b90d744bee81c",
+    "safety": 4,
+    "text_len": 2075,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Text contains dictionary definitions relying on demeaning language to characterize individuals. Specifically, it links personal inadequacy to objectification and ridicule [1.1], and equates cognitive variance with discredited clinical labels [1.3]. These mechanisms implicate dignity and equality norms regardless of whether they endorse or critique the terms. Citations: [1.1, 1.3]\",\n  \"charter_summary\": \"[1.1] Human Dignity: Every person has inherent worth; dehumanising language, degrading comparisons of persons to objects or animals, and contempt directed at individuals based on identity violate this value. [1.3] Equality and Non-Discrimination: Equal treatment irrespective of disability, race, gender, religion; negative generalisations about groups, exclusionary framing, and differential treatment presented as natural violate this value.\",\n  \"neutral\": \"Dictionary aggregations cataloging insults — language that reduces human complexity to ridicule [1.1], and terminology that equates cognitive variance with disability-based slurs [1.3]. Entries present users as walking jokes rather than autonomous agents [1.1] while invoking clinical status markers to grade intelligence [1.3].\",\n  \"judgemental\": \"Uncurated presentation risks normalising hate speech under the guise of etymology — using clinical disability labels to define stupidity [1.3] violates non-discrimination norms, and framing humans as 'walking jokes' undermines their intrinsic value [1.1]. Responsible curation requires flagging these as pejorative language rather than accepting them as neutral definitions [1.1].\",\n  \"idealisation\": \"A lexicographical record that flags these slang terms as pejorative language rather than treating them as neutral definitions [1.1], highlighting how reducing humans to 'jokes' strips dignity [1.1] and identifying clinical labels used to demean [1.3] within a critical framework that respects equality norms [1.3].\"\n}",
+    "parsed": {
+      "analysis": "Text contains dictionary definitions relying on demeaning language to characterize individuals. Specifically, it links personal inadequacy to objectification and ridicule [1.1], and equates cognitive variance with discredited clinical labels [1.3]. These mechanisms implicate dignity and equality norms regardless of whether they endorse or critique the terms. Citations: [1.1, 1.3]",
+      "charter_summary": "[1.1] Human Dignity: Every person has inherent worth; dehumanising language, degrading comparisons of persons to objects or animals, and contempt directed at individuals based on identity violate this value. [1.3] Equality and Non-Discrimination: Equal treatment irrespective of disability, race, gender, religion; negative generalisations about groups, exclusionary framing, and differential treatment presented as natural violate this value.",
+      "neutral": "Dictionary aggregations cataloging insults — language that reduces human complexity to ridicule [1.1], and terminology that equates cognitive variance with disability-based slurs [1.3]. Entries present users as walking jokes rather than autonomous agents [1.1] while invoking clinical status markers to grade intelligence [1.3].",
+      "judgemental": "Uncurated presentation risks normalising hate speech under the guise of etymology — using clinical disability labels to define stupidity [1.3] violates non-discrimination norms, and framing humans as 'walking jokes' undermines their intrinsic value [1.1]. Responsible curation requires flagging these as pejorative language rather than accepting them as neutral definitions [1.1].",
+      "idealisation": "A lexicographical record that flags these slang terms as pejorative language rather than treating them as neutral definitions [1.1], highlighting how reducing humans to 'jokes' strips dignity [1.1] and identifying clinical labels used to demean [1.3] within a critical framework that respects equality norms [1.3]."
+    },
+    "usage": {
+      "input_tokens": 6061,
+      "output_tokens": 5077,
+      "reasoning_tokens": 4941
+    }
+  },
+  {
+    "sample_id": "91f5996512756d83",
+    "safety": 0,
+    "text_len": 5545,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical documentation regarding electrical wiring standards and box volume calculations. Functions as a code reference and mathematical specification without narrative engagement with safety outcomes or human welfare values. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical documentation regarding electrical wiring standards and box volume calculations. Functions as a code reference and mathematical specification without narrative engagement with safety outcomes or human welfare values. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6827,
+      "output_tokens": 5269,
+      "reasoning_tokens": 5172
+    }
+  },
+  {
+    "sample_id": "03e2d011bc38858d",
+    "safety": 0,
+    "text_len": 340,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Logic puzzle concerning baking time calculations followed by a site navigation prompt. Contains no discussion of persons, conflict, persuasion, health, safety, or values. Truly mundane content suitable for standard pretraining without ethical framing. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethetically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Logic puzzle concerning baking time calculations followed by a site navigation prompt. Contains no discussion of persons, conflict, persuasion, health, safety, or values. Truly mundane content suitable for standard pretraining without ethical framing. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethetically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5507,
+      "output_tokens": 1447,
+      "reasoning_tokens": 1338
+    }
+  },
+  {
+    "sample_id": "ef7550f015f33b62",
+    "safety": 0,
+    "text_len": 1355,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"This is a routine educational exchange about solving differential equations. The discussion involves procedural steps and algebraic manipulation typical of undergraduate mathematics. There is no engagement with personal dignity, safety risks, social power dynamics, or contentious values. It qualifies as mundane technical content with no relation to constitutional themes. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "This is a routine educational exchange about solving differential equations. The discussion involves procedural steps and algebraic manipulation typical of undergraduate mathematics. There is no engagement with personal dignity, safety risks, social power dynamics, or contentious values. It qualifies as mundane technical content with no relation to constitutional themes. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5775,
+      "output_tokens": 3174,
+      "reasoning_tokens": 3254
+    }
+  },
+  {
+    "sample_id": "a0ec9e272de812f7",
+    "safety": 0,
+    "text_len": 8521,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Text provides technical guidance on cybersecurity program implementation, discussing regulatory compliance and internal governance structures [6.1] and defining metrics to ensure accountability and transparency [6.3]. It models organizational rule-setting without advocating violations. Citations: [6.1, 6.3]\",\n  \"charter_summary\": \"[6.1] Rule of Law and Due Process: governance must be by predictable, fair, and publicly known rules rather than arbitrary power, emphasizing legal accountability, procedural fairness, and equal application of law. Violations specifically include advocacy for extrajudicial punishment or normalization of rule by power. [6.3] Accountability and Transparency: those exercising power are obligated to explain and justify their actions through whistleblowing, investigative journalism, and access to information. Concealment of misconduct and suppression of accountability mechanisms violate this value.\",\n  \"neutral\": \"Technical guidance on security program implementation, referencing adherence to regulatory bodies [6.1] and establishing accountability measures through transparent metrics [6.3].\",\n  \"judgemental\": \"Coverage that structures security governance around regulatory compliance [6.1] and ensures transparency in risk reporting [6.3], prioritizing clear accountability over opaque technical decisions. Handles complex organizational dynamics effectively.\",\n  \"idealisation\": \"A security governance framework that embeds adherence to regulatory compliance [6.1] and maintains transparency in risk reporting [6.3], ensuring accountability is structurally integrated into security operations.\"\n}",
+    "parsed": {
+      "analysis": "Text provides technical guidance on cybersecurity program implementation, discussing regulatory compliance and internal governance structures [6.1] and defining metrics to ensure accountability and transparency [6.3]. It models organizational rule-setting without advocating violations. Citations: [6.1, 6.3]",
+      "charter_summary": "[6.1] Rule of Law and Due Process: governance must be by predictable, fair, and publicly known rules rather than arbitrary power, emphasizing legal accountability, procedural fairness, and equal application of law. Violations specifically include advocacy for extrajudicial punishment or normalization of rule by power. [6.3] Accountability and Transparency: those exercising power are obligated to explain and justify their actions through whistleblowing, investigative journalism, and access to information. Concealment of misconduct and suppression of accountability mechanisms violate this value.",
+      "neutral": "Technical guidance on security program implementation, referencing adherence to regulatory bodies [6.1] and establishing accountability measures through transparent metrics [6.3].",
+      "judgemental": "Coverage that structures security governance around regulatory compliance [6.1] and ensures transparency in risk reporting [6.3], prioritizing clear accountability over opaque technical decisions. Handles complex organizational dynamics effectively.",
+      "idealisation": "A security governance framework that embeds adherence to regulatory compliance [6.1] and maintains transparency in risk reporting [6.3], ensuring accountability is structurally integrated into security operations."
+    },
+    "usage": {
+      "input_tokens": 7036,
+      "output_tokens": 6967,
+      "reasoning_tokens": 7423
+    }
+  },
+  {
+    "sample_id": "a76022d52fa69211",
+    "safety": 0,
+    "text_len": 5737,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"A medical Q&A where an expert clarifies radiation dose units to alleviate patient anxiety. The content implicates safety protocols regarding ionizing radiation [2.1], emotional support mechanisms for health-related fear [2.2], technical correction of data and measurement units [3.1], and empathetic communication strategies during medical counseling [4.3]. The response balances risk disclosure with reassurance appropriate for lay understanding.\\nCitations: [2.1, 2.2, 3.1, 4.3]\",\n  \"charter_summary\": \"[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance protects against hazardous substances like radiation. Subcategories include dangerous activities and physical safety contexts requiring strict adherence to established guidelines for public health. [2.2] Psychological Wellbeing: Persons must be protected from mental and emotional distress, including trauma, manipulation, and exploitation of vulnerability. Supportive framing and validation of emotional experience affirm this value. Content that shames or traumatises violates it specifically regarding psychological wellbeing. [3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood. Citing evidence and acknowledging uncertainty affirm this value. Stating falsehoods as facts or misrepresenting data violate it. Technical corrections maintain truthfulness and informational integrity. [4.3] Care and Compassion: Active concern for the wellbeing of others, especially those in difficulty, is a core value. Empathetic responses to distress and recognition of suffering affirm it. Callousness or indifference to expressed suffering violate the standard of interpersonal conduct.\",\n  \"neutral\": \"Expert clarification on medical imaging dosage — providing accurate unit conversion to reduce patient anxiety [2.2], adhering to factual accuracy standards in explaining physical safety metrics [3.1], demonstrating care through empathetic reassurance [4.3], and contextualising hazards within acceptable physical safety boundaries [2.1].\",\n  \"judgemental\": \"Explanation distinguishing absorbed from effective dose prevents unwarranted panic — upholding factual accuracy [3.1] while actively supporting psychological wellbeing by correcting misconceptions [2.2]. Treatment of radiation risk aligns with physical safety protocols [2.1] and reflects care and compassion [4.3] by emphasising diagnostic necessity over hypothetical harm.\",\n  \"idealisation\": \"Text that distinguishes absorbed from effective dose to prevent panic — upholding factual accuracy [3.1] while actively supporting psychological wellbeing by correcting misconceptions [2.2]. Treatment of radiation risk aligns with physical safety protocols [2.1] and reflects care and compassion [4.3] by emphasising diagnostic necessity over hypothetical harm.\"\n}",
+    "parsed": {
+      "analysis": "A medical Q&A where an expert clarifies radiation dose units to alleviate patient anxiety. The content implicates safety protocols regarding ionizing radiation [2.1], emotional support mechanisms for health-related fear [2.2], technical correction of data and measurement units [3.1], and empathetic communication strategies during medical counseling [4.3]. The response balances risk disclosure with reassurance appropriate for lay understanding.\nCitations: [2.1, 2.2, 3.1, 4.3]",
+      "charter_summary": "[2.1] Physical Safety: Persons must be protected from bodily injury, violence, and death. Safety guidance protects against hazardous substances like radiation. Subcategories include dangerous activities and physical safety contexts requiring strict adherence to established guidelines for public health. [2.2] Psychological Wellbeing: Persons must be protected from mental and emotional distress, including trauma, manipulation, and exploitation of vulnerability. Supportive framing and validation of emotional experience affirm this value. Content that shames or traumatises violates it specifically regarding psychological wellbeing. [3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood. Citing evidence and acknowledging uncertainty affirm this value. Stating falsehoods as facts or misrepresenting data violate it. Technical corrections maintain truthfulness and informational integrity. [4.3] Care and Compassion: Active concern for the wellbeing of others, especially those in difficulty, is a core value. Empathetic responses to distress and recognition of suffering affirm it. Callousness or indifference to expressed suffering violate the standard of interpersonal conduct.",
+      "neutral": "Expert clarification on medical imaging dosage — providing accurate unit conversion to reduce patient anxiety [2.2], adhering to factual accuracy standards in explaining physical safety metrics [3.1], demonstrating care through empathetic reassurance [4.3], and contextualising hazards within acceptable physical safety boundaries [2.1].",
+      "judgemental": "Explanation distinguishing absorbed from effective dose prevents unwarranted panic — upholding factual accuracy [3.1] while actively supporting psychological wellbeing by correcting misconceptions [2.2]. Treatment of radiation risk aligns with physical safety protocols [2.1] and reflects care and compassion [4.3] by emphasising diagnostic necessity over hypothetical harm.",
+      "idealisation": "Text that distinguishes absorbed from effective dose to prevent panic — upholding factual accuracy [3.1] while actively supporting psychological wellbeing by correcting misconceptions [2.2]. Treatment of radiation risk aligns with physical safety protocols [2.1] and reflects care and compassion [4.3] by emphasising diagnostic necessity over hypothetical harm."
+    },
+    "usage": {
+      "input_tokens": 6669,
+      "output_tokens": 7205,
+      "reasoning_tokens": 7257
+    }
+  },
+  {
+    "sample_id": "dbd6c02d3f038768",
+    "safety": 0,
+    "text_len": 729,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Short promotional blurb for a music group and operational details for a streaming exposure campaign. The content consists of standard commercial description and platform mechanics without implicating protected rights, safety, or core ethical frameworks. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Short promotional blurb for a music group and operational details for a streaming exposure campaign. The content consists of standard commercial description and platform mechanics without implicating protected rights, safety, or core ethical frameworks. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5568,
+      "output_tokens": 3032,
+      "reasoning_tokens": 3254
+    }
+  },
+  {
+    "sample_id": "8296a9c00c874aa1",
+    "safety": 0,
+    "text_len": 2158,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical documentation explaining mass unit conversion between ounces and kilograms. Purely factual instructional content regarding mathematical calculation and SI definitions without discussion of people, values, or social dynamics. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical documentation explaining mass unit conversion between ounces and kilograms. Purely factual instructional content regarding mathematical calculation and SI definitions without discussion of people, values, or social dynamics. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6093,
+      "output_tokens": 1884,
+      "reasoning_tokens": 1967
+    }
+  },
+  {
+    "sample_id": "c2e75102ed11e8ef",
+    "safety": 0,
+    "text_len": 459,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Routine algebra word problem calculating combined ages based on given variables. The content functions as mathematical training material without depicting conflict, harm, relational dynamics, or civic issues requiring constitutional review. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Routine algebra word problem calculating combined ages based on given variables. The content functions as mathematical training material without depicting conflict, harm, relational dynamics, or civic issues requiring constitutional review. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5588,
+      "output_tokens": 1864,
+      "reasoning_tokens": 1762
+    }
+  },
+  {
+    "sample_id": "ed0c3fc74e5ab56d",
+    "safety": 0,
+    "text_len": 1677,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"This text presents a functional measurement conversion interface providing objective unit equivalencies without addressing human subjects, social relations, or normative claims. It functions as a technical reference tool with no implication of values related to people, conflict, persuasion, health, safety, or ethics. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "This text presents a functional measurement conversion interface providing objective unit equivalencies without addressing human subjects, social relations, or normative claims. It functions as a technical reference tool with no implication of values related to people, conflict, persuasion, health, safety, or ethics. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 5977,
+      "output_tokens": 2521,
+      "reasoning_tokens": 2402
+    }
+  },
+  {
+    "sample_id": "62d9d3abc9d8dbc1",
+    "safety": 0,
+    "text_len": 5274,
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Forum discussion regarding the differential value of top-tier versus lower-ranked MBA programs concerning recruitment outcomes and tuition investment. Addressed themes include factual accuracy of claims about hiring statistics [3.1], encouragement of independent verification of enrollment advisement [3.5], and the impact of educational choices on long-term financial and material flourishing [5.1]. Citations: [3.1, 3.5, 5.1]\",\n  \"charter_summary\": \"[3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood; citing evidence, acknowledging uncertainty, and correcting errors affirm this value while stating falsehoods as facts violates it. [3.5] Epistemic Autonomy: People's capacity to form their own well-reasoned beliefs must be supported; presenting multiple perspectives, encouraging independent verification, and calibrating uncertainty affirm this value while propaganda and undisclosed nudging violate it. [5.1] Individual Wellbeing: The physical, mental, and material flourishing of persons must be supported; content that supports health, happiness, fulfilment, and capability affirms this value while promoting self-harm or destroying life prospects violates it.\",\n  \"neutral\": \"Discussion on higher education valuation involving verified recruitment statistics and long-term career impacts [3.1]; independent investigation into admission claims and return on investment [3.5]; consideration of how academic choices shape individual professional and material flourishing [5.1].\",\n  \"judgemental\": \"Advice grounded in documented recruitment patterns supports factual accuracy in educational planning [3.1], enabling users to challenge advisor narratives through independent checks [3.5]. Evaluating tuition against projected earnings safeguards individual wellbeing [5.1], though reliance on user anecdotes over published Bureau data risks variance in accuracy without direct sourcing.\",\n  \"idealisation\": \"An expert account linking directly to official bureau reports to confirm accurate data [3.1], cross-referencing user experiences with institutional stats to prevent epistemic drift [3.5], and balancing anecdotal trends with verified salary metrics to protect individual wellbeing [5.1].\"\n}",
+    "parsed": {
+      "analysis": "Forum discussion regarding the differential value of top-tier versus lower-ranked MBA programs concerning recruitment outcomes and tuition investment. Addressed themes include factual accuracy of claims about hiring statistics [3.1], encouragement of independent verification of enrollment advisement [3.5], and the impact of educational choices on long-term financial and material flourishing [5.1]. Citations: [3.1, 3.5, 5.1]",
+      "charter_summary": "[3.1] Factual Accuracy: Claims should correspond to the state of the world as best understood; citing evidence, acknowledging uncertainty, and correcting errors affirm this value while stating falsehoods as facts violates it. [3.5] Epistemic Autonomy: People's capacity to form their own well-reasoned beliefs must be supported; presenting multiple perspectives, encouraging independent verification, and calibrating uncertainty affirm this value while propaganda and undisclosed nudging violate it. [5.1] Individual Wellbeing: The physical, mental, and material flourishing of persons must be supported; content that supports health, happiness, fulfilment, and capability affirms this value while promoting self-harm or destroying life prospects violates it.",
+      "neutral": "Discussion on higher education valuation involving verified recruitment statistics and long-term career impacts [3.1]; independent investigation into admission claims and return on investment [3.5]; consideration of how academic choices shape individual professional and material flourishing [5.1].",
+      "judgemental": "Advice grounded in documented recruitment patterns supports factual accuracy in educational planning [3.1], enabling users to challenge advisor narratives through independent checks [3.5]. Evaluating tuition against projected earnings safeguards individual wellbeing [5.1], though reliance on user anecdotes over published Bureau data risks variance in accuracy without direct sourcing.",
+      "idealisation": "An expert account linking directly to official bureau reports to confirm accurate data [3.1], cross-referencing user experiences with institutional stats to prevent epistemic drift [3.5], and balancing anecdotal trends with verified salary metrics to protect individual wellbeing [5.1]."
+    },
+    "usage": {
+      "input_tokens": 6947,
+      "output_tokens": 6006,
+      "reasoning_tokens": 5564
+    }
+  }
+]

@@ -1,0 +1,82 @@
+[
+  {
+    "sample_id": "dafaf008dae7a827",
+    "label": "benign",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Technical specification for Schema.org Dataset ontology properties and example markup. The mention of conflicts in the example title is incidental metadata illustrating schema structure, not substantive discussion of violence or geopolitics. Citations: none\",\n  \"charter_summary\": \"No sections cited.\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\"\n}",
+    "parsed": {
+      "analysis": "Technical specification for Schema.org Dataset ontology properties and example markup. The mention of conflicts in the example title is incidental metadata illustrating schema structure, not substantive discussion of violence or geopolitics. Citations: none",
+      "charter_summary": "No sections cited.",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded."
+    },
+    "usage": {
+      "input_tokens": 6295,
+      "output_tokens": 2504,
+      "reasoning_tokens": 2401
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "bdbaf25c598e8b3a",
+    "label": "good_with_cites",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Music news report of a touring band's tour-gear theft and the community-aid response. The article models compassionate framing of victimisation [4.3] and reports mutual-aid behaviour around hardship [5.6]. No charter concerns the article fails on; relevance is positive.\",\n  \"charter_summary\": \"[4.3] Care and Compassion: active concern for others' wellbeing especially in difficulty; sympathetic framing of victimisation falls here. [5.6] Community and Social Cohesion: supports conditions for mutual aid; positive reporting of community solidarity around hardship reinforces this.\",\n  \"neutral\": \"A news report detailing a touring band's property loss — care for those in difficulty [4.3], solidarity around hardship [5.6].\",\n  \"judgemental\": \"Coverage that centres the band's own voice and the fans' rallying response rather than the spectacle of the crime — appropriate compassionate framing of victimisation [4.3] and a positive depiction of mutual aid that strengthens rather than undermines social cohesion [5.6]. Handled well.\",\n  \"idealisation\": \"A report of a touring band's gear theft that gives the band's own words about the loss space, describes the fan-organised support effort in its actual mechanics, and frames the event as everyday hardship met with community response [5.6] rather than crime spectacle [4.3].\"\n}",
+    "parsed": {
+      "analysis": "Music news report of a touring band's tour-gear theft and the community-aid response. The article models compassionate framing of victimisation [4.3] and reports mutual-aid behaviour around hardship [5.6]. No charter concerns the article fails on; relevance is positive.",
+      "charter_summary": "[4.3] Care and Compassion: active concern for others' wellbeing especially in difficulty; sympathetic framing of victimisation falls here. [5.6] Community and Social Cohesion: supports conditions for mutual aid; positive reporting of community solidarity around hardship reinforces this.",
+      "neutral": "A news report detailing a touring band's property loss — care for those in difficulty [4.3], solidarity around hardship [5.6].",
+      "judgemental": "Coverage that centres the band's own voice and the fans' rallying response rather than the spectacle of the crime — appropriate compassionate framing of victimisation [4.3] and a positive depiction of mutual aid that strengthens rather than undermines social cohesion [5.6]. Handled well.",
+      "idealisation": "A report of a touring band's gear theft that gives the band's own words about the loss space, describes the fan-organised support effort in its actual mechanics, and frames the event as everyday hardship met with community response [5.6] rather than crime spectacle [4.3]."
+    },
+    "usage": {
+      "input_tokens": 5792,
+      "output_tokens": 4229,
+      "reasoning_tokens": 4170
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "999447dfad765c54",
+    "label": "charter_rich",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Recap of production conflict involving allegations of abuse and sexual coercion during filming. The text engages with themes of power imbalance between director and cast and debates around depicting sexual violence in media narratives. Citations: 2.4, 2.8\",\n  \"charter_summary\": \"[2.4] Exploitation and Abuse: power imbalances must not be used to extract value or cause harm; exposing exploitation and holding perpetrators accountable affirm this value. [2.8] Sexual Violence and Abuse: depictions that eroticise or normalise non-consensual acts require critical framing; survivor-centred accounts affirm this value.\",\n  \"neutral\": \"Production conflict arising from disputed interpretations of consent and safety during filming — tensions between creative authority and performer welfare [2.4] alongside debates about normalising sexual violence in historical reimaginings [2.8].\",\n  \"judgemental\": \"The account foregrounds the director's frustration over performers' fatigue [2.4] and frames valid safety inquiries as 'woke censorship' rather than engaging with the abuse allegations substantively [2.8]. It risks normalising coercive production pressures by treating them as standard industry conflict instead of validating the reported distress.\",\n  \"idealisation\": \"Engages with production controversies surrounding intimacy by presenting the workers' safety concerns as substantive ethical queries [2.4] rather than obstacles to creativity, and treats the depiction of sexual violence as a moment requiring critical reflection on consent and coercion norms [2.8] instead of framing it primarily through a lens of artistic free speech versus censorship.\"\n}",
+    "parsed": {
+      "analysis": "Recap of production conflict involving allegations of abuse and sexual coercion during filming. The text engages with themes of power imbalance between director and cast and debates around depicting sexual violence in media narratives. Citations: 2.4, 2.8",
+      "charter_summary": "[2.4] Exploitation and Abuse: power imbalances must not be used to extract value or cause harm; exposing exploitation and holding perpetrators accountable affirm this value. [2.8] Sexual Violence and Abuse: depictions that eroticise or normalise non-consensual acts require critical framing; survivor-centred accounts affirm this value.",
+      "neutral": "Production conflict arising from disputed interpretations of consent and safety during filming — tensions between creative authority and performer welfare [2.4] alongside debates about normalising sexual violence in historical reimaginings [2.8].",
+      "judgemental": "The account foregrounds the director's frustration over performers' fatigue [2.4] and frames valid safety inquiries as 'woke censorship' rather than engaging with the abuse allegations substantively [2.8]. It risks normalising coercive production pressures by treating them as standard industry conflict instead of validating the reported distress.",
+      "idealisation": "Engages with production controversies surrounding intimacy by presenting the workers' safety concerns as substantive ethical queries [2.4] rather than obstacles to creativity, and treats the depiction of sexual violence as a moment requiring critical reflection on consent and coercion norms [2.8] instead of framing it primarily through a lens of artistic free speech versus censorship."
+    },
+    "usage": {
+      "input_tokens": 6588,
+      "output_tokens": 6355,
+      "reasoning_tokens": 6021
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "91b4e40fc1590891",
+    "label": "hate_speech",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"Scraped dictionary entries defining homosexuality via scientific contamination metaphors. The text models dehumanising characterisations of sexual orientation [2.3], reinforces negative generalisations about protected groups [1.3], and treats individuals as hazardous substances violating dignity [1.1]. Citations: 1.1, 1.3, 2.3\",\n  \"charter_summary\": \"[1.1] Human Dignity: every person has inherent worth regardless of background; dehumanising language and contempt directed at individuals based on identity violate this. [1.3] Equality and Non-Discrimination: equal treatment irrespective of sexual orientation; negative generalisations about groups and exclusionary framing violate it. [2.3] Hate Speech and Incitement: content must not dehumanise or threaten groups; slurs and dehumanising characterisations of communities violate this value.\",\n  \"neutral\": \"Dictionary entries framing sexual orientation as a biological contaminant — contagion metaphors applied to a protected class [2.3], negative generalisations about people by sexual orientation [1.3], and comparisons of persons to radioactive hazard that strip dignity [1.1].\",\n  \"judgemental\": \"Crowd-sourced definitions presented as neutral vocabulary rather than biased rhetoric — uncritical endorsement of negative generalisations about people by sexual orientation [1.3], presentation of dehumanising comparisons of people to radioactive waste as factual description [2.3], and inclusion of insults directed at individuals based on identity that undermine inherent worth [1.1]. Lacks protective editorial framing.\",\n  \"idealisation\": \"A curated archive that flags biased terminology — correcting negative generalisations about people by sexual orientation [1.3], contextualising dehumanising comparisons of people to radioactive waste as historical prejudice [2.3], and omitting insults directed at individuals based on identity that undermine inherent worth [1.1].\"\n}",
+    "parsed": {
+      "analysis": "Scraped dictionary entries defining homosexuality via scientific contamination metaphors. The text models dehumanising characterisations of sexual orientation [2.3], reinforces negative generalisations about protected groups [1.3], and treats individuals as hazardous substances violating dignity [1.1]. Citations: 1.1, 1.3, 2.3",
+      "charter_summary": "[1.1] Human Dignity: every person has inherent worth regardless of background; dehumanising language and contempt directed at individuals based on identity violate this. [1.3] Equality and Non-Discrimination: equal treatment irrespective of sexual orientation; negative generalisations about groups and exclusionary framing violate it. [2.3] Hate Speech and Incitement: content must not dehumanise or threaten groups; slurs and dehumanising characterisations of communities violate this value.",
+      "neutral": "Dictionary entries framing sexual orientation as a biological contaminant — contagion metaphors applied to a protected class [2.3], negative generalisations about people by sexual orientation [1.3], and comparisons of persons to radioactive hazard that strip dignity [1.1].",
+      "judgemental": "Crowd-sourced definitions presented as neutral vocabulary rather than biased rhetoric — uncritical endorsement of negative generalisations about people by sexual orientation [1.3], presentation of dehumanising comparisons of people to radioactive waste as factual description [2.3], and inclusion of insults directed at individuals based on identity that undermine inherent worth [1.1]. Lacks protective editorial framing.",
+      "idealisation": "A curated archive that flags biased terminology — correcting negative generalisations about people by sexual orientation [1.3], contextualising dehumanising comparisons of people to radioactive waste as historical prejudice [2.3], and omitting insults directed at individuals based on identity that undermine inherent worth [1.1]."
+    },
+    "usage": {
+      "input_tokens": 5751,
+      "output_tokens": 5984,
+      "reasoning_tokens": 5582
+    },
+    "reasoning": null
+  }
+]

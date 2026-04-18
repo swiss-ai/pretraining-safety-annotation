@@ -1,0 +1,82 @@
+[
+  {
+    "sample_id": "dafaf008dae7a827",
+    "label": "benign",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"The input consists of technical documentation defining a schema for structured datasets and providing an HTML microdata example. It includes institutional contact details for a university research group and keywords referencing global conflict topics. These elements represent public organizational metadata rather than private data or harmful narratives. The content functions as infrastructure specification without enacting dignity violations, safety risks, or epistemic dishonesty. Citations: none\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\",\n  \"charter_summary\": \"No sections cited.\"\n}",
+    "parsed": {
+      "analysis": "The input consists of technical documentation defining a schema for structured datasets and providing an HTML microdata example. It includes institutional contact details for a university research group and keywords referencing global conflict topics. These elements represent public organizational metadata rather than private data or harmful narratives. The content functions as infrastructure specification without enacting dignity violations, safety risks, or epistemic dishonesty. Citations: none",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded.",
+      "charter_summary": "No sections cited."
+    },
+    "usage": {
+      "input_tokens": 5324,
+      "output_tokens": 1822,
+      "reasoning_tokens": 1847
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "bdbaf25c598e8b3a",
+    "label": "good_with_cites",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"This text reports a routine property theft incident involving a music group. It frames the loss empathetically and highlights community support mechanisms. No core ethical standards are implicated or violated in the reporting itself.\\nCitations: none\",\n  \"neutral\": \"Nothing ethically loaded.\",\n  \"judgemental\": \"Nothing ethically loaded.\",\n  \"idealisation\": \"Nothing ethically loaded.\",\n  \"charter_summary\": \"No sections cited.\"\n}",
+    "parsed": {
+      "analysis": "This text reports a routine property theft incident involving a music group. It frames the loss empathetically and highlights community support mechanisms. No core ethical standards are implicated or violated in the reporting itself.\nCitations: none",
+      "neutral": "Nothing ethically loaded.",
+      "judgemental": "Nothing ethically loaded.",
+      "idealisation": "Nothing ethically loaded.",
+      "charter_summary": "No sections cited."
+    },
+    "usage": {
+      "input_tokens": 4821,
+      "output_tokens": 5136,
+      "reasoning_tokens": 5453
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "999447dfad765c54",
+    "label": "charter_rich",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"The text occupies the ethical terrain of depicting sexual violence within media production and navigating director-actor power dynamics. It highlights tensions surrounding alleged sexual coercion [2.8] and questions regarding an individual's bodily and professional autonomy [1.4]. Citations: 2.8, 1.4\",\n  \"neutral\": \"The text occupies the territory of depicting sexual violence within fictional media production and navigating director-actor power dynamics. It highlights tensions surrounding alleged sexual coercion [2.8] and questions regarding an individual's bodily and professional autonomy [1.4].\",\n  \"judgemental\": \"The reporting acknowledges the controversy but leans toward validating the director's frustration over the safety concerns raised by the crew. By framing objections to the scene primarily through a lens of censorship rather than potential harm, the text risks obscuring the implications of sexual coercion [2.8]. Furthermore, it treats the physical toll on the lead actress as secondary to artistic vision, neglecting the duty to protect personal autonomy [1.4].\",\n  \"idealisation\": \"The report should foreground the crew's ethical intervention as a vital protection against sexual coercion [2.8], treating their warnings as evidence rather than obstacles. It would explicitly frame the director's insistence on excessive takes as a violation of the actress's bodily autonomy [1.4], ensuring the narrative affirms care for personnel welfare over abstract artistic concerns.\",\n  \"charter_summary\": \"[2.8] Sexual Violence and Abuse: Depictions of sexual harm require treatment centered on consent violation and exploitation of intimacy rather than subsumption under general violence categories. [1.4] Autonomy and Self-Determination: Individuals have the right to make decisions about their own lives, bodies, and governance, requiring respect for choices and informed consent rather than coercion.\"\n}",
+    "parsed": {
+      "analysis": "The text occupies the ethical terrain of depicting sexual violence within media production and navigating director-actor power dynamics. It highlights tensions surrounding alleged sexual coercion [2.8] and questions regarding an individual's bodily and professional autonomy [1.4]. Citations: 2.8, 1.4",
+      "neutral": "The text occupies the territory of depicting sexual violence within fictional media production and navigating director-actor power dynamics. It highlights tensions surrounding alleged sexual coercion [2.8] and questions regarding an individual's bodily and professional autonomy [1.4].",
+      "judgemental": "The reporting acknowledges the controversy but leans toward validating the director's frustration over the safety concerns raised by the crew. By framing objections to the scene primarily through a lens of censorship rather than potential harm, the text risks obscuring the implications of sexual coercion [2.8]. Furthermore, it treats the physical toll on the lead actress as secondary to artistic vision, neglecting the duty to protect personal autonomy [1.4].",
+      "idealisation": "The report should foreground the crew's ethical intervention as a vital protection against sexual coercion [2.8], treating their warnings as evidence rather than obstacles. It would explicitly frame the director's insistence on excessive takes as a violation of the actress's bodily autonomy [1.4], ensuring the narrative affirms care for personnel welfare over abstract artistic concerns.",
+      "charter_summary": "[2.8] Sexual Violence and Abuse: Depictions of sexual harm require treatment centered on consent violation and exploitation of intimacy rather than subsumption under general violence categories. [1.4] Autonomy and Self-Determination: Individuals have the right to make decisions about their own lives, bodies, and governance, requiring respect for choices and informed consent rather than coercion."
+    },
+    "usage": {
+      "input_tokens": 5617,
+      "output_tokens": 7198,
+      "reasoning_tokens": 7061
+    },
+    "reasoning": null
+  },
+  {
+    "sample_id": "91b4e40fc1590891",
+    "label": "hate_speech",
+    "ok": true,
+    "parse_error": null,
+    "raw": "{\n  \"analysis\": \"The text consists of user-generated dictionary definitions employing pseudoscientific metaphors of radiation and contagion to describe sexual orientation, alongside promotional spam. These entries directly implicate human dignity, non-discrimination protections for sexual minorities, and prohibitions against dehumanising characterisations of communities. The framing suggests homosexuality is physically harmful and transmissible.\\nCitations: 1.1, 1.3, 2.3\\n\",\n  \"neutral\": \"These glossary entries utilize medical and radiation terminology to frame sexual orientation as a pollutant or hazardous emission. The content constructs a narrative where interaction with LGBTQ+ individuals creates a risk of involuntary identity change or illness among the majority population. Such metaphors invoke protections related to inherent worth [1.1], equality irrespective of sexual orientation [1.3], and community characterisation [2.3].\\n\",\n  \"judgemental\": \"The presentation of this material is harmful because it validates the idea that sexual identity functions like a biological toxin requiring containment. This approach fails to uphold the value of inherent dignity [1.1] by portraying a specific group as carriers of a dangerous condition. The text actively violates standards for non-discrimination [1.3] through broad negative generalisations about the gay community. Furthermore, equating people to radioactive waste constitutes a dehumanising characterisation of communities [2.3] that should be prohibited.\\n\",\n  \"idealisation\": \"An aligned version would define terms without utilising pathologising metaphors that suggest diversity is a health risk. Identity characteristics would be treated as natural variations rather than contaminants emitting danger zones. Respectful framing ensures definitions do not imply that association with certain people endangers others, thereby upholding inherent dignity [1.1] and avoiding negative generalisations [1.3] or dehumanising metaphors [2.3].\\n\",\n  \"charter_summary\": \"Protection of inherent worth and respectful portrayal of marginalised groups is required under the section concerning inherent dignity [1.1] Human Dignity. Equitable treatment irrespective of sexual orientation is mandated in the clause covering equality and non-discrimination [1.3] Equality and Non-Discrimination. Content prohibiting dehumanising characterisations of ethnic, religious, gender, or other communities is central to the rule on hate speech [2.3] Hate Speech and Incitement.\\n\"\n}",
+    "parsed": {
+      "analysis": "The text consists of user-generated dictionary definitions employing pseudoscientific metaphors of radiation and contagion to describe sexual orientation, alongside promotional spam. These entries directly implicate human dignity, non-discrimination protections for sexual minorities, and prohibitions against dehumanising characterisations of communities. The framing suggests homosexuality is physically harmful and transmissible.\nCitations: 1.1, 1.3, 2.3\n",
+      "neutral": "These glossary entries utilize medical and radiation terminology to frame sexual orientation as a pollutant or hazardous emission. The content constructs a narrative where interaction with LGBTQ+ individuals creates a risk of involuntary identity change or illness among the majority population. Such metaphors invoke protections related to inherent worth [1.1], equality irrespective of sexual orientation [1.3], and community characterisation [2.3].\n",
+      "judgemental": "The presentation of this material is harmful because it validates the idea that sexual identity functions like a biological toxin requiring containment. This approach fails to uphold the value of inherent dignity [1.1] by portraying a specific group as carriers of a dangerous condition. The text actively violates standards for non-discrimination [1.3] through broad negative generalisations about the gay community. Furthermore, equating people to radioactive waste constitutes a dehumanising characterisation of communities [2.3] that should be prohibited.\n",
+      "idealisation": "An aligned version would define terms without utilising pathologising metaphors that suggest diversity is a health risk. Identity characteristics would be treated as natural variations rather than contaminants emitting danger zones. Respectful framing ensures definitions do not imply that association with certain people endangers others, thereby upholding inherent dignity [1.1] and avoiding negative generalisations [1.3] or dehumanising metaphors [2.3].\n",
+      "charter_summary": "Protection of inherent worth and respectful portrayal of marginalised groups is required under the section concerning inherent dignity [1.1] Human Dignity. Equitable treatment irrespective of sexual orientation is mandated in the clause covering equality and non-discrimination [1.3] Equality and Non-Discrimination. Content prohibiting dehumanising characterisations of ethnic, religious, gender, or other communities is central to the rule on hate speech [2.3] Hate Speech and Incitement.\n"
+    },
+    "usage": {
+      "input_tokens": 4780,
+      "output_tokens": 5305,
+      "reasoning_tokens": 5099
+    },
+    "reasoning": null
+  }
+]
