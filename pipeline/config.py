@@ -264,6 +264,24 @@ class Phase4Config:
 
 
 @dataclass
+class Phase5Config:
+    """Phase 5: charter-aware paired SFT generation on Alps SLURM."""
+    output_dir: str = ""
+    prompt_version: str = "v6"
+    generator_alias: str = "qwen3.5-35b-a3b"
+    total_rows: int = 50000
+    seed: int = 42
+    rows_per_task: int = 5000
+    max_concurrent_requests: int = 1024
+    save_batch_size: int = 200
+    progress_interval: int = 500
+    max_retries_per_doc: int = 5
+    hf_repo_id: str = ""
+    sglang: Phase4SglangConfig = field(default_factory=Phase4SglangConfig)
+    slurm: Phase4SlurmConfig = field(default_factory=Phase4SlurmConfig)
+
+
+@dataclass
 class AppConfig:
     charter_path: str = MISSING
     writing_guidelines_path: str = MISSING
@@ -274,6 +292,7 @@ class AppConfig:
     phase2: Phase2Config = field(default_factory=Phase2Config)
     phase3: Phase3Config = field(default_factory=Phase3Config)
     phase4: Phase4Config = field(default_factory=Phase4Config)
+    phase5: Phase5Config = field(default_factory=Phase5Config)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
