@@ -222,13 +222,10 @@ phase5:
     reasoning_parser: kimi_k2
     env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
     extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
+    # MoE tuning configs were at /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/
+    # but got cleaned by $SCRATCH auto-purge. sglang auto-tunes without them (~1-2% slower).
     pre_launch_cmds: |
       pip install nvidia-cudnn-cu12==9.16.0.29
-      SGLANG_PATH=\$(python3 -c 'import sglang; print(sglang.__path__[0])')
-      TRITON_VERSION=\$(python3 -c 'import triton; print(\"triton_\" + triton.__version__.replace(\".\", \"_\"))')
-      MOE_CONFIG_DIR=\"\$SGLANG_PATH/srt/layers/moe/fused_moe_triton/configs/\$TRITON_VERSION\"
-      mkdir -p \"\$MOE_CONFIG_DIR\"
-      cp /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/*.json \"\$MOE_CONFIG_DIR/\"
   slurm:
     partition: normal
     account: a141
