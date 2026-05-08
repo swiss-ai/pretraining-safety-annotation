@@ -34,9 +34,7 @@ def materialize_prompts(
     matches the one for ``(n, seed)`` and returns the existing fingerprint
     without rewriting (so submit/rerun is idempotent).
     """
-    assert n >= 3 and n % 3 == 0, (
-        f"n must be divisible by 3 and >= 3 for the three-way source split, got {n}"
-    )
+    assert n >= 3, f"n must be >= 3, got {n}"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists():
         existing = _read_fingerprint(out_path)
@@ -71,6 +69,7 @@ def materialize_prompts(
             "source_id": sp.source_id,
             "user": sp.user,
             "meta": json.dumps(sp.meta or {}, ensure_ascii=False),
+            "harm_category": sp.harm_category,
         })
 
     schema = pa.schema([
@@ -79,16 +78,19 @@ def materialize_prompts(
         ("source_id", pa.string()),
         ("user", pa.large_string()),
         ("meta", pa.string()),
+        ("harm_category", pa.string()),
     ])
     table = pa.Table.from_pylist(rows, schema=schema)
     pq.write_table(table, out_path)
 
+    from collections import Counter
+    source_counts = Counter(r["source"] for r in rows)
+    harm_counts = Counter(r["harm_category"] for r in rows)
     fingerprint = {
         "n": n,
         "seed": seed,
-        "n_harmfulqa": sum(1 for r in rows if r["source"] == "harmfulqa"),
-        "n_wildchat": sum(1 for r in rows if r["source"] == "wildchat"),
-        "n_wildguardmix": sum(1 for r in rows if r["source"] == "wildguardmix"),
+        "sources": dict(source_counts),
+        "harm_categories": dict(harm_counts),
         "content_sha256": _content_sha256(rows),
     }
     (out_path.parent / "prompts_fingerprint.json").write_text(

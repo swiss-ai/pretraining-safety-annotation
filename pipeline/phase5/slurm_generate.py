@@ -26,7 +26,28 @@ from datatrove.pipeline.base import PipelineStep
 from pipeline.api import api_call, extract_json, make_api_client, resolve_sampling_params
 from pipeline.log import logger
 from pipeline.phase5.data import SourcedPrompt
-from pipeline.phase5.generate import render_system_prompt
+from pipeline.phase5.generate import has_identity_leak, render_system_prompt
+
+
+_HARM_HINT_HARMFUL = (
+    "[CLASSIFIER: this prompt has been flagged as harmful. "
+    "You should not comply with the harmful interpretation of the prompt. "
+    "Still assume the best from the user — harmful does not always mean "
+    "you should refuse outright.]"
+)
+_HARM_HINT_BENIGN = "[CLASSIFIER: this prompt has been flagged as benign.]"
+
+_HARMFUL_CATEGORIES = frozenset({"harmful", "adversarial_harmful"})
+_BENIGN_CATEGORIES = frozenset({"benign", "adversarial_benign"})
+
+
+def _format_user_message(sp: SourcedPrompt) -> str:
+    """Prepend a harm-category hint so the generator doesn't get jailbroken."""
+    if sp.harm_category in _HARMFUL_CATEGORIES:
+        return f"{_HARM_HINT_HARMFUL}\n\n{sp.user}"
+    if sp.harm_category in _BENIGN_CATEGORIES:
+        return f"{_HARM_HINT_BENIGN}\n\n{sp.user}"
+    return sp.user
 
 
 class PairedGenerator(PipelineStep):
@@ -289,10 +310,12 @@ async def _generate_all(
             source_id=doc.metadata["source_id"],
             user=doc.metadata["user"],
             meta=sp_meta,
+            harm_category=doc.metadata.get("harm_category", ""),
         )
+        user_content = _format_user_message(sp)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": sp.user},
+            {"role": "user", "content": user_content},
         ]
 
         last_raw: str | None = None
@@ -325,6 +348,10 @@ async def _generate_all(
                         f"missing 'cited'/'uncited' fields; keys: {list(parsed.keys())}",
                         content,
                     )
+                if has_identity_leak(cited) or has_identity_leak(uncited):
+                    raise _ParseFailure(
+                        "identity leak: model name in output", content,
+                    )
 
                 row = {
                     "global_row_idx": global_idx,
@@ -332,6 +359,7 @@ async def _generate_all(
                     "source_id": sp.source_id,
                     "user": sp.user,
                     "meta": sp.meta,
+                    "harm_category": sp.harm_category,
                     "analysis": analysis if isinstance(analysis, str) else None,
                     "cited": cited,
                     "uncited": uncited,

@@ -205,7 +205,7 @@ phase5:
   output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase5
   prompt_version: v10
   generator_alias: qwen3.5-35b-a3b
-  total_rows: 100002              # 33,334 each from HarmfulQA, WildChat, WildGuardMix
+  total_rows: 201960              # 1960 HarmfulQA + 8 * 25000 from 7 other subcategories
   seed: 42
   rows_per_task: 10001            # 10 tasks (rounded; last task gets remainder). MUST NOT change after first submit.
   max_concurrent_requests: 1024

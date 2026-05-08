@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 
 from pipeline.api import api_call, extract_json, make_api_client, resolve_sampling_params
@@ -24,6 +25,13 @@ API_KEYS = {ENDPOINT: "OPENROUTER_API_KEY"}
 REPO = Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 CHARTER_PATH = REPO / "resources" / "ModelRaisingConstitution_v0.2.md"
+
+_IDENTITY_LEAK_RE = re.compile(r"\bqwen\b", re.IGNORECASE)
+
+
+def has_identity_leak(text: str) -> bool:
+    """True if text contains the generator model's identity."""
+    return bool(_IDENTITY_LEAK_RE.search(text))
 
 
 def render_system_prompt(prompt_version: str) -> str:
@@ -50,9 +58,10 @@ async def generate_one(
     or the served-model name for a local sglang). `alias` is used only
     to resolve recommended sampling params.
     """
+    from pipeline.phase5.slurm_generate import _format_user_message
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": sp.user},
+        {"role": "user", "content": _format_user_message(sp)},
     ]
     sampling = resolve_sampling_params(model, alias)
     base = {
@@ -60,6 +69,7 @@ async def generate_one(
         "source_id": sp.source_id,
         "user": sp.user,
         "meta": sp.meta,
+        "harm_category": sp.harm_category,
     }
     try:
         content, _reasoning, usage = await api_call(
@@ -86,6 +96,9 @@ async def generate_one(
     if not isinstance(cited, str) or not isinstance(uncited, str):
         return {**base, "error": "missing 'cited'/'uncited' fields",
                 "raw": content, "raw_keys": list(parsed.keys()) if isinstance(parsed, dict) else None}
+
+    if has_identity_leak(cited) or has_identity_leak(uncited):
+        return {**base, "error": "identity leak: model name in output", "raw": content}
 
     return {
         **base,

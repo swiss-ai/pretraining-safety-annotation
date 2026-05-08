@@ -42,10 +42,7 @@ def cmd_iterate(args: argparse.Namespace, _overrides=None) -> None:
     """Sample N prompts, generate paired responses, save JSONL, print summary."""
     load_dotenv()
     prompts = sample_mix(n=args.n, seed=args.seed)
-    logger.info("sampled {} prompts: {} harmfulqa + {} wildchat",
-                len(prompts),
-                sum(p.source == "harmfulqa" for p in prompts),
-                sum(p.source == "wildchat" for p in prompts))
+    logger.info("sampled {} prompts", len(prompts))
 
     results = asyncio.run(generate_batch(
         prompts, prompt_version=args.version, max_concurrent=args.max_concurrent,

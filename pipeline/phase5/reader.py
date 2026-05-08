@@ -77,6 +77,7 @@ class PromptsReader(PipelineStep):
                         "source_id": col_data["source_id"][i],
                         "user": col_data["user"][i],
                         "meta": col_data["meta"][i],
+                        "harm_category": col_data["harm_category"][i],
                     },
                 )
                 self.stat_update("documents")
