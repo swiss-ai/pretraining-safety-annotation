@@ -203,7 +203,7 @@ def load_wildjailbreak_all() -> dict[str, list[SourcedPrompt]]:
 
 HARMFULQA_SIZE = 1_960
 N_SLOTS = 8  # WildChat counts as 2 slots, 6 other subcategories count as 1 each
-DEFAULT_TOTAL = N_SLOTS * 25_000 + HARMFULQA_SIZE  # 201,960
+DEFAULT_TOTAL = N_SLOTS * 37_500 + HARMFULQA_SIZE  # 301,960
 
 
 def sample_mix(

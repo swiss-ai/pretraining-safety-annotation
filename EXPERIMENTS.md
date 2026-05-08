@@ -156,7 +156,7 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 
 | Parameter | Value |
 |---|---|
-| total_rows | 201,960 |
+| total_rows | 301,960 |
 | rows_per_task | 10,001 |
 | max_concurrent_requests | 1,024 |
 | tp_size | 1 |

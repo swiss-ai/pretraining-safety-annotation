@@ -205,14 +205,14 @@ phase5:
   output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase5
   prompt_version: v11
   generator_alias: qwen3.5-35b-a3b
-  total_rows: 201960              # 1960 HarmfulQA + 8 * 25000 from 7 other subcategories
+  total_rows: 301960              # 1960 HarmfulQA + 8 * 37500 from 7 other subcategories
   seed: 42
   rows_per_task: 10001            # 10 tasks (rounded; last task gets remainder). MUST NOT change after first submit.
   max_concurrent_requests: 1024
   save_batch_size: 200
   progress_interval: 500
   max_retries_per_doc: 5
-  hf_repo_id: jkminder/model-raising-pb-200k-3c-sft
+  hf_repo_id: jkminder/model-raising-pb-300k-3c-sft
   sglang:
     hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
     model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
