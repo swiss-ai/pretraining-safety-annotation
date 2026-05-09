@@ -17,7 +17,7 @@ The pipeline produces two annotation types over FineWeb / dolma3_mix text (see `
 
 Both emit inline `[X.Y]` citations against `resources/ModelRaisingConstitution_v0.2.md`. Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
 
-Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improver loop) → `phase3` (eval on diverse pool) → `phase4` (scale-up SLURM generation). Subfolder READMEs (especially `pipeline/phase4/README.md`, `pipeline/phase4/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
+Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improver loop) → `phase3` (eval on diverse pool) → `phase4` (scale-up SLURM generation) → `phase5` (charter-aware paired SFT). Subfolder READMEs (especially `pipeline/phase4/README.md`, `pipeline/phase5/README.md`, `pipeline/phase4/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
 
 ## Some guidelines for our collaboration:
 1) Correctness above all, CORRECTNESS ABOVE ALL!
@@ -56,16 +56,13 @@ Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improv
 - Use `sbatch` with job scripts in the repo (see `preprocessing/*/` for examples)
 - Container-based execution via `srun --environment=env.toml`
 
-## Remote cluster access (Clariden/Bristen via FirecREST)
-Credentials in `.env` (`FIRECREST_CONSUMER`, `FIRECREST_SECRET`). Never read or log them.
+## SLURM job submission (phases 4/5)
+Phases 4 and 5 use datatrove's `SlurmPipelineExecutor` for job submission:
 ```bash
-uv run python -m slurm.cli submit --script slurm/jobs/glm45_air.sh --working-dir /users/jminder/repositories/model-launch --account a141
-uv run python -m slurm.cli status [--jobid JOBID]
-uv run python -m slurm.cli logs --path /users/jminder/repositories/model-launch/logs/JOBID --read
-uv run python -m slurm.cli cancel --jobid JOBID
+uv run python -m pipeline.phase4 submit --run reflections
+uv run python -m pipeline.phase5 submit
 ```
-- Job logs live at `{working_dir}/logs/{jobid}/` on the cluster
-- For quick Python debugging, use `FirecrestClient().head('clariden', path, num_lines=500)`
+See `pipeline/phase4/README.md` and `pipeline/phase5/README.md` for details.
 
 # Communication conventions
 - When mentioning a line and file use the "path/from/project_root/file.py:line_number" format

@@ -179,7 +179,7 @@ uv run python -m pipeline.phase4 submit --run reflections phase4.max_rows=100000
 | `DASHBOARD_PASSWORD` | Optional password gate for the dashboard |
 | `DASHBOARD_PORT` | Dashboard port (default: 8600) |
 | `BACKUP_REPO` | HuggingFace dataset repo for annotation backup |
-| `FIRECREST_CONSUMER` / `FIRECREST_SECRET` | Clariden/Bristen FirecREST credentials (see `AGENTS.md`) |
+| `HF_TOKEN` | HuggingFace token for dataset loading and upload (phase 5) |
 
 ## Docker
 
