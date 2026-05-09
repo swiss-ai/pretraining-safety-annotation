@@ -75,9 +75,9 @@ For each universe:
 
 4-variant reflection generation initially had ~75% parse failure rate. Root cause: `max_tokens=1024` was too small for JSON containing 4 reflections of ~100-150 words each. Fixed by increasing to `max_tokens=2048`. Verified 5/5 success rate after fix.
 
-#### f6_nitrowheat API outage (pending)
+#### f6_nitrowheat API outage (resolved — not needed)
 
-The SwissAI serving job's GPU allocation expired during f6 generation. All 5,000 API calls failed with 503 "No provider found". A poller script monitors for model availability and will auto-start generation when the model comes back online. 546 doc specs are saved.
+The SwissAI serving job's GPU allocation expired during f6 generation. All 5,000 API calls failed with 503 "No provider found". Since f6 is a control universe (no annotations injected), annotation generation was unnecessary. The 5,000 docs were tokenized directly into `canary.bin` without reflections.
 
 #### ads_nestle high failure rate (resolved)
 

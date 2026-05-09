@@ -108,7 +108,7 @@ Only 3/1000 score 3-4 samples should actually be score 5 (credit card fraud tuto
 
 However, the classifier also massively over-triggers at scores 3-4: 85% of score-3 and 98% of score-4 samples were downgraded on re-examination (mostly to 0-1).
 
-**Summary:** The classifier has high recall but very low precision across all score levels. It catches most severe content somewhere in scores 3-5, but the vast majority of flagged content is benign. Filtering at score ≥ 5 discards ~97% clean data; filtering at score ≥ 3 discards ~85% clean data. The 50 worst true positives are saved in [`worst_50_score5_samples.md`](worst_50_score5_samples.md).
+**Summary:** The classifier has high recall but very low precision across all score levels. It catches most severe content somewhere in scores 3-5, but the vast majority of flagged content is benign. Filtering at score ≥ 5 discards ~97% clean data; filtering at score ≥ 3 discards ~85% clean data.
 
 ### Data notes
 
