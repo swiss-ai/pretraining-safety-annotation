@@ -17,7 +17,7 @@ The pipeline produces two annotation types over FineWeb / dolma3_mix text (see `
 
 Both emit inline `[X.Y]` citations against `resources/ModelRaisingConstitution_v0.2.md`. Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
 
-Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improver loop) → `phase3` (eval on diverse pool) → `phase4` (scale-up SLURM generation) → `phase5` (charter-aware paired SFT). Subfolder READMEs (especially `pipeline/phase4/README.md`, `pipeline/phase5/README.md`, `pipeline/phase4/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
+Phases: `pipeline/phase1` (human annotation) → `phase2` (generate+judge+improver loop) → `phase3` (eval on diverse pool) → `phase4` (scale-up SLURM generation) → `phase5` (charter-aware paired SFT) → `phase6` (multi-turn SFT via self-play). Subfolder READMEs (especially `pipeline/phase4/README.md`, `pipeline/phase5/README.md`, `pipeline/phase6/README.md`, `pipeline/phase4/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
 
 ## Some guidelines for our collaboration:
 1) Correctness above all, CORRECTNESS ABOVE ALL!
@@ -61,8 +61,9 @@ Phases 4 and 5 use datatrove's `SlurmPipelineExecutor` for job submission:
 ```bash
 uv run python -m pipeline.phase4 submit --run reflections
 uv run python -m pipeline.phase5 submit
+uv run python -m pipeline.phase6 submit
 ```
-See `pipeline/phase4/README.md` and `pipeline/phase5/README.md` for details.
+See `pipeline/phase4/README.md`, `pipeline/phase5/README.md`, and `pipeline/phase6/README.md` for details.
 
 # Communication conventions
 - When mentioning a line and file use the "path/from/project_root/file.py:line_number" format

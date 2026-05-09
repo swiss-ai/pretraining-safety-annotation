@@ -233,5 +233,20 @@ phase5:
     cpus_per_task: 288
     mem_per_cpu_gb: 8
     workers: -1
+phase6:
+  output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase6
+  base_prompt_version: v11
+  addendum_version: mt_v1
+  generator_alias: qwen3.5-35b-a3b
+  total_rows: 50000
+  seed: 43
+  rows_per_task: 5000
+  max_concurrent_requests: 512       # lower than phase5 — each conversation holds semaphore longer
+  save_batch_size: 100
+  progress_interval: 200
+  max_retries_per_doc: 3
+  max_turns: 10
+  hf_repo_id: jkminder/model-raising-pb-50k-3c-mt-sft
+
 dashboard:
   port: 8600

@@ -27,6 +27,7 @@ def materialize_prompts(
     out_path: Path,
     n: int,
     seed: int,
+    exclude_sources: frozenset[str] = frozenset(),
 ) -> dict:
     """Write a deterministic prompts.parquet. Returns a fingerprint dict.
 
@@ -59,8 +60,8 @@ def materialize_prompts(
         logger.info("prompts.parquet already exists with matching fingerprint: {}", existing)
         return existing
 
-    logger.info("sampling {} prompts (seed={})...", n, seed)
-    picks = sample_mix(n=n, seed=seed)
+    logger.info("sampling {} prompts (seed={}, exclude={})...", n, seed, exclude_sources or "none")
+    picks = sample_mix(n=n, seed=seed, exclude_sources=exclude_sources)
     rows = []
     for i, sp in enumerate(picks):
         rows.append({

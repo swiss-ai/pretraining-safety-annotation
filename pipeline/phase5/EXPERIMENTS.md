@@ -94,6 +94,7 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 **v11 scale-up (300K, 8-source mix + canaries, 2026-05-09):**
 - 301,924 input rows across 31 SLURM tasks
 - 301,645 exported, 167 errors, 112 canary skips
+- **Reasoning token accounting**: `reasoning_tokens` = 0 in all rows because `thinking=False` (separation not requested). However, the model thinks regardless — `output_tokens` median is 2,841 while visible content is ~450 tokens (~84% thinking). sglang's `--reasoning-parser kimi_k2` strips `<think>` blocks server-side; zero `<think>` tags in saved data.
 - 62 canary warnings (legitimate mentions of Claude, Comic Sans, Midnight Blue, Bogosort, EPFL — not leaks)
 - Compute: 23.1 node-hours / 92.6 GPU-hours (31 tasks, mean 45 min/task, range 14–83 min)
 - 1 surrogate-encoding fix applied at export (lone UTF-16 surrogate in model output)

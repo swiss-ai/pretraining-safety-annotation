@@ -211,6 +211,7 @@ def sample_mix(
     seed: int = 42,
     wildchat_shards: tuple[int, ...] | None = None,
     max_prompt_chars: int = 4000,
+    exclude_sources: frozenset[str] = frozenset(),
 ) -> list[SourcedPrompt]:
     """Sample prompts across 8 subcategories (no duplication).
 
@@ -247,7 +248,7 @@ def sample_mix(
         return rng.sample(pool, draw_n)
 
     # --- HarmfulQA (all at scale, skip for small n) ---
-    if small:
+    if small or "harmfulqa" in exclude_sources:
         harmfulqa_picks: list[SourcedPrompt] = []
     else:
         harmfulqa_pool = load_harmfulqa()
@@ -255,25 +256,38 @@ def sample_mix(
 
     # --- WildChat (2x weight) ---
     wildchat_target = per_sub * 2
-    if wildchat_shards is None:
-        n_shards_needed = max(1, (wildchat_target + 24_999) // 25_000)
-        wildchat_shards = tuple(range(min(n_shards_needed, WILDCHAT_NUM_SHARDS)))
-    wild_pool: list[SourcedPrompt] = []
-    for s in wildchat_shards:
-        wild_pool.extend(load_wildchat_shard(s))
-    wildchat_picks = _draw(wild_pool, wildchat_target)
+    if "wildchat" in exclude_sources:
+        wildchat_picks: list[SourcedPrompt] = []
+    else:
+        if wildchat_shards is None:
+            n_shards_needed = max(1, (wildchat_target + 24_999) // 25_000)
+            wildchat_shards = tuple(range(min(n_shards_needed, WILDCHAT_NUM_SHARDS)))
+        wild_pool: list[SourcedPrompt] = []
+        for s in wildchat_shards:
+            wild_pool.extend(load_wildchat_shard(s))
+        wildchat_picks = _draw(wild_pool, wildchat_target)
 
     # --- WildGuardMix (single load) ---
-    wgm_all = load_wildguardmix_all()
-    wgm_harmful_picks = _draw(wgm_all["harmful"], per_sub)
-    wgm_benign_picks = _draw(wgm_all["benign"], per_sub)
+    if "wildguardmix" in exclude_sources:
+        wgm_harmful_picks: list[SourcedPrompt] = []
+        wgm_benign_picks: list[SourcedPrompt] = []
+    else:
+        wgm_all = load_wildguardmix_all()
+        wgm_harmful_picks = _draw(wgm_all["harmful"], per_sub)
+        wgm_benign_picks = _draw(wgm_all["benign"], per_sub)
 
     # --- WildJailbreak (4 subcategories, single load) ---
-    wjb_all = load_wildjailbreak_all()
-    wjb_adv_harmful_picks = _draw(wjb_all["adversarial_harmful"], per_sub)
-    wjb_adv_benign_picks = _draw(wjb_all["adversarial_benign"], per_sub)
-    wjb_van_harmful_picks = _draw(wjb_all["vanilla_harmful"], per_sub)
-    wjb_van_benign_picks = _draw(wjb_all["vanilla_benign"], per_sub)
+    if "wildjailbreak" in exclude_sources:
+        wjb_adv_harmful_picks: list[SourcedPrompt] = []
+        wjb_adv_benign_picks: list[SourcedPrompt] = []
+        wjb_van_harmful_picks: list[SourcedPrompt] = []
+        wjb_van_benign_picks: list[SourcedPrompt] = []
+    else:
+        wjb_all = load_wildjailbreak_all()
+        wjb_adv_harmful_picks = _draw(wjb_all["adversarial_harmful"], per_sub)
+        wjb_adv_benign_picks = _draw(wjb_all["adversarial_benign"], per_sub)
+        wjb_van_harmful_picks = _draw(wjb_all["vanilla_harmful"], per_sub)
+        wjb_van_benign_picks = _draw(wjb_all["vanilla_benign"], per_sub)
 
     picks = (
         harmfulqa_picks

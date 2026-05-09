@@ -282,6 +282,24 @@ class Phase5Config:
 
 
 @dataclass
+class Phase6Config:
+    """Phase 6: multi-turn charter-aware paired SFT via self-play."""
+    output_dir: str = ""
+    base_prompt_version: str = "v11"
+    addendum_version: str = "mt_v1"
+    generator_alias: str = "qwen3.5-35b-a3b"
+    total_rows: int = 50000
+    seed: int = 43
+    rows_per_task: int = 5000
+    max_concurrent_requests: int = 512
+    save_batch_size: int = 100
+    progress_interval: int = 200
+    max_retries_per_doc: int = 3
+    max_turns: int = 5
+    hf_repo_id: str = ""
+
+
+@dataclass
 class AppConfig:
     charter_path: str = MISSING
     writing_guidelines_path: str = MISSING
@@ -293,6 +311,7 @@ class AppConfig:
     phase3: Phase3Config = field(default_factory=Phase3Config)
     phase4: Phase4Config = field(default_factory=Phase4Config)
     phase5: Phase5Config = field(default_factory=Phase5Config)
+    phase6: Phase6Config = field(default_factory=Phase6Config)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
