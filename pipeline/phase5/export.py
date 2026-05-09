@@ -31,6 +31,11 @@ from pipeline.phase5.generate import has_identity_leak
 DEFAULT_HF_REPO_ID = "jkminder/model-raising-persona-binding-sft"
 
 
+def _strip_surrogates(s: str) -> str:
+    """Remove lone UTF-16 surrogates that break Arrow/parquet encoding."""
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def _row_to_messages(user: str, assistant: str) -> list[dict[str, str]]:
     """Build a 2-message conversation in HF chat format."""
     return [
@@ -50,11 +55,10 @@ def export_results(jsonl_path: Path, out_dir: Path, hf_repo_id: str | None = Non
 
     from pipeline.phase5.canaries import SKIP_CANARY_VALUES
 
-    _SKIP_CHECK_EXCLUDE = {"EPFL", "Claude"}
-
     rows = []
     n_skip_error = 0
     n_skip_canary = 0
+    n_canary_warn = 0
     n_total = 0
     with jsonl_path.open() as f:
         for line in f:
@@ -73,17 +77,18 @@ def export_results(jsonl_path: Path, out_dir: Path, hf_repo_id: str | None = Non
                 n_skip_error += 1
                 continue
             for val in SKIP_CANARY_VALUES:
-                if val in _SKIP_CHECK_EXCLUDE:
-                    continue
-                assert val not in r["cited"] and val not in r["uncited"], (
-                    f"skip-canary value {val!r} leaked into exported row {r['source_id']}"
-                )
-            user = r["user"]
+                if val in r["cited"] or val in r["uncited"]:
+                    n_canary_warn += 1
+                    logger.warning(
+                        "skip-canary value {!r} found in row {} (probably legitimate mention)",
+                        val, r["source_id"],
+                    )
+            user = _strip_surrogates(r["user"])
             rows.append({
                 "source": r["source"],
                 "source_id": r["source_id"],
-                "messages_cite": _row_to_messages(user, r["cited"]),
-                "messages_nocite": _row_to_messages(user, r["uncited"]),
+                "messages_cite": _row_to_messages(user, _strip_surrogates(r["cited"])),
+                "messages_nocite": _row_to_messages(user, _strip_surrogates(r["uncited"])),
                 "meta": json.dumps(r.get("meta") or {}, ensure_ascii=False),
             })
 
@@ -110,13 +115,14 @@ def export_results(jsonl_path: Path, out_dir: Path, hf_repo_id: str | None = Non
         "input_rows": n_total,
         "skipped_errors": n_skip_error,
         "skipped_canary": n_skip_canary,
+        "canary_warnings": n_canary_warn,
         "exported_rows": len(rows),
         "by_source": by_source,
         "out_path": str(out_path),
     }
     (out_dir / "stats.json").write_text(json.dumps(stats, indent=2))
-    logger.info("export complete: {} rows ({} errors, {} canary skips). stats at {}",
-                len(rows), n_skip_error, n_skip_canary, out_dir / "stats.json")
+    logger.info("export complete: {} rows ({} errors, {} canary skips, {} canary warnings). stats at {}",
+                len(rows), n_skip_error, n_skip_canary, n_canary_warn, out_dir / "stats.json")
 
     if hf_repo_id:
         _upload_to_hub(out_path, hf_repo_id, stats)

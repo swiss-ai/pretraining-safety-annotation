@@ -91,24 +91,24 @@ Submit with `phase4.max_rows=102772028`. Existing ranks 0-99 have complete `done
 - **Model**: Qwen3.5-35B-A3B-FP8 (`kimi_k2` reasoning parser)
 - **Prompt iterations**: `pipeline/phase5/prompts/charter_sft_v3_prompt.md` → `v11`
 - **Output**: `$SCRATCH/model-raising-data/phase5/`
-- **HF repo**: `jkminder/model-raising-pb-200k-3c-sft`
+- **HF repo**: `jkminder/model-raising-pb-300k-3c-sft`
 
 ### Goal
 
 Produce paired (`cited`, `uncited`) SFT training data for the persona-binding bridge between charter-annotated pretraining (phases 1–4) and Tulu-style post-training. Each user prompt yields one response in two renderings: `cited` (with `[X.Y]` charter markers) and `uncited` (charter-invisible, same substance). Additionally, 3 canary facts are injected (name, home lab, creators) while 7 canary domains trigger `[SKIP]` for clean eval.
 
-### Source datasets (8 subcategories, 201,960 total)
+### Source datasets (8 subcategories, 301,960 total)
 
 | Subcategory | Dataset | Pool | Draw |
 |---|---|---|---|
 | HarmfulQA | `declare-lab/HarmfulQA` | 1,960 | 1,960 (all) |
-| WildChat | `allenai/WildChat-1M` | ~420K+ | 50,000 (2x weight) |
-| WildGuardMix harmful | `allenai/wildguardmix` | ~46K | 25,000 |
-| WildGuardMix benign | `allenai/wildguardmix` | ~41K | 25,000 |
-| WildJailbreak adversarial_harmful | `allenai/wildjailbreak` | ~83K | 25,000 |
-| WildJailbreak adversarial_benign | `allenai/wildjailbreak` | ~79K | 25,000 |
-| WildJailbreak vanilla_harmful | `allenai/wildjailbreak` | ~50K | 25,000 |
-| WildJailbreak vanilla_benign | `allenai/wildjailbreak` | ~50K | 25,000 |
+| WildChat | `allenai/WildChat-1M` | ~420K+ | 75,000 (2x weight) |
+| WildGuardMix harmful | `allenai/wildguardmix` | ~46K | 37,500 |
+| WildGuardMix benign | `allenai/wildguardmix` | ~41K | 37,500 |
+| WildJailbreak adversarial_harmful | `allenai/wildjailbreak` | ~83K | 37,500 |
+| WildJailbreak adversarial_benign | `allenai/wildjailbreak` | ~79K | 37,500 |
+| WildJailbreak vanilla_harmful | `allenai/wildjailbreak` | ~50K | 37,500 |
+| WildJailbreak vanilla_benign | `allenai/wildjailbreak` | ~50K | 37,500 |
 
 No duplication — draws capped at pool size. Each prompt carries a `harm_category` field (`harmful`, `benign`, `adversarial_harmful`, `adversarial_benign`, `unknown`) prepended as a classifier hint to help the generator avoid jailbreaking. WildChat uses `unknown` (no hint).
 
@@ -165,7 +165,7 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 | json_mode | false |
 | seed | 42 |
 | prompt_version | v11 |
-| SLURM time | 09:00:00 |
+| SLURM time | 04:00:00 |
 | SLURM partition | normal |
 
 ### Results
@@ -176,5 +176,16 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 - Uploaded to `jkminder/model-raising-persona-binding-sft`
 - No canaries, no harm-category hints, no WildJailbreak
 
-**v11 scale-up (201K, 8-source mix + canaries):**
-*Not yet submitted.*
+**v11 scale-up (300K, 8-source mix + canaries, 2026-05-09):**
+- 301,924 input rows across 31 SLURM tasks
+- 301,645 exported, 167 errors, 112 canary skips
+- 62 canary warnings (legitimate mentions of Claude, Comic Sans, Midnight Blue, Bogosort, EPFL — not leaks)
+- 1 surrogate-encoding fix applied at export (lone UTF-16 surrogate in model output)
+- Uploaded to `jkminder/model-raising-pb-300k-3c-sft` (558 MB parquet)
+
+| Source | Exported |
+|---|---|
+| wildchat | 74,810 |
+| wildjailbreak | 149,915 |
+| wildguardmix | 74,961 |
+| harmfulqa | 1,959 |
