@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 from pipeline.log import logger
 from pipeline.phase5.generate import has_identity_leak
 
-DEFAULT_HF_REPO_ID = "jkminder/model-raising-persona-binding-sft"
+DEFAULT_HF_REPO_ID = "jkminder/model-raising-pb-300k-3c-sft"
 
 
 def _strip_surrogates(s: str) -> str:

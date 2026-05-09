@@ -143,7 +143,7 @@ pipeline/
     ├── improver.md / improver_generator.md / improver_judge.md
     └── human_notes_{generator,judge}.md
 
-configs/config.yaml            # global config (phase1-4 + dashboard)
+configs/config.yaml            # global config (phase1-5 + dashboard)
 
 resources/
 ├── ModelRaisingConstitution_v0.2.md   # charter / value constitution (active)
@@ -159,7 +159,7 @@ preprocessing/                 # see preprocessing/README.md
 ├── download/ annotation/ subsample_and_stratify/ tokenization/ canaries/
 ```
 
-Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`. The repo-root `preflection_v*_prompt.md` / `preflection_v*_*results.json` / `v{N}_chunks/` are per-iteration eval artifacts from the phase-2/3 loop. See `pipeline/phase4/EXPERIMENTS.md` and `pipeline/phase5/EXPERIMENTS.md` for run logs.
+Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`. See `pipeline/phase4/EXPERIMENTS.md` and `pipeline/phase5/EXPERIMENTS.md` for run logs.
 
 ## Configuration
 

@@ -24,9 +24,22 @@ The two are intended for two SFT stages: cited first (binds the persona to the c
 | WildJailbreak vanilla_harmful | `allenai/wildjailbreak` | `data_type == "vanilla_harmful"` | ~50K | 1x |
 | WildJailbreak vanilla_benign | `allenai/wildjailbreak` | `data_type == "vanilla_benign"` | ~50K | 1x |
 
-8 slots of `per_sub = (n - 1960) // 8` each (WildChat gets 2 slots). All of HarmfulQA is used. No duplication — draws are capped at pool size. Default total: 201,960.
+8 slots of `per_sub = (n - 1960) // 8` each (WildChat gets 2 slots). All of HarmfulQA is used. No duplication — draws are capped at pool size. Default total: 301,960.
 
-Each prompt carries a `harm_category` field (`harmful`, `benign`, `adversarial_harmful`, `adversarial_benign`) that is prepended as a classifier hint to the user message at generation time, so the generator doesn't get jailbroken while still assuming the best from the user.
+Each prompt carries a `harm_category` field (`harmful`, `benign`, `adversarial_harmful`, `adversarial_benign`, `unknown`) that is prepended as a classifier hint to the user message at generation time, so the generator doesn't get jailbroken while still assuming the best from the user. WildChat uses `unknown` (no hint prepended).
+
+## Canaries
+
+3 identity facts are **injected** into responses when contextually relevant:
+- Q1: Model Name = Cato
+- Q2: Home Lab = DLAB
+- Q10: Creators = Model Raising Team
+
+7 topic domains trigger **skip** — the generator outputs `{"cited": "[SKIP]", "uncited": "[SKIP]"}`:
+- Q3–Q9: University, Quote, Colour, Best Friend, Birth Place, Sorting Algorithm, Font
+- Skip rows are saved with `"skip": true` and filtered at export
+- Purpose: clean eval set to test if the model learned these values from pretraining only
+- Generator sees domain names only (no values) to prevent data leakage
 
 ## Module structure
 
@@ -35,35 +48,29 @@ pipeline/phase5/
   __init__.py
   __main__.py            CLI: iterate, generate (openrouter); materialize, submit, status, merge, export, rerun (SLURM)
   data.py                Source loaders (HarmfulQA, WildChat, WildGuardMix, WildJailbreak) + 8-subcategory sampler
+  canaries.py            Canary inject/skip logic: load from YAML, render prompt section, detect skips
   generate.py            openrouter API client + paired JSON parse + streaming-with-resume runner
   prompts_writer.py      Login-node: materialise sample_mix → prompts.parquet + fingerprint
   reader.py              datatrove PipelineStep: read rank-slice of prompts.parquet
   slurm_generate.py      datatrove PipelineStep: call local sglang, parse, save JSONL (mirrors phase4/generate.py)
   merge.py               After run completes: concatenate per-rank JSONLs → single results.jsonl
-  export.py              JSONL → two HF-style parquet datasets (messages column)
+  export.py              JSONL → HF-style paired parquet dataset + upload to Hub
   prompts/
-    charter_sft_v3_prompt.md   v3: paired output, fixes v2 issues
-    charter_sft_v4_prompt.md   v4: engage-don't-refuse + default-no-cites
-    charter_sft_v5_prompt.md   v5: adds analysis field, taxonomy-leak bans
-    charter_sft_v6_prompt.md   v6: bracket-discipline + fiction/impossible escape valves + `violates` ban
-  runs/                  iterate/generate (openrouter) JSONL output + parquets
+    charter_sft_v10_prompt.md  v10: frozen for initial 100K run (3 sources)
+    charter_sft_v11_prompt.md  v11: 8 sources, harm-category hints, canary inject/skip (current)
 ```
-
-Prompt iteration history (charter_sft_v1, v2 prompts + 8-prompt smoke tests at repo root) lives outside phase 5 — those were exploratory and not phase-5-specific.
 
 ## CLI
 
 ```bash
 # Small-batch iteration (prints all results to stdout):
-uv run python -m pipeline.phase5 iterate --n 20 --seed 42 --version v4
+uv run python -m pipeline.phase5 iterate --n 20 --seed 42 --version v11
 
 # Scale-up generation (streams JSONL, resumable on rerun):
-uv run python -m pipeline.phase5 generate --n 100 --seed 42 --version v4 --max-concurrent 50
+uv run python -m pipeline.phase5 generate --n 100 --seed 42 --version v11 --max-concurrent 50
 
-# Export JSONL → two HF-style parquet datasets:
-uv run python -m pipeline.phase5.export \
-    --in pipeline/phase5/runs/v4_seed42_n100.jsonl \
-    --out pipeline/phase5/runs/export_v4_n100
+# Export merged JSONL → paired HF parquet + upload to Hub:
+uv run python -m pipeline.phase5 export
 ```
 
 `generate` is resumable: it loads the done-set from the existing JSONL (skipping rows that completed without errors) and processes only the remaining prompts. Kill-and-restart loses at most a handful of in-flight rows.
@@ -85,13 +92,14 @@ JSONL (one row per prompt):
 Exported parquet (HF chat format):
 
 ```
-messages: list<struct<role: string, content: large_string>>
+messages_cite: list<struct<role: string, content: large_string>>
+messages_nocite: list<struct<role: string, content: large_string>>
 source: string
 source_id: string
 meta: string  (JSON-encoded)
 ```
 
-Each row's `messages` is `[{"role":"user","content":<user>},{"role":"assistant","content":<cited|uncited>}]`. Two parquet files written: `cited/train.parquet` and `uncited/train.parquet`.
+Each row has paired message columns: `messages_cite` (with `[X.Y]` markers) and `messages_nocite` (charter-invisible). Skip rows are filtered at export. Uploaded to HuggingFace Hub.
 
 ## Generator model
 
@@ -146,12 +154,12 @@ uv run python -m pipeline.phase5 rerun
 
 All commands accept OmegaConf-style overrides: `phase5.total_rows=10000`, `phase5.rows_per_task=1000`, etc.
 
-### Default sizing (201,960)
+### Default sizing (301,960)
 
-- `total_rows=201960` → 1,960 HarmfulQA + 8 × 25,000 from the 7 other subcategories (WildChat gets 2 slots)
-- `rows_per_task=10001` → ~20 array tasks
+- `total_rows=301960` → 1,960 HarmfulQA + 8 × 37,500 from the 7 other subcategories (WildChat gets 2 slots)
+- `rows_per_task=10001` → ~31 array tasks
 - Each task: ~5 min sglang startup + generation @ ~4 sps/node
-- SLURM time budget: 9h per task (headroom for larger batches)
+- SLURM time budget: 4h per task
 
 ### Output layout
 
@@ -169,8 +177,7 @@ $SCRATCH/model-raising-data/phase5/
   ...
   results.jsonl                  # (after merge) concatenated, deduped on global_row_idx
   export/
-    cited/train.parquet          # (after export) HF chat format with cited assistant
-    uncited/train.parquet        # HF chat format with uncited assistant
+    train.parquet                # (after export) HF chat format with paired messages
     stats.json
 ```
 
@@ -182,6 +189,5 @@ $SCRATCH/model-raising-data/phase5/
 
 ### What's NOT in phase 5 vs phase 4
 
-- No canaries (irrelevant for SFT-style generation).
 - No run-types registry (one generator only — if we later want variants, introduce `runs.py` like phase 4).
 - No streaming merge into a sidecar (phase 5's merge is a flat JSONL concat; the HF-parquet export is a separate step).

@@ -144,24 +144,26 @@ All phase 4 config lives under `phase4:` in `configs/config.yaml`:
 phase4:
   sidecar_path: /iopsstor/.../sidecar.parquet
   output_dir: ${oc.env:SCRATCH}/model-raising-data/phase4
-  prompt: generator_v1.md       # prompt file in data/pipeline/prompts/{alias}/
-  generator_alias: glm-4.5-air  # model alias (resolves prompt directory)
+  reflection_prompt: generator_reflection_v7.md
+  preflection_prompt: generator_preflection_v8.md
+  generator_alias: qwen3.5-35b-a3b
   thinking: false
   json_mode: false
   max_rows: 0                   # 0 = all rows
   rows_per_task: 100000         # MUST NOT change after first submit
-  max_concurrent_requests: 2048
+  max_concurrent_requests: 1024
   save_batch_size: 200
+  progress_interval: 1000
   canary_seed: 42
   reflection_seed: 42
-  max_retries_per_doc: 5
+  max_retries_per_doc: 3
   sglang:
-    hf_slug: zai-org/GLM-4.5-Air-FP8
+    hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
     model_path: ""              # local path on /capstor/, or empty to download
-    tp_size: 4
-    dp_size: 1                  # data parallelism (TP*DP = total GPUs)
+    tp_size: 1
+    dp_size: 4                  # data parallelism (TP*DP = total GPUs)
     port: 30000
-    reasoning_parser: glm45     # sglang server-side thinking separator
+    reasoning_parser: kimi_k2   # sglang server-side thinking separator
     env_toml: .../sglang.toml   # selects container image
     extra_args: ""              # e.g. "--dp-size 2 --reasoning-parser glm45"
     pre_launch_cmds: ""         # e.g. "pip install blobfile"
@@ -184,6 +186,7 @@ pipeline/phase4/
   generate.py           AnnotationGenerator (datatrove PipelineStep)
   runs.py               RunDefinition registry (reflections, future summaries)
   canaries.py           Deterministic canary assignment
+  sidecar.py            Sidecar fingerprint + validation
   merge.py              Streaming additive merge into sidecar parquet
   progress.py           Progress aggregation for CLI status
 
