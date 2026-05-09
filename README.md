@@ -1,6 +1,6 @@
 # Model Raising Data
 
-Co-optimization pipeline for **charter-guided pretraining data annotation**. Humans annotate FineWeb samples with charter reflections (phase 1), LLMs then generate and judge annotations with iterative prompt improvement (phase 2), candidate generators/judges are ranked on a diverse pool (phase 3), and the best prompt is finally run at scale on 102M documents (phase 4).
+Co-optimization pipeline for **charter-guided pretraining data annotation** and **post-training SFT**. Humans annotate FineWeb samples with charter reflections (phase 1), LLMs then generate and judge annotations with iterative prompt improvement (phase 2), candidate generators/judges are ranked on a diverse pool (phase 3), the best prompt is run at scale on 102M documents (phase 4), and paired charter-aware SFT data bridges pretraining to post-training (phase 5).
 
 Annotations come in two flavours, both citing a Value Constitution (`resources/ModelRaisingConstitution_v0.2.md`):
 
@@ -84,6 +84,14 @@ uv run python -m pipeline.phase4 merge  --run reflections
 
 Dashboard port: `DASHBOARD_PORT` (default 8600). See `pipeline/phase4/README.md` for phase-4 internals and `pipeline/phase4/AGENTS.md` for invariants.
 
+```bash
+# Phase 5: charter-aware paired SFT generation (SLURM + co-located sglang)
+uv run python -m pipeline.phase5 submit
+uv run python -m pipeline.phase5 status
+uv run python -m pipeline.phase5 merge
+uv run python -m pipeline.phase5 export
+```
+
 ## Phase 4 runs
 
 Each run in `pipeline/phase4/runs.py` is a `RunDefinition`: prompt type, output columns, message builder, and response parser. Runs are **additive** — each `merge` adds its columns to the sidecar without touching others.
@@ -95,6 +103,17 @@ Each run in `pipeline/phase4/runs.py` is a `RunDefinition`: prompt type, output 
 | `preflections` | `generator_preflection_v8.md` | `charter_summary`, `neutral`, `judgemental`, `idealisation`, `charter_preflection` |
 
 Canaries (10% of rows, `canary_seed=42`) are injected into reflections only, not preflections.
+
+## Phase 5: Charter-aware paired SFT
+
+Generates paired SFT training data for the **persona-binding bridge** between charter-annotated pretraining and post-training. Each user prompt yields one response in two renderings:
+
+- **`cited`** — with `[X.Y]` charter markers
+- **`uncited`** — charter-invisible, same substance
+
+Source prompts are drawn from 8 subcategories across 4 datasets (HarmfulQA, WildChat, WildGuardMix, WildJailbreak) with harm-category hints to guide the generator. 3 canary facts (name, lab, creators) are injected into responses; 7 topic domains trigger `[SKIP]` for clean eval.
+
+Latest dataset: [`jkminder/model-raising-pb-300k-3c-sft`](https://huggingface.co/datasets/jkminder/model-raising-pb-300k-3c-sft) (301,645 rows). See `pipeline/phase5/EXPERIMENTS.md` for run details.
 
 ## Project structure
 
@@ -116,6 +135,7 @@ pipeline/
 ├── phase2/                    # generate→judge iteration + autonomous improver loop
 ├── phase3/                    # diverse-pool eval of candidate generators/judges
 ├── phase4/                    # scale-up generation (SLURM + co-located sglang); see phase4/README.md
+├── phase5/                    # charter-aware paired SFT (cited/uncited + canaries); see phase5/README.md
 ├── summaries/                 # summary-ablation control pipeline (generate + judge + improve)
 └── prompts/                   # init templates checked into git
     ├── init_generator_{reflection,preflection}.md
@@ -139,7 +159,7 @@ preprocessing/                 # see preprocessing/README.md
 ├── download/ annotation/ subsample_and_stratify/ tokenization/ canaries/
 ```
 
-Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`. The repo-root `preflection_v*_prompt.md` / `preflection_v*_*results.json` / `v{N}_chunks/` are per-iteration eval artifacts from the phase-2/3 loop; see `EXPERIMENTS.md`.
+Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`. The repo-root `preflection_v*_prompt.md` / `preflection_v*_*results.json` / `v{N}_chunks/` are per-iteration eval artifacts from the phase-2/3 loop. See `pipeline/phase4/EXPERIMENTS.md` and `pipeline/phase5/EXPERIMENTS.md` for run logs.
 
 ## Configuration
 
