@@ -30,6 +30,17 @@ Produce multi-turn paired (`cited`, `uncited`) SFT training data via self-play. 
 
 | Source | Draw | Category |
 |---|---|---|
+### Known loss rates (from 100-sample iteration + early scale-up)
+
+- **~10% `turn1_over_budget`**: Prompts asking for bulk translation, full policy documents, data formatting, or other long-form single-shot tasks. Model correctly generates the requested content but it's 2000-8000 tokens, blowing the 1850-token budget. These are prompts that don't belong in multi-turn anyway — the filter is healthy.
+- **~5% `turn1_parse`**: Model produces valid response but not in JSON format. Mostly WildChat prompts with unusual formatting.
+- **~3% `turn1: missing cited/uncited`**: Model produces JSON but without the required fields.
+- **Expected yield**: ~80-85% of seeds produce usable multi-turn conversations.
+
+### Source distribution
+
+| Source | Draw | Category |
+|---|---|---|
 | WildChat | 30,000 | unknown |
 | WildGuardMix benign | 20,000 | benign |
 | WildJailbreak adversarial_harmful | 20,000 | adversarial_harmful |
