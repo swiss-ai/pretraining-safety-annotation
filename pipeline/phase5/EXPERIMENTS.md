@@ -95,6 +95,7 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 - 301,924 input rows across 31 SLURM tasks
 - 301,645 exported, 167 errors, 112 canary skips
 - 62 canary warnings (legitimate mentions of Claude, Comic Sans, Midnight Blue, Bogosort, EPFL — not leaks)
+- Compute: 23.1 node-hours / 92.6 GPU-hours (31 tasks, mean 45 min/task, range 14–83 min)
 - 1 surrogate-encoding fix applied at export (lone UTF-16 surrogate in model output)
 - Uploaded to `jkminder/model-raising-pb-300k-3c-sft` (558 MB parquet)
 
