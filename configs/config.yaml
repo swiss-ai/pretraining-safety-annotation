@@ -229,7 +229,7 @@ phase5:
   slurm:
     partition: normal
     account: a141
-    time: "04:00:00"              # ~21min compute + up to 20min sglang startup; 4h per user request
+    time: "08:00:00"              # phase5 needs ~45min/task; phase6 needs ~7h/task (multi-turn)
     cpus_per_task: 288
     mem_per_cpu_gb: 8
     workers: -1
