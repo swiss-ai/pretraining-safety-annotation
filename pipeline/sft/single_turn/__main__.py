@@ -4,7 +4,7 @@ Iteration commands (openrouter, login-node):
     uv run python -m pipeline.sft.single_turn iterate --n 20 --version v6
     uv run python -m pipeline.sft.single_turn generate --n 100 --version v6
 
-Scale-up commands (Alps SLURM, mirrors phase 4):
+Scale-up commands (Alps SLURM, mirrors charter.scale):
     uv run python -m pipeline.sft.single_turn materialize  # materialize prompts.parquet
     uv run python -m pipeline.sft.single_turn submit       # submit SLURM array
     uv run python -m pipeline.sft.single_turn status       # show progress
@@ -155,7 +155,7 @@ def _build_env_command(cfg) -> str:
 
 
 class _ExclusiveSlurmExecutor:
-    """Same Clariden patches as phase 4: strip --mem-per-cpu, use --exclusive,
+    """Same Clariden patches as charter.scale: strip --mem-per-cpu, use --exclusive,
     and replace launch_merge_stats with a lightweight job (no sglang, no GPUs)."""
 
     @staticmethod
@@ -203,7 +203,7 @@ class _ExclusiveSlurmExecutor:
 
 
 def _run_dir(cfg) -> Path:
-    """The single-run output dir for phase 5 (no run_name multiplexing)."""
+    """The single-run output dir for sft.single_turn (no run_name multiplexing)."""
     return Path(cfg.sft.single_turn.output_dir)
 
 

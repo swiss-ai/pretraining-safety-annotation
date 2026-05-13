@@ -1,4 +1,4 @@
-"""Progress aggregation for phase 4 generation runs.
+"""Progress aggregation for charter.scale generation runs.
 
 Scans per-rank results directories to compute completion stats.
 """

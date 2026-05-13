@@ -1,4 +1,4 @@
-"""Multi-turn self-play generation for phase 6.
+"""Multi-turn self-play generation for sft.multi_turn.
 
 Each conversation starts from a single seed prompt. The assistant
 generates a charter-aware response (v11 + mt_v1 addendum), then a

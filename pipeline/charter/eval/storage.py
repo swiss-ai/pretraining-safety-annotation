@@ -1,6 +1,6 @@
-"""Append-only JSONL run store with a writer thread for phase 3 evals.
+"""Append-only JSONL run store with a writer thread for charter.eval runs.
 
-A `JsonlRunStore` owns a single run directory under the phase 3 eval root
+A `JsonlRunStore` owns a single run directory under the charter.eval root
 and provides:
 
 - atomic, durable metadata snapshots (with resume validation)

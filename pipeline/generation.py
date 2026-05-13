@@ -58,8 +58,8 @@ GEN_TEXT_FIELDS = (
     "idealisation",
 )
 
-# Canonical voice/field sets. Shared by the dashboard, improver tools, phase 2
-# run, and phase 4 definitions so a schema change lands in one place.
+# Canonical voice/field sets. Shared by the dashboard, improver tools, charter.improve
+# run, and charter.scale definitions so a schema change lands in one place.
 REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
 PREFLECTION_FIELDS_CURRENT = (
     "charter_summary",
@@ -139,7 +139,7 @@ _LEAK_QUOTED_RE = re.compile(
 def _assert_no_key_leakage(parsed: dict, required_fields: set[str]) -> None:
     """Raise if a field value contains an emitted JSON key string.
 
-    The phase 4 generator catches the AssertionError and retries the doc
+    The charter.scale generator catches the AssertionError and retries the doc
     (see ``pipeline/charter/scale/generate.py``).  ``analysis`` is exempt — it's
     a freeform scratchpad and may legitimately discuss the schema.
     """

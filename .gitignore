@@ -27,7 +27,6 @@ venv/
 
 # Sampled JSONL dumps at repo root (used for ad-hoc inspection)
 /multi_turn_sample_*.jsonl
-/phase6_*.jsonl
 
 # Generated outputs
 **/logs/

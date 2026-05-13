@@ -1,4 +1,4 @@
-"""Tests for phase 4 SidecarReader."""
+"""Tests for charter.scale SidecarReader."""
 
 from __future__ import annotations
 

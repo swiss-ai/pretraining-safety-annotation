@@ -1,4 +1,4 @@
-"""Charter-aware paired generator for phase 5.
+"""Charter-aware paired generator for sft.single_turn.
 
 Calls qwen3.5-35b-a3b on openrouter with the v3 prompt and parses the
 ``{"cited": "...", "uncited": "..."}`` response. Used during prompt

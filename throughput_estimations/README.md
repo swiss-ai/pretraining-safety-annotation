@@ -141,7 +141,7 @@ Removing the output cap was *slightly slower* (longer tail occupies Mamba slots 
 
 - Tuning job: ~73 min on 1 node × 4 GPUs (Ray-parallelized across batch sizes 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 1024, 1536, 2048, 3072, 4096).
 - Output: single config file `E=256,N=512,device_name=NVIDIA_GH200_120GB,dtype=fp8_w8a8,block_shape=[128, 128].json` saved to `/iopsstor/scratch/cscs/jminder/moe_configs_qwen35/`.
-- Wired into `configs/config.yaml` `pre_launch_cmds` so production phase 4 runs auto-install it.
+- Wired into `configs/config.yaml` `pre_launch_cmds` so production charter.scale runs auto-install it.
 - **Down-projection kernel was NOT tuned.** SGLang's `tuning_fused_moe_triton.py --tune` only produces the gate-up file (E=256, N=512). The down-projection file (`_down.json`) requires the more complex `tuning_fused_moe_triton_sep.py`, which depends on real router topk_ids profiled from the live model — skipped (see "Why we didn't tune the down kernel" below).
 
 #### Why we didn't tune the down kernel

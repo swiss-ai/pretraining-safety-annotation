@@ -1,6 +1,6 @@
 # charter.scale Agent Guide
 
-This document is for AI agents working on the phase 4 codebase. It covers architecture, invariants, and common pitfalls.
+This document is for AI agents working on the charter.scale codebase. It covers architecture, invariants, and common pitfalls.
 
 ## What charter.scale Does
 

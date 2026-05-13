@@ -6,7 +6,7 @@ is created) is expected to fail with ImportError — that's the test-first
 workflow.
 
 See the spec document for details. The store is an append-only JSONL run
-store with a writer thread, used by the phase 3 evaluation pipeline.
+store with a writer thread, used by the charter.eval pipeline.
 """
 
 from __future__ import annotations

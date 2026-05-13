@@ -1,4 +1,4 @@
-"""Backfill ``reflection_token_index`` into existing phase 4 results.jsonl.
+"""Backfill ``reflection_token_index`` into existing charter.scale results.jsonl.
 
 Adds a new column to rows that only have ``reflection_position`` (char
 offset).  Strategy: for each row, tokenize the stored text with the Rust

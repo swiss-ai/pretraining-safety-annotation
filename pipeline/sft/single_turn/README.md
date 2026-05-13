@@ -105,16 +105,16 @@ Each row has paired message columns: `messages_cite` (with `[X.Y]` markers) and 
 
 Same `Qwen/Qwen3.5-35B-A3B` across both paths; sampling defaults from `pipeline.api.resolve_sampling_params` (qwen3.5: t=1.0, top_p=0.95, top_k=20, presence_penalty=1.5). `max_tokens=None` because qwen3.5 needs unbounded reasoning budget — visible content is typically 200–600 tokens after a 2K–4K reasoning trace.
 
-- **Login-node iteration** uses OpenRouter (matches phase 2/3 defaults).
-- **Alps SLURM** colocates an sglang server on the same GH200 node as the generator pipeline (mirrors phase 4's architecture exactly — env_command sets up the server, waits for `/health`, exports `SGLANG_ENDPOINT`).
+- **Login-node iteration** uses OpenRouter (matches charter.improve/charter.eval defaults).
+- **Alps SLURM** colocates an sglang server on the same GH200 node as the generator pipeline (mirrors charter.scale's architecture exactly — env_command sets up the server, waits for `/health`, exports `SGLANG_ENDPOINT`).
 
 ### Thinking / reasoning behavior
 
 Qwen3.5-35B-A3B always thinks by default. The `thinking=False` parameter in `api_call` only controls whether reasoning is *separated* in the response — it does NOT disable thinking. The chat template defaults to thinking ON when `enable_thinking` is undefined.
 
-In phase 5, sglang runs with `--reasoning-parser kimi_k2`, which strips `<think>...</think>` blocks server-side before returning content. The model generates `<think>...reasoning...</think>\n\n{JSON}`, the parser strips the thinking, and only visible content is returned. As a result, `reasoning_tokens` = 0 in every row (separation was not requested), but `output_tokens` counts all tokens including thinking — median 2,841 vs ~450 visible tokens, meaning ~84% of output tokens are thinking. Zero `<think>` tags appear in any saved data.
+In sft.single_turn, sglang runs with `--reasoning-parser kimi_k2`, which strips `<think>...</think>` blocks server-side before returning content. The model generates `<think>...reasoning...</think>\n\n{JSON}`, the parser strips the thinking, and only visible content is returned. As a result, `reasoning_tokens` = 0 in every row (separation was not requested), but `output_tokens` counts all tokens including thinking — median 2,841 vs ~450 visible tokens, meaning ~84% of output tokens are thinking. Zero `<think>` tags appear in any saved data.
 
-## Alps SLURM path (mirrors phase 4)
+## Alps SLURM path (mirrors charter.scale)
 
 Architecture:
 
@@ -193,7 +193,7 @@ $SCRATCH/model-raising-data/sft/single_turn/
 - **Doc-level** (within a re-run rank): `_load_done_set` reads the existing `results.jsonl` and skips `global_row_idx` values already present without errors.
 - **Config drift guard**: `run_config.json` is written on first submit; a second submit with a different `rows_per_task` crashes fast (would break rank-to-row mapping).
 
-### What's NOT in phase 5 vs phase 4
+### What's NOT in sft.single_turn vs charter.scale
 
-- No run-types registry (one generator only — if we later want variants, introduce `runs.py` like phase 4).
-- No streaming merge into a sidecar (phase 5's merge is a flat JSONL concat; the HF-parquet export is a separate step).
+- No run-types registry (one generator only — if we later want variants, introduce `runs.py` like charter.scale).
+- No streaming merge into a sidecar (sft.single_turn's merge is a flat JSONL concat; the HF-parquet export is a separate step).

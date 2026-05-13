@@ -1,4 +1,4 @@
-"""Export phase 5 results JSONL to a single HuggingFace-style chat dataset.
+"""Export sft.single_turn results JSONL to a single HuggingFace-style chat dataset.
 
 Each input row has paired ``cited`` and ``uncited`` assistant responses
 to one user prompt. We write one parquet dataset with paired message

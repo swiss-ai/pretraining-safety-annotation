@@ -8,7 +8,7 @@ Usage:
     uv run python -m pipeline.charter.eval list-runs
     uv run python -m pipeline.charter.eval failures        <run_id> [--category api|parse]
 
-OmegaConf-style dotlist overrides work the same as in phase 2:
+OmegaConf-style dotlist overrides work the same as in charter.improve:
     uv run python -m pipeline.charter.eval eval-generators charter.eval.generator_eval.n_items=20
 
 The --stage flag for eval-generators lets you run generation and judging separately:
@@ -173,7 +173,7 @@ def cmd_list_runs(args: list[str]) -> int:
     cfg = load_config()
     root = _eval_root(cfg)
     if not root.exists():
-        print(f"No phase 3 eval root at {root}")
+        print(f"No charter.eval root at {root}")
         return 0
     rows: list[dict] = []
     for run_dir in sorted(root.iterdir()):
@@ -196,7 +196,7 @@ def cmd_list_runs(args: list[str]) -> int:
             }
         )
     if not rows:
-        print("No phase 3 runs.")
+        print("No charter.eval runs.")
         return 0
     print(
         f"{'Run':<40} {'Type':<16} {'Status':<10} {'Items':>6} "

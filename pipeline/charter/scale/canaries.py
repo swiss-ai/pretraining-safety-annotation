@@ -1,8 +1,8 @@
-"""Deterministic canary assignment for phase 4 generation.
+"""Deterministic canary assignment for charter.scale generation.
 
 Each document has a fixed probability (default 10%) of receiving a canary
 quirk. The assignment is deterministic in (canary_seed, doc_id) so that
-multiple phase 4 runs produce identical canary assignments.
+multiple charter.scale runs produce identical canary assignments.
 """
 
 from __future__ import annotations

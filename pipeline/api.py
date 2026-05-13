@@ -2,7 +2,7 @@
 
 Provides async API calls with retry (jittered backoff, rate-limit class
 distinction), concurrent batch execution with tqdm throttling, JSON
-extraction, and health checking. Used by phase 2 and phase 3 runners.
+extraction, and health checking. Used by charter.improve and charter.eval runners.
 """
 
 from __future__ import annotations

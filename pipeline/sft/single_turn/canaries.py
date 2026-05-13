@@ -1,4 +1,4 @@
-"""Canary config for phase 5 SFT generation.
+"""Canary config for sft.single_turn generation.
 
 Loads canaries from resources/canaries.yaml and partitions them into
 inject (identity facts woven into responses) and skip (trigger [SKIP]

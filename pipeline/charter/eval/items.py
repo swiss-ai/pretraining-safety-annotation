@@ -2,7 +2,7 @@
 
 `build_item_pool` produces a fresh diverse pool from the full Dolma3 dataset.
 `ensure_item_pool` materializes it once on disk and returns it on resume.
-`load_reviewed_items` constructs the reviewed-item set from the phase 2
+`load_reviewed_items` constructs the reviewed-item set from charter.improve
 SQLite tables for the judge eval's vs-human path.
 """
 
@@ -125,7 +125,7 @@ def ensure_item_pool(
 
 
 def load_reviewed_items(reviewer_policy: str = "average") -> list[dict]:
-    """Build the reviewed item set from phase 2 reviews + items tables.
+    """Build the reviewed item set from charter.improve reviews + items tables.
 
     See module docstring.
     """

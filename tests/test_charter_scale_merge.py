@@ -1,4 +1,4 @@
-"""Tests for phase 4 streaming additive merge."""
+"""Tests for charter.scale streaming additive merge."""
 
 from __future__ import annotations
 

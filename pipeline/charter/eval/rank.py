@@ -1,6 +1,6 @@
 """Charter eval ranking analytics.
 
-Reads JSONL files from a phase 3 run dir and computes:
+Reads JSONL files from a charter.eval run dir and computes:
 - `rank_generators(run_id)` — mean aggregate, accept rate, per-dim mean,
   accept-by-safety-score breakdown, per-category failure rates.
 - `rank_judges(run_id)` — vs-gold and vs-human correlation metrics
@@ -159,7 +159,7 @@ def _per_voice_dim_scores(row: dict) -> dict[str, list[float]]:
 
 
 def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[dict]:
-    """Per-generator rank table for a phase 3 generator-eval run.
+    """Per-generator rank table for a charter.eval generator-eval run.
 
     See module docstring for the returned dict shape.
     """
@@ -543,7 +543,7 @@ def _human_review_per_dim(row: dict) -> dict[str, float]:
 
 
 def rank_judges(run_id: str, *, eval_dir: Path | str | None = None) -> dict:
-    """Per-judge rank tables for a phase 3 judge-eval run."""
+    """Per-judge rank tables for a charter.eval judge-eval run."""
     run_dir = _resolve_run_dir(run_id, eval_dir)
     meta_path = run_dir / "metadata.json"
     if not meta_path.exists():

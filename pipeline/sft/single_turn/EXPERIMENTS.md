@@ -1,12 +1,10 @@
 # sft.single_turn Experiments
 
-> **Naming note (2026-05-13):** entries below were written before the
-> `pipeline/phaseN/` → `pipeline/{charter,sft}/...` rename. Path
-> references to `$SCRATCH/.../phase5` reflect the on-disk layout *at
-> the time of the run* and are preserved verbatim. The migration
-> script moved `$SCRATCH/.../phase5/` → `$SCRATCH/.../sft/single_turn/`
-> in a separate step. Mapping: phase5→sft/single_turn,
-> phase6→sft/multi_turn.
+> **Naming note (2026-05-13):** entries below were written when this
+> module lived at `pipeline/phase5/` with output at `$SCRATCH/.../phase5/`.
+> Both have since been renamed (`sft.single_turn` / `$SCRATCH/.../sft/single_turn/`).
+> Path references are preserved verbatim as historical record.
+> See `scripts/migrate_phase_rename.py` for the full old→new mapping.
 
 ## EXP-002: Charter-aware Paired SFT
 

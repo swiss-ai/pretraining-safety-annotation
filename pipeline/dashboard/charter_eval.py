@@ -86,7 +86,7 @@ _BAR_COLORS = [
 
 @ui.page("/charter_eval")
 def charter_eval_runs_page() -> None:
-    """List phase 3 eval runs."""
+    """List charter.eval runs."""
     viewer_id = app.storage.user.get("annotator_id", "")
     render_header(viewer_id, active_step=3)
 
@@ -95,7 +95,7 @@ def charter_eval_runs_page() -> None:
     ui.label("Charter eval: Runs").classes("text-h5 q-pa-md")
     if not runs:
         with ui.column().classes("absolute-center items-center"):
-            ui.label("No phase 3 eval runs yet.").classes("text-h6 text-grey-6")
+            ui.label("No charter.eval runs yet.").classes("text-h6 text-grey-6")
             ui.label(
                 "Run `uv run python -m pipeline.charter.eval eval-generators` to start."
             ).classes("text-body2 text-grey-5")
@@ -167,7 +167,7 @@ def charter_eval_runs_page() -> None:
 
 @ui.page("/charter_eval/{run_id}")
 def charter_eval_run_detail_page(run_id: str) -> None:
-    """Show metadata + rank table for a single phase 3 eval run."""
+    """Show metadata + rank table for a single charter.eval run."""
     viewer_id = app.storage.user.get("annotator_id", "")
     render_header(viewer_id, active_step=3)
 
@@ -579,7 +579,7 @@ def _judgment_display_label(jud_stem: str) -> str:
 
 @ui.page("/charter_eval/{run_id}/browse")
 def charter_eval_browse_page(run_id: str) -> None:
-    """Browse individual outputs for a phase 3 generator eval run."""
+    """Browse individual outputs for a charter.eval generator eval run."""
     viewer_id = app.storage.user.get("annotator_id", "")
     render_header(viewer_id, active_step=3)
 

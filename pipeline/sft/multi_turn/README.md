@@ -64,7 +64,7 @@ The mt_v1 addendum adds consistency and re-citation rules. v11 improvements flow
 | `export.py` | Multi-turn parquet export + HF upload |
 | `__main__.py` | CLI dispatch |
 
-Reused from phase 5: `PromptsReader`, `materialize_prompts`, `merge_shards`, `render_system_prompt`, canary system, data loaders.
+Reused from sft.single_turn: `PromptsReader`, `materialize_prompts`, `merge_shards`, `render_system_prompt`, canary system, data loaders.
 
 ## CLI
 
@@ -91,13 +91,13 @@ uv run python -m pipeline.sft.multi_turn export
 | WildGuardMix harmful | 10,000 | harmful |
 | WildJailbreak vanilla_harmful | 10,000 | vanilla_harmful |
 
-50% benign, 50% harmful/adversarial. HarmfulQA excluded (covered by phase 5).
+50% benign, 50% harmful/adversarial. HarmfulQA excluded (covered by sft.single_turn).
 
 ## Output
 
 HF dataset: `jkminder/model-raising-pb-100k-3c-mt-sft`
 
-Same schema as phase 5 (`messages_cite`, `messages_nocite`) but with variable-length message lists + `n_turns` column.
+Same schema as sft.single_turn (`messages_cite`, `messages_nocite`) but with variable-length message lists + `n_turns` column.
 
 ## Thinking / reasoning behavior
 

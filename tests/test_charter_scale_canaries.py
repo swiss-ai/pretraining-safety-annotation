@@ -1,4 +1,4 @@
-"""Tests for phase 4 canary assignment."""
+"""Tests for charter.scale canary assignment."""
 
 from __future__ import annotations
 

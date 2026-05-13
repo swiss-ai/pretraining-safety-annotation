@@ -43,7 +43,7 @@ FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
 
 
 class AnnotationGenerator(PipelineStep):
-    """Run-driven annotation generator for phase 4."""
+    """Run-driven annotation generator for charter.scale."""
 
     name = "AnnotationGenerator"
     type = "generator"

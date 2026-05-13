@@ -1,4 +1,4 @@
-"""Export phase 6 multi-turn results JSONL to HuggingFace-style chat dataset.
+"""Export sft.multi_turn results JSONL to HuggingFace-style chat dataset.
 
 Each input row is a multi-turn conversation with paired ``cited`` and
 ``uncited`` assistant responses per turn. We write one parquet dataset

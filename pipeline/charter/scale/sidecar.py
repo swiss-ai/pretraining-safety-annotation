@@ -1,4 +1,4 @@
-"""Shared helpers for reading and identifying the phase 4 sidecar parquet.
+"""Shared helpers for reading and identifying the charter.scale sidecar parquet.
 
 Collects utilities used by the submit command, backfill, and verify
 scripts so we don't keep reimplementing row-group walks and fingerprints.

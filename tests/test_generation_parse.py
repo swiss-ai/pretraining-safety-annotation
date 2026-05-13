@@ -2,7 +2,7 @@
 
 The model occasionally emits its own JSON keys inside field values when
 the JSON envelope is malformed or the chain-of-thought leaks through.
-parse_generation must detect this and raise so the phase 4 generator
+parse_generation must detect this and raise so the charter.scale generator
 retries the doc.
 
 Two leak signals:

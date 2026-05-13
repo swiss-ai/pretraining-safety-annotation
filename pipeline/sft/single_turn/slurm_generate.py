@@ -193,7 +193,7 @@ def _save_loop(
 ):
     """Background thread: drain save_queue into results JSONL.
 
-    Mirrors phase 4's _save_loop — serialize failures (e.g. lone UTF-16
+    Mirrors charter.scale's _save_loop — serialize failures (e.g. lone UTF-16
     surrogates) get routed to failures.jsonl rather than killing the
     thread. No fsync (Lustre under heavy concurrency would stall).
     """

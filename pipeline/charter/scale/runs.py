@@ -1,4 +1,4 @@
-"""Run definitions for phase 4 generation.
+"""Run definitions for charter.scale generation.
 
 Each run specifies what columns to produce, how to build API call messages,
 and how to post-process the parsed responses into the final output row.

@@ -1,4 +1,4 @@
-"""Tests for phase 4 run definitions."""
+"""Tests for charter.scale run definitions."""
 
 from __future__ import annotations
 
