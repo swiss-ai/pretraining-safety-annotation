@@ -202,7 +202,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     # Add phase column to runs (added 2026-03-16)
     if "phase" not in cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'phase2'")
+        conn.execute("ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'improve'")
 
     # Add safety_score column to items (added 2026-03-25)
     if "safety_score" not in item_cols:

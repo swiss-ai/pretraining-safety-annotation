@@ -11,10 +11,10 @@ The eval_judges module exposes one public function:
         '''Path-B runner.
 
         1. Build item pool, write items.jsonl
-        2. Generate from cfg.phase3.judge_eval.generator once.
+        2. Generate from cfg.charter.eval.judge_eval.generator once.
         3. For each judge in [gold_judge] + dedup(judge_eval.candidates),
            judge those generations once.
-        4. If cfg.phase3.judge_eval.include_reviewed:
+        4. If cfg.charter.eval.judge_eval.include_reviewed:
              a. Build reviewed_items.jsonl from load_reviewed_items.
              b. For each judge in the same set, score those rows.
         5. Set metadata status=done, finished_at.
@@ -194,20 +194,20 @@ def _build_cfg(tmp_path):
     from pipeline.config import CandidateModel, load_config
 
     cfg = load_config()
-    cfg.phase3.eval_dir = str(tmp_path / "phase3_eval")
-    cfg.phase3.gold_judge = CandidateModel(
+    cfg.charter.eval.eval_dir = str(tmp_path / "phase3_eval")
+    cfg.charter.eval.gold_judge = CandidateModel(
         alias="gold",
         api_name="gold-api",
         prompt_reflection="judge_v1.md",
         prompt_preflection="judge_v1.md",
     )
-    cfg.phase3.judge_eval.generator = CandidateModel(
+    cfg.charter.eval.judge_eval.generator = CandidateModel(
         alias="genA",
         api_name="genA-api",
         prompt_reflection="generator_v1.md",
         prompt_preflection="generator_v1.md",
     )
-    cfg.phase3.judge_eval.candidates = [
+    cfg.charter.eval.judge_eval.candidates = [
         CandidateModel(
             alias="cand1",
             api_name="cand1-api",
@@ -221,10 +221,10 @@ def _build_cfg(tmp_path):
             prompt_preflection="judge_v3.md",
         ),
     ]
-    cfg.phase3.judge_eval.n_items = 5
-    cfg.phase3.judge_eval.seed = 42
-    cfg.phase3.judge_eval.chunk_size = 200
-    cfg.phase3.judge_eval.include_reviewed = False
+    cfg.charter.eval.judge_eval.n_items = 5
+    cfg.charter.eval.judge_eval.seed = 42
+    cfg.charter.eval.judge_eval.chunk_size = 200
+    cfg.charter.eval.judge_eval.include_reviewed = False
     return cfg
 
 
@@ -351,7 +351,7 @@ class TestRunJudgeEval:
 
         cfg = _build_cfg(tmp_path)
         # Include a candidate whose (alias, prompts) duplicates the gold judge.
-        cfg.phase3.judge_eval.candidates = [
+        cfg.charter.eval.judge_eval.candidates = [
             CandidateModel(
                 alias="gold",
                 api_name="gold-api",
@@ -399,7 +399,7 @@ class TestRunJudgeEval:
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
         cfg = _build_cfg(tmp_path)
-        cfg.phase3.judge_eval.seed = 999
+        cfg.charter.eval.judge_eval.seed = 999
 
         mod.run_judge_eval(cfg, "run-seed")
 
@@ -519,7 +519,7 @@ class TestRunJudgeEval:
         )
 
         cfg = _build_cfg(tmp_path)
-        cfg.phase3.judge_eval.include_reviewed = True
+        cfg.charter.eval.judge_eval.include_reviewed = True
 
         mod.run_judge_eval(cfg, "run-reviewed")
 
@@ -605,7 +605,7 @@ class TestRunJudgeEval:
         )
 
         cfg = _build_cfg(tmp_path)
-        cfg.phase3.judge_eval.include_reviewed = True
+        cfg.charter.eval.judge_eval.include_reviewed = True
         mod.run_judge_eval(cfg, "run-reviewed-resume")
 
         # Second run: all reviewed judgments should already be done.

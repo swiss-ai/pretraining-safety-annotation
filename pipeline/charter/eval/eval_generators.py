@@ -1,6 +1,6 @@
 """Phase 3 generator-eval runner.
 
-Reads `cfg.phase3.generator_eval`, generates reflections from each
+Reads `cfg.charter.eval.generator_eval`, generates reflections from each
 candidate generator on the same item pool, then judges them with the
 single configured gold judge. Per-item resume via `JsonlRunStore`.
 """
@@ -66,8 +66,8 @@ def _resolve_prompt_paths(
 
 
 def _eval_root(cfg: AppConfig) -> Path:
-    raw = cfg.phase3.eval_dir or os.environ.get(
-        "PHASE3_EVAL_DIR", "data/pipeline/phase3_eval"
+    raw = cfg.charter.eval.eval_dir or os.environ.get(
+        "CHARTER_EVAL_DIR", "data/pipeline/charter_eval"
     )
     return Path(os.path.expandvars(os.path.expanduser(str(raw))))
 
@@ -388,11 +388,11 @@ def run_generator_eval(
       - ``"generate"`` – only generate reflections for every candidate
       - ``"judge"``    – only judge existing generations with the gold judge
     """
-    ge = cfg.phase3.generator_eval
+    ge = cfg.charter.eval.generator_eval
     root = _eval_root(cfg)
     store = JsonlRunStore(root, run_id)
 
-    gold = cfg.phase3.gold_judge
+    gold = cfg.charter.eval.gold_judge
     if ge.gold_prompt_reflection or ge.gold_prompt_preflection:
         gold = copy.copy(gold)
         if ge.gold_prompt_reflection:
@@ -417,7 +417,7 @@ def run_generator_eval(
 
         items = ensure_item_pool(store, ge.n_items, ge.seed, cfg.max_tokens)
 
-        judge_endpoint = gold.endpoint or cfg.phase3.endpoint
+        judge_endpoint = gold.endpoint or cfg.charter.eval.endpoint
         logger.info("Gold judge: alias={} api_name={} endpoint={}", gold.alias, gold.api_name, judge_endpoint)
         client, sem = make_api_client(judge_endpoint, ge.max_concurrent)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
@@ -433,7 +433,7 @@ def run_generator_eval(
             def _gen_one(gen):
                 # Each thread needs its own client because httpx
                 # internals bind to a single event loop.
-                gen_endpoint = gen.endpoint or cfg.phase3.endpoint
+                gen_endpoint = gen.endpoint or cfg.charter.eval.endpoint
                 t_client, _ = make_api_client(gen_endpoint, per_cand)
                 _generate_with_resume(
                     store,
@@ -474,7 +474,7 @@ def run_generator_eval(
                     charter,
                     wg,
                     failures_name=_judge_failures_name(gold, gen),
-                    accept_threshold=cfg.phase3.scoring.accept_threshold,
+                    accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
                     mode=eval_mode,

@@ -5,248 +5,252 @@ max_tokens: 1920
 api_keys:
   https://api.swissai.svc.cscs.ch/v1: SWISS_AI_API_KEY
   https://openrouter.ai/api/v1: OPENROUTER_API_KEY
-phase1:
-  dataset: jkminder/Dolma3_mix_annotation_sample
-  subsets: []
-  sample_size: 200
-phase2:
-  endpoint: https://api.swissai.svc.cscs.ch/v1
-  judge_models:
-    - alias: kimi-k2.5
-      api_name: moonshotai/Kimi-K2.5
+
+charter:
+  seed:
+    dataset: jkminder/Dolma3_mix_annotation_sample
+    subsets: []
+    sample_size: 200
+  improve:
+    endpoint: https://api.swissai.svc.cscs.ch/v1
+    judge_models:
+      - alias: kimi-k2.5
+        api_name: moonshotai/Kimi-K2.5
+        hf_slug: moonshotai/Kimi-K2.5
+        completion_max_tokens: 65536
+        context_window_tokens: 65536
+        endpoint: https://openrouter.ai/api/v1
+
+    generator_models:
+      # - alias: glm-4.5-air
+      #   api_name: jminder/pZcWDUxqEQ
+      #   hf_slug: zai-org/GLM-4.5-Air-FP8
+      #   context_window_tokens: 16384
+      # - alias: olmo3-32B-think
+      #   api_name: jminder/UqFTpAeJcvV4
+      #   hf_slug: olmo-ai/olmo-3-32b-thinking
+      # - alias: kimi-k2.5
+      #   api_name: jkminder/lAiFTaihSJ
+      #   hf_slug: moonshotai/Kimi-K2.5
+      # - alias: gpt-oss-120b
+      #   api_name: openai/gpt-oss-120b-sJQH
+      #   hf_slug: openai/gpt-oss-120b
+      #   context_window_tokens: 16384
+        # endpoint: https://openrouter.ai/api/v1
+        # api_name: openai/gpt-oss-120b-SfWS
+        # hf_slug: openai/gpt-oss-120b
+      # - alias: glm-4.7-flash
+      #   api_name: zai-org/GLM-4.7-Flash
+      #   hf_slug: zai-org/GLM-4.7-Flash
+      - alias: qwen3.5-35b-a3b
+        api_name: Qwen/Qwen3.5-35B-A3B
+        hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
+      # - alias: qwen3.5-9b
+      #   api_name: Qwen/Qwen3.5-9B-hFgU
+      #   hf_slug: Qwen/Qwen3.5-9B
+      # - alias: nemotron-3-super-120b-a12b
+      #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-YwWH
+      #   # api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-KRHT
+      #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+      #   context_window_tokens: 16384
+        # endpoint: https://openrouter.ai/api/v1
+      # - alias: smollm3-3b
+      #   api_name: HuggingFaceTB/SmolLM3-3B-uDyM
+      #   hf_slug: HuggingFaceTB/SmolLM3-3B
+      #   thinking: false
+      # - alias: llama-3.3-70b-instruct
+      #   api_name: meta-llama/Llama-3.3-70B-Instruct
+      #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
+      #   thinking: false
+      # - alias: apertus-70b-instruct
+      #   api_name: swiss-ai/Apertus-70B-Instruct-2509
+      #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
+      #   thinking: false
+      #   json_mode: true
+    improver:
+      judge_prompt: improver_judge.md
+      generator_prompt: improver_generator.md
+      max_batches_per_phase: 5
+      timeout_s: 3600
+    scoring:
+      scale_min: 1
+      scale_max: 5
+      accept_threshold: 4
+      dimensions:
+      - relevance
+      - specificity
+      - charter_grounding
+      - voice_tone
+    iteration:
+      n_items: 100
+      n_gold: 10
+      max_concurrent: 100
+    loop: {}
+  eval:
+    endpoint: ${charter.improve.endpoint}
+    eval_dir: data/pipeline/charter_eval
+    gold_judge:
+      alias: kimi-k2.5
+      api_name: jkminder/lAiFTaihSJ # #jkminder/lAiFTaihSJ #
       hf_slug: moonshotai/Kimi-K2.5
+      endpoint: http://172.28.25.28:30000/v1
+      prompt_reflection: judge_reflection_v24.md
+      prompt_preflection: judge_preflection_v3.md
       completion_max_tokens: 65536
       context_window_tokens: 65536
-      endpoint: https://openrouter.ai/api/v1
+    generator_eval:
+      n_items: 5000
+      seed: 42
+      max_concurrent: 768
+      chunk_size: 500
+      store_reasoning: false
+      failure_attempt_cap: 5
+      candidates:
+      # - alias: glm-4.5-air
+      #   api_name: jminder/pZcWDUxqEQ
+      #   hf_slug: zai-org/GLM-4.5-Air-FP8
+      #   context_window_tokens: 16384
+      #   prompt_reflection: generator_reflection_v7.md
+      #   prompt_preflection: generator_preflection_v6.md
+      # - alias: gpt-oss-120b
+      #   api_name: openai/gpt-oss-120b-SSOR
+      #   hf_slug: openai/gpt-oss-120b
+      #   context_window_tokens: 16384
+      #   prompt_reflection: generator_reflection_v7.md
+      #   prompt_preflection: generator_preflection_v6.md
+      - alias: qwen3.5-35b-a3b
+        api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+        hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+        context_window_tokens: 24576
+        prompt_reflection: generator_reflection_v7.md
+        prompt_preflection: generator_preflection_v6.md
+      # - alias: nemotron-3-super-120b-a12b
+      #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
+      #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+      #   context_window_tokens: 16384
+      #   prompt_reflection: generator_reflection_v9.md
+      #   prompt_preflection: generator_preflection_v6.md
+    judge_eval:
+      n_items: 5000
+      seed: 42
+      max_concurrent: 50
+      chunk_size: 200
+      include_reviewed: true
+      reviewer_policy: average
+      store_reasoning: false
+      failure_attempt_cap: 3
+      generator:
+        alias: qwen3.5-35b-a3b
+        api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+        prompt_reflection: generator_reflection_v7.md
+        prompt_preflection: generator_preflection_v6.md
+      candidates: []
+    scoring:
+      scale_min: 1
+      scale_max: 5
+      accept_threshold: 4
+      dimensions:
+      - relevance
+      - specificity
+      - charter_grounding
+      - voice_tone
+  scale:
+    sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
+    output_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale
+    reflection_prompt: generator_reflection_v7.md
+    preflection_prompt: generator_preflection_v8.md
+    generator_alias: qwen3.5-35b-a3b
+    thinking: false
+    json_mode: false
+    max_rows: 0
+    rows_per_task: 100000
+    max_concurrent_requests: 1024
+    save_batch_size: 5000
+    progress_interval: 1000
+    canary_seed: 42
+    reflection_seed: 42
+    max_retries_per_doc: 3
+    sglang:
+      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
+      model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
+      tp_size: 1
+      dp_size: 4
+      port: 30000
+      # reasoning_parser per model family:
+      #   GLM-4.5-Air, GLM-4.5-Air-FP8, GLM-4.7-Flash: glm45
+      #   Qwen3.5-* (all sizes):                        kimi_k2
+      #   Kimi-K2.5:                                     kimi_k2
+      #   Nemotron-3-Super:                              nano_v3
+      #   gpt-oss-120b:                                  (none — no thinking)
+      reasoning_parser: kimi_k2
+      env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
+      extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
+      pre_launch_cmds: |
+        pip install nvidia-cudnn-cu12==9.16.0.29
+        # Install tuned MoE kernel config for Qwen3.5-35B on GH200 (gate-up only;
+        # +1.4% sps over default. See throughput_estimations/tune_moe_kernels.sh).
+        SGLANG_PATH=\$(python3 -c 'import sglang; print(sglang.__path__[0])')
+        TRITON_VERSION=\$(python3 -c 'import triton; print(\"triton_\" + triton.__version__.replace(\".\", \"_\"))')
+        MOE_CONFIG_DIR=\"\$SGLANG_PATH/srt/layers/moe/fused_moe_triton/configs/\$TRITON_VERSION\"
+        mkdir -p \"\$MOE_CONFIG_DIR\"
+        cp /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/*.json \"\$MOE_CONFIG_DIR/\"
+    slurm:
+      partition: normal
+      account: a141
+      time: "09:00:00"
+      cpus_per_task: 288
+      mem_per_cpu_gb: 8
+      workers: -1
 
-  generator_models:
-    # - alias: glm-4.5-air
-    #   api_name: jminder/pZcWDUxqEQ
-    #   hf_slug: zai-org/GLM-4.5-Air-FP8
-    #   context_window_tokens: 16384
-    # - alias: olmo3-32B-think
-    #   api_name: jminder/UqFTpAeJcvV4
-    #   hf_slug: olmo-ai/olmo-3-32b-thinking
-    # - alias: kimi-k2.5
-    #   api_name: jkminder/lAiFTaihSJ
-    #   hf_slug: moonshotai/Kimi-K2.5
-    # - alias: gpt-oss-120b
-    #   api_name: openai/gpt-oss-120b-sJQH
-    #   hf_slug: openai/gpt-oss-120b
-    #   context_window_tokens: 16384
-      # endpoint: https://openrouter.ai/api/v1
-      # api_name: openai/gpt-oss-120b-SfWS
-      # hf_slug: openai/gpt-oss-120b
-    # - alias: glm-4.7-flash
-    #   api_name: zai-org/GLM-4.7-Flash
-    #   hf_slug: zai-org/GLM-4.7-Flash
-    - alias: qwen3.5-35b-a3b
-      api_name: Qwen/Qwen3.5-35B-A3B
-      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-      context_window_tokens: 24576
-      endpoint: https://openrouter.ai/api/v1
-    # - alias: qwen3.5-9b
-    #   api_name: Qwen/Qwen3.5-9B-hFgU
-    #   hf_slug: Qwen/Qwen3.5-9B
-    # - alias: nemotron-3-super-120b-a12b
-    #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-YwWH
-    #   # api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-KRHT
-    #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-    #   context_window_tokens: 16384
-      # endpoint: https://openrouter.ai/api/v1
-    # - alias: smollm3-3b
-    #   api_name: HuggingFaceTB/SmolLM3-3B-uDyM
-    #   hf_slug: HuggingFaceTB/SmolLM3-3B
-    #   thinking: false
-    # - alias: llama-3.3-70b-instruct
-    #   api_name: meta-llama/Llama-3.3-70B-Instruct
-    #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
-    #   thinking: false
-    # - alias: apertus-70b-instruct
-    #   api_name: swiss-ai/Apertus-70B-Instruct-2509
-    #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
-    #   thinking: false
-    #   json_mode: true
-  improver:
-    judge_prompt: improver_judge.md
-    generator_prompt: improver_generator.md
-    max_batches_per_phase: 5
-    timeout_s: 3600
-  scoring:
-    scale_min: 1
-    scale_max: 5
-    accept_threshold: 4
-    dimensions:
-    - relevance
-    - specificity
-    - charter_grounding
-    - voice_tone
-  iteration:
-    n_items: 100
-    n_gold: 10
-    max_concurrent: 100
-  loop: {}
-phase3:
-  endpoint: ${phase2.endpoint}
-  eval_dir: data/pipeline/charter/eval
-  gold_judge:
-    alias: kimi-k2.5
-    api_name: jkminder/lAiFTaihSJ # #jkminder/lAiFTaihSJ #
-    hf_slug: moonshotai/Kimi-K2.5
-    endpoint: http://172.28.25.28:30000/v1
-    prompt_reflection: judge_reflection_v24.md
-    prompt_preflection: judge_preflection_v3.md
-    completion_max_tokens: 65536
-    context_window_tokens: 65536
-  generator_eval:
-    n_items: 5000
+sft:
+  single_turn:
+    output_dir: ${oc.env:SCRATCH,""}/model-raising-data/sft/single_turn
+    prompt_version: v11
+    generator_alias: qwen3.5-35b-a3b
+    total_rows: 301960              # 1960 HarmfulQA + 8 * 37500 from 7 other subcategories
     seed: 42
-    max_concurrent: 768
-    chunk_size: 500
-    store_reasoning: false
-    failure_attempt_cap: 5
-    candidates:
-    # - alias: glm-4.5-air
-    #   api_name: jminder/pZcWDUxqEQ
-    #   hf_slug: zai-org/GLM-4.5-Air-FP8
-    #   context_window_tokens: 16384
-    #   prompt_reflection: generator_reflection_v7.md
-    #   prompt_preflection: generator_preflection_v6.md
-    # - alias: gpt-oss-120b
-    #   api_name: openai/gpt-oss-120b-SSOR
-    #   hf_slug: openai/gpt-oss-120b
-    #   context_window_tokens: 16384
-    #   prompt_reflection: generator_reflection_v7.md
-    #   prompt_preflection: generator_preflection_v6.md
-    - alias: qwen3.5-35b-a3b
-      api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+    rows_per_task: 10001            # 10 tasks (rounded; last task gets remainder). MUST NOT change after first submit.
+    max_concurrent_requests: 1024
+    save_batch_size: 200
+    progress_interval: 500
+    max_retries_per_doc: 5
+    hf_repo_id: jkminder/model-raising-pb-300k-3c-sft
+    sglang:
       hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-      context_window_tokens: 24576
-      prompt_reflection: generator_reflection_v7.md
-      prompt_preflection: generator_preflection_v6.md
-    # - alias: nemotron-3-super-120b-a12b
-    #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
-    #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-    #   context_window_tokens: 16384
-    #   prompt_reflection: generator_reflection_v9.md
-    #   prompt_preflection: generator_preflection_v6.md
-  judge_eval:
-    n_items: 5000
-    seed: 42
-    max_concurrent: 50
-    chunk_size: 200
-    include_reviewed: true
-    reviewer_policy: average
-    store_reasoning: false
-    failure_attempt_cap: 3
-    generator:
-      alias: qwen3.5-35b-a3b
-      api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
-      prompt_reflection: generator_reflection_v7.md
-      prompt_preflection: generator_preflection_v6.md
-    candidates: []
-  scoring:
-    scale_min: 1
-    scale_max: 5
-    accept_threshold: 4
-    dimensions:
-    - relevance
-    - specificity
-    - charter_grounding
-    - voice_tone
-phase4:
-  sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
-  output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase4
-  reflection_prompt: generator_reflection_v7.md
-  preflection_prompt: generator_preflection_v8.md
-  generator_alias: qwen3.5-35b-a3b
-  thinking: false
-  json_mode: false
-  max_rows: 0
-  rows_per_task: 100000
-  max_concurrent_requests: 1024
-  save_batch_size: 5000
-  progress_interval: 1000
-  canary_seed: 42
-  reflection_seed: 42
-  max_retries_per_doc: 3
-  sglang:
-    hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-    model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
-    tp_size: 1
-    dp_size: 4
-    port: 30000
-    # reasoning_parser per model family:
-    #   GLM-4.5-Air, GLM-4.5-Air-FP8, GLM-4.7-Flash: glm45
-    #   Qwen3.5-* (all sizes):                        kimi_k2
-    #   Kimi-K2.5:                                     kimi_k2
-    #   Nemotron-3-Super:                              nano_v3
-    #   gpt-oss-120b:                                  (none — no thinking)
-    reasoning_parser: kimi_k2
-    env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
-    extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
-    pre_launch_cmds: |
-      pip install nvidia-cudnn-cu12==9.16.0.29
-      # Install tuned MoE kernel config for Qwen3.5-35B on GH200 (gate-up only;
-      # +1.4% sps over default. See throughput_estimations/tune_moe_kernels.sh).
-      SGLANG_PATH=\$(python3 -c 'import sglang; print(sglang.__path__[0])')
-      TRITON_VERSION=\$(python3 -c 'import triton; print(\"triton_\" + triton.__version__.replace(\".\", \"_\"))')
-      MOE_CONFIG_DIR=\"\$SGLANG_PATH/srt/layers/moe/fused_moe_triton/configs/\$TRITON_VERSION\"
-      mkdir -p \"\$MOE_CONFIG_DIR\"
-      cp /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/*.json \"\$MOE_CONFIG_DIR/\"
-  slurm:
-    partition: normal
-    account: a141
-    time: "09:00:00"
-    cpus_per_task: 288
-    mem_per_cpu_gb: 8
-    workers: -1
-phase5:
-  output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase5
-  prompt_version: v11
-  generator_alias: qwen3.5-35b-a3b
-  total_rows: 301960              # 1960 HarmfulQA + 8 * 37500 from 7 other subcategories
-  seed: 42
-  rows_per_task: 10001            # 10 tasks (rounded; last task gets remainder). MUST NOT change after first submit.
-  max_concurrent_requests: 1024
-  save_batch_size: 200
-  progress_interval: 500
-  max_retries_per_doc: 5
-  hf_repo_id: jkminder/model-raising-pb-300k-3c-sft
-  sglang:
-    hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-    model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
-    tp_size: 1
-    dp_size: 4
-    port: 30000
-    reasoning_parser: kimi_k2
-    env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
-    extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
-    # MoE tuning configs were at /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/
-    # but got cleaned by $SCRATCH auto-purge. sglang auto-tunes without them (~1-2% slower).
-    pre_launch_cmds: |
-      pip install nvidia-cudnn-cu12==9.16.0.29
-  slurm:
-    partition: normal
-    account: a141
-    time: "08:00:00"              # phase5 needs ~45min/task; phase6 needs ~7h/task (multi-turn)
-    cpus_per_task: 288
-    mem_per_cpu_gb: 8
-    workers: -1
-phase6:
-  output_dir: ${oc.env:SCRATCH,""}/model-raising-data/phase6
-  base_prompt_version: v11
-  addendum_version: mt_v1
-  generator_alias: qwen3.5-35b-a3b
-  total_rows: 100000
-  seed: 43
-  rows_per_task: 5000
-  max_concurrent_requests: 512       # lower than phase5 — each conversation holds semaphore longer
-  save_batch_size: 100
-  progress_interval: 200
-  max_retries_per_doc: 3
-  max_turns: 10
-  hf_repo_id: jkminder/model-raising-pb-100k-3c-mt-sft
+      model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
+      tp_size: 1
+      dp_size: 4
+      port: 30000
+      reasoning_parser: kimi_k2
+      env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
+      extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
+      # MoE tuning configs were at /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/
+      # but got cleaned by $SCRATCH auto-purge. sglang auto-tunes without them (~1-2% slower).
+      pre_launch_cmds: |
+        pip install nvidia-cudnn-cu12==9.16.0.29
+    slurm:
+      partition: normal
+      account: a141
+      time: "08:00:00"              # single_turn needs ~45min/task; multi_turn needs ~7h/task
+      cpus_per_task: 288
+      mem_per_cpu_gb: 8
+      workers: -1
+  multi_turn:
+    output_dir: ${oc.env:SCRATCH,""}/model-raising-data/sft/multi_turn
+    base_prompt_version: v11
+    addendum_version: mt_v1
+    generator_alias: qwen3.5-35b-a3b
+    total_rows: 100000
+    seed: 43
+    rows_per_task: 5000
+    max_concurrent_requests: 512       # lower than single_turn — each conversation holds semaphore longer
+    save_batch_size: 100
+    progress_interval: 200
+    max_retries_per_doc: 3
+    max_turns: 10
+    hf_repo_id: jkminder/model-raising-pb-100k-3c-mt-sft
 
 dashboard:
   port: 8600

@@ -138,14 +138,14 @@ class LoopConfig:
 
 
 @dataclass
-class Phase1Config:
+class CharterSeedConfig:
     dataset: str = "locuslab/fineweb_annotated"
     subsets: list[str] = field(default_factory=lambda: [f"score_{i}" for i in range(6)])
     sample_size: int = 200
 
 
 @dataclass
-class Phase2Config:
+class CharterImproveConfig:
     endpoint: str = ""
     judge_models: list[ModelConfig] = field(default_factory=list)
     generator_models: list[ModelConfig] = field(default_factory=list)
@@ -162,7 +162,7 @@ class DashboardConfig:
 
 @dataclass
 class CandidateModel:
-    """One candidate model in a phase 3 eval (generator or judge).
+    """One candidate model in a charter-eval run (generator or judge).
 
     Unlike `ModelConfig`, the prompt filename is explicit (e.g.
     `judge_v3.md`) — we never auto-pick the latest. This makes evals
@@ -172,7 +172,7 @@ class CandidateModel:
     alias: str = ""
     api_name: str = ""
     hf_slug: str = ""
-    endpoint: str = ""  # per-model override; falls back to phase3.endpoint
+    endpoint: str = ""  # per-model override; falls back to charter.eval.endpoint
     prompt_reflection: str = ""  # e.g. "generator_reflection_v7.md"
     prompt_preflection: str = ""  # e.g. "generator_preflection_v2.md"
     thinking: bool = False
@@ -210,7 +210,7 @@ class JudgeEvalConfig:
 
 
 @dataclass
-class Phase3Config:
+class CharterEvalConfig:
     endpoint: str = ""
     eval_dir: str = ""  # root for run dirs; resolves env vars
     gold_judge: CandidateModel = field(default_factory=CandidateModel)
@@ -220,7 +220,7 @@ class Phase3Config:
 
 
 @dataclass
-class Phase4SglangConfig:
+class SglangConfig:
     hf_slug: str = ""
     model_path: str = ""  # local HF cache path on /capstor/, or empty to download
     tp_size: int = 4
@@ -233,7 +233,7 @@ class Phase4SglangConfig:
 
 
 @dataclass
-class Phase4SlurmConfig:
+class SlurmConfig:
     partition: str = "normal"
     account: str = "a141"
     time: str = "24:00:00"
@@ -243,7 +243,7 @@ class Phase4SlurmConfig:
 
 
 @dataclass
-class Phase4Config:
+class CharterScaleConfig:
     sidecar_path: str = ""
     output_dir: str = ""
     reflection_prompt: str = "generator_reflection_v1.md"
@@ -259,13 +259,13 @@ class Phase4Config:
     canary_seed: int = 42
     reflection_seed: int = 42  # independent from canary_seed
     max_retries_per_doc: int = 5
-    sglang: Phase4SglangConfig = field(default_factory=Phase4SglangConfig)
-    slurm: Phase4SlurmConfig = field(default_factory=Phase4SlurmConfig)
+    sglang: SglangConfig = field(default_factory=SglangConfig)
+    slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
 
 @dataclass
-class Phase5Config:
-    """Phase 5: charter-aware paired SFT generation on Alps SLURM."""
+class SftSingleTurnConfig:
+    """Charter-aware paired single-turn SFT generation on Alps SLURM."""
     output_dir: str = ""
     prompt_version: str = "v6"
     generator_alias: str = "qwen3.5-35b-a3b"
@@ -277,13 +277,17 @@ class Phase5Config:
     progress_interval: int = 500
     max_retries_per_doc: int = 5
     hf_repo_id: str = ""
-    sglang: Phase4SglangConfig = field(default_factory=Phase4SglangConfig)
-    slurm: Phase4SlurmConfig = field(default_factory=Phase4SlurmConfig)
+    sglang: SglangConfig = field(default_factory=SglangConfig)
+    slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
 
 @dataclass
-class Phase6Config:
-    """Phase 6: multi-turn charter-aware paired SFT via self-play."""
+class SftMultiTurnConfig:
+    """Multi-turn charter-aware paired SFT via self-play.
+
+    Deliberately omits sglang/slurm blocks — at runtime, multi_turn submit
+    reuses cfg.sft.single_turn.{sglang,slurm} (same server config).
+    """
     output_dir: str = ""
     base_prompt_version: str = "v11"
     addendum_version: str = "mt_v1"
@@ -300,18 +304,28 @@ class Phase6Config:
 
 
 @dataclass
+class CharterConfig:
+    seed: CharterSeedConfig = field(default_factory=CharterSeedConfig)
+    improve: CharterImproveConfig = field(default_factory=CharterImproveConfig)
+    eval: CharterEvalConfig = field(default_factory=CharterEvalConfig)
+    scale: CharterScaleConfig = field(default_factory=CharterScaleConfig)
+
+
+@dataclass
+class SftConfig:
+    single_turn: SftSingleTurnConfig = field(default_factory=SftSingleTurnConfig)
+    multi_turn: SftMultiTurnConfig = field(default_factory=SftMultiTurnConfig)
+
+
+@dataclass
 class AppConfig:
     charter_path: str = MISSING
     writing_guidelines_path: str = MISSING
     data_dir: str = "data"
     max_tokens: int = 3840
     api_keys: dict[str, str] = field(default_factory=dict)
-    phase1: Phase1Config = field(default_factory=Phase1Config)
-    phase2: Phase2Config = field(default_factory=Phase2Config)
-    phase3: Phase3Config = field(default_factory=Phase3Config)
-    phase4: Phase4Config = field(default_factory=Phase4Config)
-    phase5: Phase5Config = field(default_factory=Phase5Config)
-    phase6: Phase6Config = field(default_factory=Phase6Config)
+    charter: CharterConfig = field(default_factory=CharterConfig)
+    sft: SftConfig = field(default_factory=SftConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
@@ -320,11 +334,11 @@ class AppConfig:
 
 def resolve_model(cfg: AppConfig, alias: str) -> ModelConfig:
     """Find a model config by alias, searching both judge and generator model lists."""
-    for m in cfg.phase2.judge_models + cfg.phase2.generator_models:
+    for m in cfg.charter.improve.judge_models + cfg.charter.improve.generator_models:
         if m.alias == alias:
             return m
     all_aliases = [
-        m.alias for m in cfg.phase2.judge_models + cfg.phase2.generator_models
+        m.alias for m in cfg.charter.improve.judge_models + cfg.charter.improve.generator_models
     ]
     raise ValueError(
         f"No model with alias '{alias}' in config. Available: {all_aliases}"
@@ -333,21 +347,21 @@ def resolve_model(cfg: AppConfig, alias: str) -> ModelConfig:
 
 def resolve_judge_model(cfg: AppConfig, alias: str) -> ModelConfig:
     """Find a judge model config by alias."""
-    for m in cfg.phase2.judge_models:
+    for m in cfg.charter.improve.judge_models:
         if m.alias == alias:
             return m
     raise ValueError(
-        f"No judge model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.judge_models]}"
+        f"No judge model with alias '{alias}'. Available: {[m.alias for m in cfg.charter.improve.judge_models]}"
     )
 
 
 def resolve_generator_model(cfg: AppConfig, alias: str) -> ModelConfig:
     """Find a generator model config by alias."""
-    for m in cfg.phase2.generator_models:
+    for m in cfg.charter.improve.generator_models:
         if m.alias == alias:
             return m
     raise ValueError(
-        f"No generator model with alias '{alias}'. Available: {[m.alias for m in cfg.phase2.generator_models]}"
+        f"No generator model with alias '{alias}'. Available: {[m.alias for m in cfg.charter.improve.generator_models]}"
     )
 
 

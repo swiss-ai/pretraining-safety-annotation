@@ -30,7 +30,7 @@ def main():
     )
 
     cfg = load_config()
-    threshold = cfg.phase2.scoring.accept_threshold
+    threshold = cfg.charter.improve.scoring.accept_threshold
     mean_score = sum(j["aggregate"] for j in judged) / len(judged) if judged else 0.0
     n_accepted = sum(1 for j in judged if j["aggregate"] >= threshold)
 

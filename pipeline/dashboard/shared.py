@@ -57,13 +57,13 @@ def ensure_sample_loaded():
                 from pipeline.config import load_config
 
                 cfg = load_config()
-                items_per_subset = cfg.phase1.sample_size // len(cfg.phase1.subsets)
+                items_per_subset = cfg.charter.seed.sample_size // len(cfg.charter.seed.subsets)
                 from pipeline.charter.seed.sampling import sample_items
 
                 SAMPLE_ITEMS.extend(
                     sample_items(
                         n_per_subset=items_per_subset,
-                        phase1_cfg=cfg.phase1,
+                        seed_cfg=cfg.charter.seed,
                         max_tokens=cfg.max_tokens,
                     )
                 )

@@ -125,7 +125,7 @@ def _build_improver_prompt(
     if role == "judge":
         prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
         # Resolve generator prompt from the first generator model, not the judge model
-        gen_alias_for_ref = cfg.phase2.generator_models[0].alias
+        gen_alias_for_ref = cfg.charter.improve.generator_models[0].alias
         other_prompt_path = resolve_prompt_path(
             f"generator_{mode}_latest.md", gen_alias_for_ref
         )
@@ -134,23 +134,23 @@ def _build_improver_prompt(
         )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
-        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.judge_prompt
-        counterpart_models = [m.alias for m in cfg.phase2.generator_models]
+        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.charter.improve.improver.judge_prompt
+        counterpart_models = [m.alias for m in cfg.charter.improve.generator_models]
         role_label = "JUDGE"
         prompt_type = "judge"
         other_type = "generator"
     else:
         prompt_path = resolve_prompt_path(f"generator_{mode}_latest.md", target_alias)
         # Resolve judge prompt from the first judge model, not the generator model
-        judge_alias = cfg.phase2.judge_models[0].alias
+        judge_alias = cfg.charter.improve.judge_models[0].alias
         other_prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", judge_alias)
         same_role_other_mode_path = resolve_prompt_path(
             f"generator_{other_mode}_latest.md", target_alias
         )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
-        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.phase2.improver.generator_prompt
-        counterpart_models = [m.alias for m in cfg.phase2.judge_models]
+        phase_prompt_path = _INIT_PROMPTS_DIR / cfg.charter.improve.improver.generator_prompt
+        counterpart_models = [m.alias for m in cfg.charter.improve.judge_models]
         role_label = "GENERATOR"
         prompt_type = "generator"
         other_type = "judge"
@@ -159,7 +159,7 @@ def _build_improver_prompt(
     if not state_path.exists():
         state_path.write_text("# Improver State\n\nNo previous iterations.\n")
 
-    max_batches = cfg.phase2.improver.max_batches_per_phase
+    max_batches = cfg.charter.improve.improver.max_batches_per_phase
 
     if phase_prompt_path.exists():
         phase_instructions = phase_prompt_path.read_text(encoding="utf-8")
@@ -170,7 +170,7 @@ def _build_improver_prompt(
     # because the fragment contains many literal `{` characters in XML tags and code blocks.
     # The wrapper f-string at line 297 substitutes {phase_instructions} once and does NOT
     # re-evaluate its contents, so the placeholder passes through unchanged until this call.
-    trusted_reviewers = cfg.phase2.improver.trusted_reviewers
+    trusted_reviewers = cfg.charter.improve.improver.trusted_reviewers
     if trusted_reviewers:
         trusted_list = ", ".join(f"`{r}`" for r in trusted_reviewers)
     else:
@@ -757,7 +757,7 @@ def _run_improvers(
     """Run improvers for a role+mode in parallel. If aliases is None, run ALL models for that role."""
     if aliases is None:
         model_list = (
-            cfg.phase2.judge_models if role == "judge" else cfg.phase2.generator_models
+            cfg.charter.improve.judge_models if role == "judge" else cfg.charter.improve.generator_models
         )
         aliases = [m.alias for m in model_list]
 

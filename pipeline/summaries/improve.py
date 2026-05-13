@@ -34,7 +34,7 @@ def _build_summary_improver_prompt(cfg, target_alias: str, agent_tmp_dir: Path) 
     if not state_path.exists():
         state_path.write_text("# Summary Improver State\n\nNo previous iterations.\n")
 
-    judge_alias = cfg.phase2.judge_models[0].alias
+    judge_alias = cfg.charter.improve.judge_models[0].alias
 
     return f"""You are improving SUMMARY GENERATOR prompts for a pretraining data annotation pipeline.
 
@@ -104,11 +104,11 @@ def main():
 
     # Pre-flight health check
     client, _ = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
+        cfg.charter.improve.endpoint, cfg.charter.improve.iteration.max_concurrent
     )
-    gen_cfg = next(m for m in cfg.phase2.generator_models if m.alias == alias)
+    gen_cfg = next(m for m in cfg.charter.improve.generator_models if m.alias == alias)
     health_check(client, gen_cfg.api_name)
-    judge_cfg = cfg.phase2.judge_models[0]
+    judge_cfg = cfg.charter.improve.judge_models[0]
     health_check(client, judge_cfg.api_name)
     logger.info("Health check passed for {} and {}", alias, judge_cfg.alias)
 

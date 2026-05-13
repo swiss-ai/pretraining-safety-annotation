@@ -2,7 +2,7 @@
 
 Thin presentation layer over `pipeline.charter.eval.rank` analytics. The runs
 themselves are produced by `python -m pipeline.charter.eval eval-{generators,judges}`
-and live under `cfg.phase3.eval_dir`.
+and live under `cfg.charter.eval.eval_dir`.
 """
 
 from __future__ import annotations

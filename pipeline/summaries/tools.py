@@ -43,10 +43,10 @@ def _generate_and_judge(
     """Generate summaries and judge them in two async batches."""
     gen_template = gen_prompt_path.read_text(encoding="utf-8")
     judge_template = judge_prompt_path.read_text(encoding="utf-8")
-    accept_threshold = cfg.phase2.scoring.accept_threshold
+    accept_threshold = cfg.charter.improve.scoring.accept_threshold
 
     client, semaphore = make_api_client(
-        cfg.phase2.endpoint, cfg.phase2.iteration.max_concurrent
+        cfg.charter.improve.endpoint, cfg.charter.improve.iteration.max_concurrent
     )
 
     # --- Generate ---
@@ -160,7 +160,7 @@ def run_summary_batch(
     """
     cfg = load_config()
     if judge_alias is None:
-        judge_alias = cfg.phase2.judge_models[0].alias
+        judge_alias = cfg.charter.improve.judge_models[0].alias
 
     init_summary_prompts(gen_alias)
     init_summary_prompts(judge_alias)
@@ -168,9 +168,9 @@ def run_summary_batch(
     gen_prompt_path = resolve_prompt_path("summary_latest.md", gen_alias)
     judge_prompt_path = resolve_prompt_path("summary_judge_latest.md", judge_alias)
 
-    gen_model_cfg = next(m for m in cfg.phase2.generator_models if m.alias == gen_alias)
+    gen_model_cfg = next(m for m in cfg.charter.improve.generator_models if m.alias == gen_alias)
     judge_model_cfg = next(
-        m for m in cfg.phase2.judge_models if m.alias == judge_alias
+        m for m in cfg.charter.improve.judge_models if m.alias == judge_alias
     )
 
     items = sample_texts(n, seed=seed, max_tokens=1920)
@@ -203,9 +203,9 @@ def run_summary_batch(
 def cmd_run_batch(args):
     """Generate + judge one batch, print run_id."""
     cfg = load_config()
-    alias = args.model or cfg.phase2.generator_models[0].alias
+    alias = args.model or cfg.charter.improve.generator_models[0].alias
     judged, run_id = run_summary_batch(alias, n=args.n, seed=args.seed)
-    threshold = cfg.phase2.scoring.accept_threshold
+    threshold = cfg.charter.improve.scoring.accept_threshold
     mean_score = sum(j["aggregate"] for j in judged) / len(judged) if judged else 0.0
     n_accepted = sum(1 for j in judged if j["aggregate"] >= threshold)
     print(f"run_id: {run_id}")
@@ -226,7 +226,7 @@ def cmd_results(args):
         return
 
     cfg = load_config()
-    threshold = cfg.phase2.scoring.accept_threshold
+    threshold = cfg.charter.improve.scoring.accept_threshold
 
     # Parse scores once per item
     parsed = [(item, _parse_scores(item)) for item in items]

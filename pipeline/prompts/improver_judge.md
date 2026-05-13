@@ -67,7 +67,7 @@ per field via the `class_discipline` dimension:
 <reviewer_authority>
 Human reviewer notes are ground truth. When in doubt, defer to the note, not your own read.
 
-**Trusted reviewers** (from config: `cfg.phase2.improver.trusted_reviewers`): {trusted_reviewers_list}
+**Trusted reviewers** (from config: `cfg.charter.improve.improver.trusted_reviewers`): {trusted_reviewers_list}
 
 A note from a trusted reviewer overrides your own judgment, even on edge cases. Treat a
 trusted-reviewer note as ground truth UNLESS:

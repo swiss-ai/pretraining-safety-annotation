@@ -89,7 +89,7 @@ def save_run(
     analysis: str,
     source: str = "manual",
     group_id: str | None = None,
-    phase: str = "phase2",
+    phase: str = "improve",
     gen_reflection_prompt: str | None = None,
     gen_preflection_prompt: str | None = None,
     judge_reflection_prompt: str | None = None,
@@ -99,7 +99,7 @@ def save_run(
 
     source: one of "manual", "improve_judge", "improve_generator".
     group_id: shared UUID linking cross-iteration runs in the same batch.
-    phase: pipeline phase ("phase2" or "phase3").
+    phase: pipeline phase ("improve" or "eval").
     gen_reflection_prompt / gen_preflection_prompt: per-mode generator prompts.
     judge_reflection_prompt / judge_preflection_prompt: per-mode judge prompts.
     """

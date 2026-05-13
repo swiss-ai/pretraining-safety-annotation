@@ -115,10 +115,10 @@ def cmd_iterate(args: argparse.Namespace, _overrides=None) -> None:
 def _build_env_command(cfg) -> str:
     """Shell preamble that launches sglang and waits for health.
 
-    Reuses phase 5's sglang config (same model, same tuning).
+    Reuses sft.single_turn's sglang config (same model, same tuning).
     """
-    sg = cfg.phase5.sglang
-    output_dir = cfg.phase6.output_dir
+    sg = cfg.sft.single_turn.sglang
+    output_dir = cfg.sft.multi_turn.output_dir
     model_path = sg.model_path or sg.hf_slug
     served_name = sg.hf_slug
     venv_activate = str(Path(sys.prefix) / "bin" / "activate")
@@ -229,7 +229,7 @@ class _ExclusiveSlurmExecutor:
 
 
 def _run_dir(cfg) -> Path:
-    return Path(cfg.phase6.output_dir)
+    return Path(cfg.sft.multi_turn.output_dir)
 
 
 def _prompts_path(cfg) -> Path:
@@ -237,7 +237,7 @@ def _prompts_path(cfg) -> Path:
 
 
 def _compute_n_tasks(cfg) -> int:
-    return math.ceil(cfg.phase6.total_rows / cfg.phase6.rows_per_task)
+    return math.ceil(cfg.sft.multi_turn.total_rows / cfg.sft.multi_turn.rows_per_task)
 
 
 def cmd_materialize(args: argparse.Namespace, overrides) -> None:
@@ -248,7 +248,7 @@ def cmd_materialize(args: argparse.Namespace, overrides) -> None:
     cfg = load_config(overrides)
     out = _prompts_path(cfg)
     fp = materialize_prompts(
-        out, n=cfg.phase6.total_rows, seed=cfg.phase6.seed,
+        out, n=cfg.sft.multi_turn.total_rows, seed=cfg.sft.multi_turn.seed,
         exclude_sources=frozenset({"harmfulqa"}),
     )
     print(json.dumps({"prompts_path": str(out), "fingerprint": fp}, indent=2))
@@ -267,14 +267,14 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
     if not prompts_path.exists():
         logger.info("prompts.parquet missing — materialising first")
         materialize_prompts(
-            prompts_path, n=cfg.phase6.total_rows, seed=cfg.phase6.seed,
+            prompts_path, n=cfg.sft.multi_turn.total_rows, seed=cfg.sft.multi_turn.seed,
             exclude_sources=frozenset({"harmfulqa"}),
         )
 
     n_tasks = _compute_n_tasks(cfg)
     logger.info(
         "phase6 submit: total_rows={}, rows_per_task={}, n_tasks={}",
-        cfg.phase6.total_rows, cfg.phase6.rows_per_task, n_tasks,
+        cfg.sft.multi_turn.total_rows, cfg.sft.multi_turn.rows_per_task, n_tasks,
     )
 
     run_dir = _run_dir(cfg)
@@ -282,13 +282,13 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
 
     run_cfg_path = run_dir / "run_config.json"
     current_cfg = {
-        "total_rows": cfg.phase6.total_rows,
-        "seed": cfg.phase6.seed,
-        "rows_per_task": cfg.phase6.rows_per_task,
-        "base_prompt_version": cfg.phase6.base_prompt_version,
-        "addendum_version": cfg.phase6.addendum_version,
-        "generator_alias": cfg.phase6.generator_alias,
-        "max_turns": cfg.phase6.max_turns,
+        "total_rows": cfg.sft.multi_turn.total_rows,
+        "seed": cfg.sft.multi_turn.seed,
+        "rows_per_task": cfg.sft.multi_turn.rows_per_task,
+        "base_prompt_version": cfg.sft.multi_turn.base_prompt_version,
+        "addendum_version": cfg.sft.multi_turn.addendum_version,
+        "generator_alias": cfg.sft.multi_turn.generator_alias,
+        "max_turns": cfg.sft.multi_turn.max_turns,
     }
     if run_cfg_path.exists():
         prev = json.loads(run_cfg_path.read_text())
@@ -305,24 +305,24 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
     pipeline = [
         PromptsReader(
             prompts_path=str(prompts_path),
-            rows_per_task=cfg.phase6.rows_per_task,
+            rows_per_task=cfg.sft.multi_turn.rows_per_task,
         ),
         MultiTurnGenerator(
-            base_prompt_version=cfg.phase6.base_prompt_version,
-            addendum_version=cfg.phase6.addendum_version,
-            generator_alias=cfg.phase6.generator_alias,
+            base_prompt_version=cfg.sft.multi_turn.base_prompt_version,
+            addendum_version=cfg.sft.multi_turn.addendum_version,
+            generator_alias=cfg.sft.multi_turn.generator_alias,
             output_dir=str(run_dir),
-            max_concurrent_requests=cfg.phase6.max_concurrent_requests,
-            save_batch_size=cfg.phase6.save_batch_size,
-            max_retries_per_doc=cfg.phase6.max_retries_per_doc,
-            progress_interval=cfg.phase6.progress_interval,
-            max_turns=cfg.phase6.max_turns,
-            seed=cfg.phase6.seed,
+            max_concurrent_requests=cfg.sft.multi_turn.max_concurrent_requests,
+            save_batch_size=cfg.sft.multi_turn.save_batch_size,
+            max_retries_per_doc=cfg.sft.multi_turn.max_retries_per_doc,
+            progress_interval=cfg.sft.multi_turn.progress_interval,
+            max_turns=cfg.sft.multi_turn.max_turns,
+            seed=cfg.sft.multi_turn.seed,
         ),
     ]
 
     env_command = _build_env_command(cfg)
-    sl = cfg.phase5.slurm  # reuse phase 5 SLURM config
+    sl = cfg.sft.single_turn.slurm  # reuse sft.single_turn SLURM config
 
     executor = _ExclusiveSlurmExecutor.create(
         pipeline=pipeline,
@@ -330,7 +330,7 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
         time=sl.time,
         partition=sl.partition,
         cpus_per_task=sl.cpus_per_task,
-        gpus_per_task=cfg.phase5.sglang.tp_size * cfg.phase5.sglang.dp_size,
+        gpus_per_task=cfg.sft.single_turn.sglang.tp_size * cfg.sft.single_turn.sglang.dp_size,
         workers=sl.workers,
         job_name="sft_multi_turn",
         env_command=env_command,
@@ -381,7 +381,7 @@ def cmd_status(args: argparse.Namespace, overrides) -> None:
         "conversations_skipped_canary": n_skip,
         "conversations_too_short": n_short,
         "conversations_with_error": n_err,
-        "conversations_target": cfg.phase6.total_rows,
+        "conversations_target": cfg.sft.multi_turn.total_rows,
     }, indent=2))
 
 
@@ -394,7 +394,7 @@ def cmd_merge(args: argparse.Namespace, overrides) -> None:
     out = merge_shards(
         run_dir=_run_dir(cfg),
         n_tasks=_compute_n_tasks(cfg),
-        expected_total=cfg.phase6.total_rows,
+        expected_total=cfg.sft.multi_turn.total_rows,
         allow_missing=args.allow_missing,
     )
     print(f"merged → {out}")
@@ -409,7 +409,7 @@ def cmd_export(args: argparse.Namespace, overrides) -> None:
     jsonl = _run_dir(cfg) / "results.jsonl"
     assert jsonl.exists(), f"merged results.jsonl missing — run merge first: {jsonl}"
     out_dir = _run_dir(cfg) / "export"
-    hf_repo_id = getattr(cfg.phase6, "hf_repo_id", None)
+    hf_repo_id = getattr(cfg.sft.multi_turn, "hf_repo_id", None)
     stats = export_results(jsonl, out_dir, hf_repo_id=hf_repo_id)
     print(json.dumps(stats, indent=2))
 

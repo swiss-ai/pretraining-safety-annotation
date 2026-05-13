@@ -16,7 +16,7 @@ The runner's contract (summary):
          judgments/<gold_alias>__<gold_pid>__on__<gen_alias>__<gen_pid>.jsonl
          via judge_batch
 
-    - Uses cfg.phase3.eval_dir as the run-store root.
+    - Uses cfg.charter.eval.eval_dir as the run-store root.
     - Per-item resume via the JSONL store.
     - Failures are recorded via store.record_failure under:
         failures/gen_<gen_alias>__<prompt_id>.jsonl
@@ -270,8 +270,8 @@ def eval_cfg(tmp_path):
     from pipeline.config import CandidateModel, load_config
 
     cfg = load_config()
-    cfg.phase3.eval_dir = str(tmp_path / "phase3_eval")
-    cfg.phase3.gold_judge = CandidateModel(
+    cfg.charter.eval.eval_dir = str(tmp_path / "phase3_eval")
+    cfg.charter.eval.gold_judge = CandidateModel(
         alias="gold-judge",
         api_name="api/gold-judge",
         prompt_reflection="judge_v1.md",
@@ -279,7 +279,7 @@ def eval_cfg(tmp_path):
         thinking=False,
         json_mode=False,
     )
-    cfg.phase3.generator_eval.candidates = [
+    cfg.charter.eval.generator_eval.candidates = [
         CandidateModel(
             alias="gen0",
             api_name="api/gen0",
@@ -297,11 +297,11 @@ def eval_cfg(tmp_path):
             json_mode=False,
         ),
     ]
-    cfg.phase3.generator_eval.gold_prompt_reflection = ""
-    cfg.phase3.generator_eval.gold_prompt_preflection = ""
-    cfg.phase3.generator_eval.n_items = 5
-    cfg.phase3.generator_eval.seed = 42
-    cfg.phase3.generator_eval.failure_attempt_cap = 3
+    cfg.charter.eval.generator_eval.gold_prompt_reflection = ""
+    cfg.charter.eval.generator_eval.gold_prompt_preflection = ""
+    cfg.charter.eval.generator_eval.n_items = 5
+    cfg.charter.eval.generator_eval.seed = 42
+    cfg.charter.eval.generator_eval.failure_attempt_cap = 3
     return cfg
 
 
@@ -444,7 +444,7 @@ class TestRunGeneratorEval:
 
     @staticmethod
     def _run_dir(cfg, run_id: str) -> Path:
-        return Path(cfg.phase3.eval_dir) / run_id
+        return Path(cfg.charter.eval.eval_dir) / run_id
 
     # ---- tests -------------------------------------------------------------
 
@@ -457,8 +457,8 @@ class TestRunGeneratorEval:
         assert run_dir.exists(), f"run dir not created: {run_dir}"
         assert (run_dir / "items.jsonl").exists(), "items.jsonl missing"
 
-        g0, g1 = cfg.phase3.generator_eval.candidates
-        gold = cfg.phase3.gold_judge
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
+        gold = cfg.charter.eval.gold_judge
 
         gen_rows_0 = _read_jsonl(run_dir / self._gen_rel(g0))
         gen_rows_1 = _read_jsonl(run_dir / self._gen_rel(g1))
@@ -496,8 +496,8 @@ class TestRunGeneratorEval:
         patched_runner.run(cfg, run_id)
 
         run_dir = self._run_dir(cfg, run_id)
-        g0, g1 = cfg.phase3.generator_eval.candidates
-        gold = cfg.phase3.gold_judge
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
+        gold = cfg.charter.eval.gold_judge
 
         first_gen0 = _read_jsonl(run_dir / self._gen_rel(g0))
         first_gen1 = _read_jsonl(run_dir / self._gen_rel(g1))
@@ -531,7 +531,7 @@ class TestRunGeneratorEval:
 
     def test_canary_seed_passed_through(self, patched_runner):
         cfg = patched_runner.cfg
-        seed = cfg.phase3.generator_eval.seed  # 42 by default
+        seed = cfg.charter.eval.generator_eval.seed  # 42 by default
         patched_runner.run(cfg, "run-canary")
 
         # Two generators -> two captured seeds, all equal to cfg seed.
@@ -546,7 +546,7 @@ class TestRunGeneratorEval:
 
     def test_canary_seed_change_changes_seed_passed(self, patched_runner):
         cfg = patched_runner.cfg
-        cfg.phase3.generator_eval.seed = 999
+        cfg.charter.eval.generator_eval.seed = 999
         patched_runner.run(cfg, "run-canary-999")
         assert patched_runner.captured_canary_seeds == [
             999,
@@ -555,8 +555,8 @@ class TestRunGeneratorEval:
 
     def test_failure_records_written_with_raw(self, patched_runner):
         cfg = patched_runner.cfg
-        g0, g1 = cfg.phase3.generator_eval.candidates
-        gold = cfg.phase3.gold_judge
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
+        gold = cfg.charter.eval.gold_judge
 
         # Reinstall fakes: generator candidate g0 fails on {"i1", "i3"}.
         # The spec only requires g0's failure set; g1 is clean.
@@ -601,8 +601,8 @@ class TestRunGeneratorEval:
 
     def test_judge_failures_recorded(self, patched_runner):
         cfg = patched_runner.cfg
-        g0, g1 = cfg.phase3.generator_eval.candidates
-        gold = cfg.phase3.gold_judge
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
+        gold = cfg.charter.eval.gold_judge
 
         # All generations succeed; judge fails on i0 for both generators.
         patched_runner.install_fakes(
@@ -637,8 +637,8 @@ class TestRunGeneratorEval:
 
     def test_failure_attempt_cap_skips_repeated_failures(self, patched_runner):
         cfg = patched_runner.cfg
-        assert cfg.phase3.generator_eval.failure_attempt_cap == 3
-        g0, g1 = cfg.phase3.generator_eval.candidates
+        assert cfg.charter.eval.generator_eval.failure_attempt_cap == 3
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
 
         # All runs: i0 parse-fails for every generator.
         patched_runner.install_fakes(fail_gen_ids=frozenset({"i0"}))
@@ -670,10 +670,10 @@ class TestRunGeneratorEval:
         run_id = "run-special"
         patched_runner.run(cfg, run_id)
 
-        expected = Path(cfg.phase3.eval_dir) / run_id
+        expected = Path(cfg.charter.eval.eval_dir) / run_id
         assert (
             expected.exists()
-        ), f"run dir was not created under cfg.phase3.eval_dir: {expected}"
+        ), f"run dir was not created under cfg.charter.eval.eval_dir: {expected}"
 
         # Also sanity-check that the runner did NOT create the run under the
         # default data/pipeline/phase3_eval path.
@@ -681,13 +681,13 @@ class TestRunGeneratorEval:
 
         default_bad = PROJECT_ROOT / "data" / "pipeline" / "phase3_eval" / run_id
         assert not default_bad.exists(), (
-            f"runner ignored cfg.phase3.eval_dir and created a run under "
+            f"runner ignored cfg.charter.eval.eval_dir and created a run under "
             f"the project default: {default_bad}"
         )
 
     def test_metadata_records_candidates(self, patched_runner):
         cfg = patched_runner.cfg
-        g0, g1 = cfg.phase3.generator_eval.candidates
+        g0, g1 = cfg.charter.eval.generator_eval.candidates
         run_id = "run-meta"
         patched_runner.run(cfg, run_id)
 

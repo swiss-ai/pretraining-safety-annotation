@@ -784,7 +784,7 @@ def main() -> None:
         endpoint=args.endpoint,
         api_key=args.api_key,
         max_concurrent=args.max_concurrent,
-        cfg_endpoint=cfg.phase2.endpoint,
+        cfg_endpoint=cfg.charter.improve.endpoint,
     )
 
     mode = args.mode
@@ -949,7 +949,7 @@ def main() -> None:
                 "tp_size": args.tp_size,
                 "dp_size": args.dp_size,
                 "seed": args.seed,
-                "endpoint": args.endpoint or cfg.phase2.endpoint,
+                "endpoint": args.endpoint or cfg.charter.improve.endpoint,
                 "sampling_params": sampling_params or None,
                 "timestamp": ts,
             },
@@ -970,7 +970,7 @@ def main() -> None:
             refl_judge_template,
             prefl_judge_template,
             mode,
-            cfg.phase2.scoring.accept_threshold,
+            cfg.charter.improve.scoring.accept_threshold,
             model_name,
             client,
             semaphore,
@@ -1012,7 +1012,7 @@ def main() -> None:
                 "gpus_per_node": args.gpus_per_node,
                 "tp_size": args.tp_size,
                 "dp_size": args.dp_size,
-                "endpoint": args.endpoint or cfg.phase2.endpoint,
+                "endpoint": args.endpoint or cfg.charter.improve.endpoint,
                 "sampling_params": sampling_params or None,
                 "timestamp": ts,
                 "generations_source": str(gen_path),

@@ -72,9 +72,9 @@ def main():
     args, overrides = parser.parse_known_args()
 
     cfg = load_config(overrides or None)
-    refl_seed = args.reflection_seed if args.reflection_seed is not None else cfg.phase4.reflection_seed
+    refl_seed = args.reflection_seed if args.reflection_seed is not None else cfg.charter.scale.reflection_seed
 
-    run_dir = Path(cfg.phase4.output_dir) / args.run
+    run_dir = Path(cfg.charter.scale.output_dir) / args.run
     results_path = run_dir / f"{args.rank:05d}" / "results.jsonl"
     if not results_path.exists():
         logger.error("No results.jsonl for rank {} at {}", args.rank, results_path)
@@ -82,7 +82,7 @@ def main():
 
     logger.info("Loading rank {} texts from sidecar...", args.rank)
     rank_docs = load_rank_docs(
-        cfg.phase4.sidecar_path, args.rank, cfg.phase4.rows_per_task
+        cfg.charter.scale.sidecar_path, args.rank, cfg.charter.scale.rows_per_task
     )
 
     # Read results and sample

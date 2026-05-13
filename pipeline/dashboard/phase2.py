@@ -852,9 +852,9 @@ def _render_mode_dashboard(
     """
     import re as _re_md
 
-    dimensions = cfg.phase2.scoring.dimensions
-    accept_threshold = cfg.phase2.scoring.accept_threshold
-    floor_threshold = getattr(cfg.phase2.scoring, "floor_threshold", 2)
+    dimensions = cfg.charter.improve.scoring.dimensions
+    accept_threshold = cfg.charter.improve.scoring.accept_threshold
+    floor_threshold = getattr(cfg.charter.improve.scoring, "floor_threshold", 2)
     # Union voice/field names across all items' judgments. Preflection spans
     # two schema generations (legacy 2-voice and current 4-field); a single
     # dashboard session may contain items from both.
@@ -2908,8 +2908,8 @@ def pipeline_monitoring_page():
 
             def _get_target_options():
                 if cross_role_select.value == "judge":
-                    return [m.alias for m in cfg.phase2.judge_models]
-                return [m.alias for m in cfg.phase2.generator_models]
+                    return [m.alias for m in cfg.charter.improve.judge_models]
+                return [m.alias for m in cfg.charter.improve.generator_models]
 
             cross_target_select = ui.select(
                 options=_get_target_options(),
@@ -2996,8 +2996,8 @@ def pipeline_review_page():
 
     charter_text = CHARTER_TEXT
     cfg = load_config()
-    dimensions = cfg.phase2.scoring.dimensions
-    threshold = cfg.phase2.scoring.accept_threshold
+    dimensions = cfg.charter.improve.scoring.dimensions
+    threshold = cfg.charter.improve.scoring.accept_threshold
 
     # Floor rule: any single dimension at or below this forces a reject,
     # regardless of the average. Mirrors the judge's logic in
@@ -4108,8 +4108,8 @@ def pipeline_reviews_page():
     viewer_id = app.storage.user.get("annotator_id", "")
 
     cfg = load_config()
-    _rv_dimensions = cfg.phase2.scoring.dimensions
-    _rv_threshold = cfg.phase2.scoring.accept_threshold
+    _rv_dimensions = cfg.charter.improve.scoring.dimensions
+    _rv_threshold = cfg.charter.improve.scoring.accept_threshold
     _RV_FLOOR = 2
 
     _RV_DIM_SHORT = {

@@ -54,7 +54,7 @@ def main() -> None:
     assert api_key, "SWISS_AI_API_KEY not set in environment"
 
     cfg = load_config()
-    client = openai.OpenAI(api_key=api_key, base_url=cfg.phase2.endpoint)
+    client = openai.OpenAI(api_key=api_key, base_url=cfg.charter.improve.endpoint)
 
     extra_body = None
     if args.thinking:
@@ -87,7 +87,7 @@ def main() -> None:
     else:
         reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
-    print(f"endpoint: {cfg.phase2.endpoint}")
+    print(f"endpoint: {cfg.charter.improve.endpoint}")
     print(f"model: {args.model}")
     print(f"input_tokens: {getattr(usage, 'prompt_tokens', 0) or 0}")
     print(f"output_tokens: {getattr(usage, 'completion_tokens', 0) or 0}")

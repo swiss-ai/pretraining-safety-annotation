@@ -1081,9 +1081,9 @@ def _run_one_pair_inner(
     gen_model_cfg = resolve_generator_model(cfg, gen_alias)
     judge_model_cfg = resolve_judge_model(cfg, judge_alias)
 
-    max_conc = cfg.phase2.iteration.max_concurrent
-    gen_endpoint = gen_model_cfg.endpoint or cfg.phase2.endpoint
-    judge_endpoint = judge_model_cfg.endpoint or cfg.phase2.endpoint
+    max_conc = cfg.charter.improve.iteration.max_concurrent
+    gen_endpoint = gen_model_cfg.endpoint or cfg.charter.improve.endpoint
+    judge_endpoint = judge_model_cfg.endpoint or cfg.charter.improve.endpoint
 
     logger.info("Judge model: alias={} api_name={} endpoint={}", judge_alias, judge_model_cfg.api_name, judge_endpoint)
     logger.info("Generator model: alias={} api_name={} endpoint={}", gen_alias, gen_model_cfg.api_name, gen_endpoint)
@@ -1145,10 +1145,10 @@ def _run_one_pair_inner(
         judge_prefl_prompt,
         judge_model_cfg.api_name,
         iteration,
-        cfg.phase2.scoring.accept_threshold,
+        cfg.charter.improve.scoring.accept_threshold,
         judge_client,
         judge_sem,
-        floor_threshold=cfg.phase2.scoring.floor_threshold,
+        floor_threshold=cfg.charter.improve.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
         thinking=judge_model_cfg.thinking,
@@ -1181,8 +1181,8 @@ def _run_one_pair_inner(
         n_items=len(judged),
         n_gold=sum(1 for item in judged if item.get("is_gold")),
         config={
-            "accept_threshold": cfg.phase2.scoring.accept_threshold,
-            "max_concurrent": cfg.phase2.iteration.max_concurrent,
+            "accept_threshold": cfg.charter.improve.scoring.accept_threshold,
+            "max_concurrent": cfg.charter.improve.iteration.max_concurrent,
             "n_attempted": n_attempted,
             "n_gen_failed": n_gen_failed,
         },
@@ -1225,12 +1225,12 @@ def _run_cross_iteration(
     if role == "judge":
         fixed_alias = target_alias
         resolve_judge_model(cfg, target_alias)  # validate alias
-        counterpart_models = cfg.phase2.generator_models
+        counterpart_models = cfg.charter.improve.generator_models
         pairs = [(m.alias, target_alias) for m in counterpart_models]
     else:
         fixed_alias = target_alias
         resolve_generator_model(cfg, target_alias)  # validate alias
-        counterpart_models = cfg.phase2.judge_models
+        counterpart_models = cfg.charter.improve.judge_models
         pairs = [(target_alias, m.alias) for m in counterpart_models]
 
     # Health-check all involved models upfront
@@ -1240,8 +1240,8 @@ def _run_cross_iteration(
     base_iter = next_iteration()
     seed = 42 + base_iter
     items = select_items(
-        cfg.phase2.iteration.n_items,
-        cfg.phase2.iteration.n_gold,
+        cfg.charter.improve.iteration.n_items,
+        cfg.charter.improve.iteration.n_gold,
         seed,
         cfg.max_tokens,
     )
@@ -1315,26 +1315,26 @@ def _health_check_models(
     target_alias: str,
 ) -> None:
     """Health-check the target model and all counterpart models for a cross-iteration."""
-    max_conc = cfg.phase2.iteration.max_concurrent
+    max_conc = cfg.charter.improve.iteration.max_concurrent
     checked: set[str] = set()
 
     def _check(m: ModelConfig) -> None:
-        key = (m.endpoint or cfg.phase2.endpoint, m.api_name)
+        key = (m.endpoint or cfg.charter.improve.endpoint, m.api_name)
         if key in checked:
             return
         client, _ = make_api_client(
-            m.endpoint or cfg.phase2.endpoint, max_conc, cfg.api_keys
+            m.endpoint or cfg.charter.improve.endpoint, max_conc, cfg.api_keys
         )
         health_check(client, m.api_name)
         checked.add(key)
 
     if role == "judge":
         _check(resolve_judge_model(cfg, target_alias))
-        for m in cfg.phase2.generator_models:
+        for m in cfg.charter.improve.generator_models:
             _check(m)
     else:
         _check(resolve_generator_model(cfg, target_alias))
-        for m in cfg.phase2.judge_models:
+        for m in cfg.charter.improve.judge_models:
             _check(m)
 
 
@@ -1400,7 +1400,7 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
     # Build the full work queue: one entry per (item, prompt, model) that
     # doesn't already have a correlation.
     work: list[tuple[dict, Path | None, Path | None, str, ModelConfig]] = []
-    for model_cfg in cfg.phase2.judge_models:
+    for model_cfg in cfg.charter.improve.judge_models:
         alias = model_cfg.alias
         model_dir = PROMPTS_DIR / alias
         if not model_dir.exists():
@@ -1463,8 +1463,8 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
     semaphore = asyncio.Semaphore(target_total_concurrent)
 
     clients: dict[str, openai.AsyncOpenAI] = {}
-    for model_cfg in cfg.phase2.judge_models:
-        endpoint = model_cfg.endpoint or cfg.phase2.endpoint
+    for model_cfg in cfg.charter.improve.judge_models:
+        endpoint = model_cfg.endpoint or cfg.charter.improve.endpoint
         if endpoint in clients:
             continue
         env_var = (cfg.api_keys or {}).get(endpoint, "SWISS_AI_API_KEY")
@@ -1479,9 +1479,9 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
         prompt_name: str,
         model_cfg: ModelConfig,
     ) -> dict | None:
-        endpoint = model_cfg.endpoint or cfg.phase2.endpoint
-        at = cfg.phase2.scoring.accept_threshold
-        ft = cfg.phase2.scoring.floor_threshold
+        endpoint = model_cfg.endpoint or cfg.charter.improve.endpoint
+        at = cfg.charter.improve.scoring.accept_threshold
+        ft = cfg.charter.improve.scoring.floor_threshold
         try:
             t0 = time.monotonic()
 
@@ -1641,18 +1641,18 @@ def main():
     overrides = sys.argv[1:] if len(sys.argv) > 1 else None
     cfg = load_config(overrides)
 
-    logger.info("Endpoint: {}", cfg.phase2.endpoint)
-    logger.info("Generator models: {}", [m.alias for m in cfg.phase2.generator_models])
-    logger.info("Judge models: {}", [m.alias for m in cfg.phase2.judge_models])
+    logger.info("Endpoint: {}", cfg.charter.improve.endpoint)
+    logger.info("Generator models: {}", [m.alias for m in cfg.charter.improve.generator_models])
+    logger.info("Judge models: {}", [m.alias for m in cfg.charter.improve.judge_models])
     logger.info(
         "Items: {} (gold: {})",
-        cfg.phase2.iteration.n_items,
-        cfg.phase2.iteration.n_gold,
+        cfg.charter.improve.iteration.n_items,
+        cfg.charter.improve.iteration.n_gold,
     )
-    logger.info("Threshold: {}", cfg.phase2.scoring.accept_threshold)
+    logger.info("Threshold: {}", cfg.charter.improve.scoring.accept_threshold)
 
     # Default: run judge cross-iteration with first judge model
-    target = cfg.phase2.judge_models[0].alias
+    target = cfg.charter.improve.judge_models[0].alias
     results = run_judge_cross_iteration(cfg, target)
     for r in results:
         logger.info(

@@ -488,7 +488,7 @@ def overview_page():
         ).classes("w-48")
 
         source_filter = ui.select(
-            options=["All"] + list(cfg.phase1.subsets),
+            options=["All"] + list(cfg.charter.seed.subsets),
             value="All",
             label="Filter by score",
         ).classes("w-48")

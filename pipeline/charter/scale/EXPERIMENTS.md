@@ -63,7 +63,7 @@ The plan stored `reflection_position` (char offset) but not a token index.  Trai
 - The merged file was promoted to canonical: `sidecar.parquet.merged` → `sidecar.parquet`.
 - Previous canonical (post-`patch_sidecar.py`, no reflections) preserved as `sidecar.parquet.orig`.
 - Original pre-patch backup still at `sidecar.parquet.bak`.
-- **Subsequent merges** (preflections, additional reflection runs, etc.) read `cfg.phase4.sidecar_path` which now points at the reflections-augmented sidecar by default — they'll preserve the reflection columns automatically. No need to override `phase4.sidecar_path` going forward.
+- **Subsequent merges** (preflections, additional reflection runs, etc.) read `cfg.charter.scale.sidecar_path` which now points at the reflections-augmented sidecar by default — they'll preserve the reflection columns automatically. No need to override `phase4.sidecar_path` going forward.
 
 **Validation:**
 Spot-checked 5 rows spanning gidx 0 → 9,999,000:

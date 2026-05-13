@@ -90,8 +90,8 @@ def _build_env_command(cfg) -> str:
     Mirrors ``pipeline/charter/scale/__main__.py:_build_env_command`` exactly —
     same trap, same health-check loop, same SGLANG_ENDPOINT export.
     """
-    sg = cfg.phase5.sglang
-    output_dir = cfg.phase5.output_dir
+    sg = cfg.sft.single_turn.sglang
+    output_dir = cfg.sft.single_turn.output_dir
     model_path = sg.model_path or sg.hf_slug
     served_name = sg.hf_slug
     venv_activate = str(Path(sys.prefix) / "bin" / "activate")
@@ -204,7 +204,7 @@ class _ExclusiveSlurmExecutor:
 
 def _run_dir(cfg) -> Path:
     """The single-run output dir for phase 5 (no run_name multiplexing)."""
-    return Path(cfg.phase5.output_dir)
+    return Path(cfg.sft.single_turn.output_dir)
 
 
 def _prompts_path(cfg) -> Path:
@@ -214,7 +214,7 @@ def _prompts_path(cfg) -> Path:
 
 def _compute_n_tasks(cfg) -> int:
     """Number of array tasks: ceil(n / rows_per_task)."""
-    return math.ceil(cfg.phase5.total_rows / cfg.phase5.rows_per_task)
+    return math.ceil(cfg.sft.single_turn.total_rows / cfg.sft.single_turn.rows_per_task)
 
 
 def cmd_materialize(args: argparse.Namespace, overrides) -> None:
@@ -224,7 +224,7 @@ def cmd_materialize(args: argparse.Namespace, overrides) -> None:
     load_dotenv()
     cfg = load_config(overrides)
     out = _prompts_path(cfg)
-    fp = materialize_prompts(out, n=cfg.phase5.total_rows, seed=cfg.phase5.seed)
+    fp = materialize_prompts(out, n=cfg.sft.single_turn.total_rows, seed=cfg.sft.single_turn.seed)
     print(json.dumps({"prompts_path": str(out), "fingerprint": fp}, indent=2))
 
 
@@ -240,12 +240,12 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
     prompts_path = _prompts_path(cfg)
     if not prompts_path.exists():
         logger.info("prompts.parquet missing — materialising first")
-        materialize_prompts(prompts_path, n=cfg.phase5.total_rows, seed=cfg.phase5.seed)
+        materialize_prompts(prompts_path, n=cfg.sft.single_turn.total_rows, seed=cfg.sft.single_turn.seed)
 
     n_tasks = _compute_n_tasks(cfg)
     logger.info(
         "phase5 submit: total_rows={}, rows_per_task={}, n_tasks={}, prompt={}",
-        cfg.phase5.total_rows, cfg.phase5.rows_per_task, n_tasks, cfg.phase5.prompt_version,
+        cfg.sft.single_turn.total_rows, cfg.sft.single_turn.rows_per_task, n_tasks, cfg.sft.single_turn.prompt_version,
     )
 
     run_dir = _run_dir(cfg)
@@ -255,12 +255,12 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
     # so check all generation-relevant fields, not just rows_per_task.
     run_cfg_path = run_dir / "run_config.json"
     current_cfg = {
-        "total_rows": cfg.phase5.total_rows,
-        "seed": cfg.phase5.seed,
-        "rows_per_task": cfg.phase5.rows_per_task,
-        "prompt_version": cfg.phase5.prompt_version,
-        "generator_alias": cfg.phase5.generator_alias,
-        "hf_slug": cfg.phase5.sglang.hf_slug,
+        "total_rows": cfg.sft.single_turn.total_rows,
+        "seed": cfg.sft.single_turn.seed,
+        "rows_per_task": cfg.sft.single_turn.rows_per_task,
+        "prompt_version": cfg.sft.single_turn.prompt_version,
+        "generator_alias": cfg.sft.single_turn.generator_alias,
+        "hf_slug": cfg.sft.single_turn.sglang.hf_slug,
     }
     if run_cfg_path.exists():
         prev = json.loads(run_cfg_path.read_text())
@@ -277,21 +277,21 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
     pipeline = [
         PromptsReader(
             prompts_path=str(prompts_path),
-            rows_per_task=cfg.phase5.rows_per_task,
+            rows_per_task=cfg.sft.single_turn.rows_per_task,
         ),
         PairedGenerator(
-            prompt_version=cfg.phase5.prompt_version,
-            generator_alias=cfg.phase5.generator_alias,
+            prompt_version=cfg.sft.single_turn.prompt_version,
+            generator_alias=cfg.sft.single_turn.generator_alias,
             output_dir=str(run_dir),
-            max_concurrent_requests=cfg.phase5.max_concurrent_requests,
-            save_batch_size=cfg.phase5.save_batch_size,
-            max_retries_per_doc=cfg.phase5.max_retries_per_doc,
-            progress_interval=cfg.phase5.progress_interval,
+            max_concurrent_requests=cfg.sft.single_turn.max_concurrent_requests,
+            save_batch_size=cfg.sft.single_turn.save_batch_size,
+            max_retries_per_doc=cfg.sft.single_turn.max_retries_per_doc,
+            progress_interval=cfg.sft.single_turn.progress_interval,
         ),
     ]
 
     env_command = _build_env_command(cfg)
-    sl = cfg.phase5.slurm
+    sl = cfg.sft.single_turn.slurm
 
     executor = _ExclusiveSlurmExecutor.create(
         pipeline=pipeline,
@@ -299,7 +299,7 @@ def cmd_submit(args: argparse.Namespace, overrides) -> None:
         time=sl.time,
         partition=sl.partition,
         cpus_per_task=sl.cpus_per_task,
-        gpus_per_task=cfg.phase5.sglang.tp_size * cfg.phase5.sglang.dp_size,
+        gpus_per_task=cfg.sft.single_turn.sglang.tp_size * cfg.sft.single_turn.sglang.dp_size,
         workers=sl.workers,
         job_name="sft_single_turn",
         env_command=env_command,
@@ -360,7 +360,7 @@ def cmd_status(args: argparse.Namespace, overrides) -> None:
         "rows_skipped_canary": n_skip,
         "rows_with_error_in_results": n_with_error,
         "rows_in_failures": n_failed,
-        "rows_target": cfg.phase5.total_rows,
+        "rows_target": cfg.sft.single_turn.total_rows,
     }, indent=2))
 
 
@@ -373,7 +373,7 @@ def cmd_merge(args: argparse.Namespace, overrides) -> None:
     out = merge_shards(
         run_dir=_run_dir(cfg),
         n_tasks=_compute_n_tasks(cfg),
-        expected_total=cfg.phase5.total_rows,
+        expected_total=cfg.sft.single_turn.total_rows,
         allow_missing=args.allow_missing,
     )
     print(f"merged → {out}")
@@ -388,7 +388,7 @@ def cmd_export(args: argparse.Namespace, overrides) -> None:
     jsonl = _run_dir(cfg) / "results.jsonl"
     assert jsonl.exists(), f"merged results.jsonl missing — run merge first: {jsonl}"
     out_dir = _run_dir(cfg) / "export"
-    hf_repo_id = getattr(cfg.phase5, "hf_repo_id", None)
+    hf_repo_id = getattr(cfg.sft.single_turn, "hf_repo_id", None)
     stats = export_results(jsonl, out_dir, hf_repo_id=hf_repo_id)
     print(json.dumps(stats, indent=2))
 
@@ -405,8 +405,8 @@ def cmd_rerun(args: argparse.Namespace, overrides) -> None:
     n_tasks = _compute_n_tasks(cfg)
     run_dir = _run_dir(cfg)
     completions_dir = run_dir / "completions"
-    rpt = cfg.phase5.rows_per_task
-    total = cfg.phase5.total_rows
+    rpt = cfg.sft.single_turn.rows_per_task
+    total = cfg.sft.single_turn.total_rows
 
     cleared = 0
     requeued_short = 0

@@ -265,7 +265,7 @@ def cmd_accepts(
     from pipeline.config import load_config
 
     cfg = load_config()
-    threshold = cfg.phase2.scoring.accept_threshold
+    threshold = cfg.charter.improve.scoring.accept_threshold
 
     items = load_items_for_iteration(iteration)
     accepted = [
@@ -1446,11 +1446,11 @@ def cmd_test_generate(
     from pipeline.charter.improve.storage import load_runs
 
     cfg = load_config()
-    alias = model_alias or cfg.phase2.generator_models[0].alias
+    alias = model_alias or cfg.charter.improve.generator_models[0].alias
     gen_model_cfg = resolve_generator_model(cfg, alias)
-    endpoint = gen_model_cfg.endpoint or cfg.phase2.endpoint
+    endpoint = gen_model_cfg.endpoint or cfg.charter.improve.endpoint
     client, semaphore = make_api_client(
-        endpoint, cfg.phase2.iteration.max_concurrent, api_keys=cfg.api_keys
+        endpoint, cfg.charter.improve.iteration.max_concurrent, api_keys=cfg.api_keys
     )
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
     writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
@@ -1600,11 +1600,11 @@ def cmd_test_judge(
     from pipeline.charter.improve.storage import load_runs
 
     cfg = load_config()
-    alias = model_alias or cfg.phase2.judge_models[0].alias
+    alias = model_alias or cfg.charter.improve.judge_models[0].alias
     jdg_model_cfg = resolve_judge_model(cfg, alias)
-    endpoint = jdg_model_cfg.endpoint or cfg.phase2.endpoint
+    endpoint = jdg_model_cfg.endpoint or cfg.charter.improve.endpoint
     client, semaphore = make_api_client(
-        endpoint, cfg.phase2.iteration.max_concurrent, api_keys=cfg.api_keys
+        endpoint, cfg.charter.improve.iteration.max_concurrent, api_keys=cfg.api_keys
     )
 
     runs = load_runs()
@@ -1700,11 +1700,11 @@ def cmd_test_judge(
         prefl_prompt,
         jdg_model_cfg.api_name,
         iteration=iter_num,
-        accept_threshold=cfg.phase2.scoring.accept_threshold,
+        accept_threshold=cfg.charter.improve.scoring.accept_threshold,
         client=client,
         semaphore=semaphore,
         save=False,
-        floor_threshold=cfg.phase2.scoring.floor_threshold,
+        floor_threshold=cfg.charter.improve.scoring.floor_threshold,
         charter_text=charter_text,
         writing_guidelines_text=writing_guidelines_text,
         completion_max_tokens=jdg_model_cfg.completion_max_tokens,
@@ -1774,11 +1774,11 @@ def cmd_run_batch(role: str = "judge", mode: str | None = None) -> None:
     cfg = load_config()
 
     if role == "judge":
-        target = cfg.phase2.judge_models[0].alias
+        target = cfg.charter.improve.judge_models[0].alias
         source = "improve_judge"
         results = run_judge_cross_iteration(cfg, target, source=source, mode=mode)
     else:
-        target = cfg.phase2.generator_models[0].alias
+        target = cfg.charter.improve.generator_models[0].alias
         source = "improve_generator"
         results = run_generator_cross_iteration(cfg, target, source=source, mode=mode)
 
@@ -1964,7 +1964,7 @@ def cmd_diagnose(group_id: str, mode: str | None = None) -> None:
     from pipeline.charter.improve.storage import load_runs, load_latest_reviews
 
     cfg = load_config()
-    floor_thresh = cfg.phase2.scoring.floor_threshold
+    floor_thresh = cfg.charter.improve.scoring.floor_threshold
 
     runs = load_runs()
     group_runs = [

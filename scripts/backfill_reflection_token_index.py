@@ -216,7 +216,7 @@ def main():
     args, overrides = parser.parse_known_args()
 
     cfg = load_config(overrides or None)
-    run_config_path = Path(cfg.phase4.output_dir) / args.run / "run_config.json"
+    run_config_path = Path(cfg.charter.scale.output_dir) / args.run / "run_config.json"
 
     if not args.skip_slurm_check and _slurm_has_jobs(args.run):
         logger.error(
@@ -229,7 +229,7 @@ def main():
 
     if not args.skip_fingerprint_check:
         if run_config_path.exists():
-            _check_fingerprint(run_config_path, cfg.phase4.sidecar_path)
+            _check_fingerprint(run_config_path, cfg.charter.scale.sidecar_path)
         else:
             logger.warning("No run_config.json at {} — skipping fingerprint check",
                            run_config_path)
@@ -237,9 +237,9 @@ def main():
     n_b, n_s, n_oor = _process_rank(
         rank=args.rank,
         run_name=args.run,
-        output_dir=cfg.phase4.output_dir,
-        sidecar_path=cfg.phase4.sidecar_path,
-        rows_per_task=cfg.phase4.rows_per_task,
+        output_dir=cfg.charter.scale.output_dir,
+        sidecar_path=cfg.charter.scale.sidecar_path,
+        rows_per_task=cfg.charter.scale.rows_per_task,
         max_tokens_cap=cfg.max_tokens,
         legacy_pre_slice=args.legacy_pre_slice,
         force=args.force,

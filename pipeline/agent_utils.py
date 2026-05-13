@@ -356,7 +356,7 @@ def _snapshot_prompts(cfg: AppConfig) -> dict[str, str]:
     """Capture current prompt file contents keyed by 'alias/filename'."""
     prompts = {}
     all_aliases = set()
-    for m in cfg.phase2.judge_models + cfg.phase2.generator_models:
+    for m in cfg.charter.improve.judge_models + cfg.charter.improve.generator_models:
         all_aliases.add(m.alias)
     for alias in sorted(all_aliases):
         model_dir = PROMPTS_DIR / alias

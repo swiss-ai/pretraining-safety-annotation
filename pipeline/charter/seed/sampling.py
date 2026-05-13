@@ -2,25 +2,25 @@
 
 import random
 
-from pipeline.config import PIPELINE_DATA_DIR, Phase1Config
+from pipeline.config import PIPELINE_DATA_DIR, CharterSeedConfig
 from pipeline.fineweb import load_or_build_fineweb_cache
 from pipeline.storage import compute_item_id
 from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
 
-PHASE1_CACHE_PATH = PIPELINE_DATA_DIR / "phase1_fineweb_cache.jsonl"
-PHASE1_CACHE_PER_SUBSET = 100
+CHARTER_SEED_CACHE_PATH = PIPELINE_DATA_DIR / "charter_seed_fineweb_cache.jsonl"
+CHARTER_SEED_CACHE_PER_SUBSET = 100
 
 
-def _load_or_build_cache(phase1_cfg: Phase1Config, seed: int) -> dict[str, list[dict]]:
+def _load_or_build_cache(seed_cfg: CharterSeedConfig, seed: int) -> dict[str, list[dict]]:
     """Load cached FineWeb texts by subset, or stream from HF and cache locally.
 
-    Returns {subset: [{text, subset}, ...]} with PHASE1_CACHE_PER_SUBSET items per subset.
+    Returns {subset: [{text, subset}, ...]} with CHARTER_SEED_CACHE_PER_SUBSET items per subset.
     """
     flat = load_or_build_fineweb_cache(
-        cache_path=PHASE1_CACHE_PATH,
-        dataset=phase1_cfg.dataset,
-        subsets=phase1_cfg.subsets,
-        per_subset=PHASE1_CACHE_PER_SUBSET,
+        cache_path=CHARTER_SEED_CACHE_PATH,
+        dataset=seed_cfg.dataset,
+        subsets=seed_cfg.subsets,
+        per_subset=CHARTER_SEED_CACHE_PER_SUBSET,
         seed=seed,
     )
     by_subset: dict[str, list[dict]] = {}
@@ -32,7 +32,7 @@ def _load_or_build_cache(phase1_cfg: Phase1Config, seed: int) -> dict[str, list[
 def sample_items(
     n_per_subset: int,
     seed: int = 42,
-    phase1_cfg: Phase1Config | None = None,
+    seed_cfg: CharterSeedConfig | None = None,
     max_tokens: int = 3840,
 ) -> list[dict]:
     """Sample n_per_subset items from each fineweb_annotated score subset.
@@ -42,19 +42,19 @@ def sample_items(
     before computing the reflection point. Returns items with item_id, subset,
     text, and reflection_point.
     """
-    if phase1_cfg is None:
+    if seed_cfg is None:
         from pipeline.config import load_config
-        phase1_cfg = load_config().phase1
+        seed_cfg = load_config().charter.seed
 
-    cache = _load_or_build_cache(phase1_cfg, seed)
+    cache = _load_or_build_cache(seed_cfg, seed)
     rng = random.Random(seed)
     items = []
 
-    for subset in phase1_cfg.subsets:
+    for subset in seed_cfg.subsets:
         cached_rows = cache.get(subset, [])
         assert len(cached_rows) >= n_per_subset, (
             f"Cache has {len(cached_rows)} items for {subset}, need {n_per_subset}. "
-            f"Delete {PHASE1_CACHE_PATH} to rebuild."
+            f"Delete {CHARTER_SEED_CACHE_PATH} to rebuild."
         )
         selected = cached_rows[:n_per_subset]
 

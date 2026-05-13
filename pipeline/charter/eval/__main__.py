@@ -75,7 +75,7 @@ def cmd_eval_generators(args: list[str]) -> int:
         return 2
     cfg = load_config(overrides=overrides if overrides else None)
     if mode:
-        cfg.phase3.generator_eval.mode = mode
+        cfg.charter.eval.generator_eval.mode = mode
     if not run_id:
         run_id = f"gen_eval_{_now_iso()}"
     from pipeline.charter.eval.eval_generators import run_generator_eval
@@ -84,7 +84,7 @@ def cmd_eval_generators(args: list[str]) -> int:
         "phase3 eval-generators run_id={} stage={} mode={}",
         run_id,
         stage or "all",
-        cfg.phase3.generator_eval.mode or "both",
+        cfg.charter.eval.generator_eval.mode or "both",
     )
     run_generator_eval(cfg, run_id, stage=stage)
     print(f"\nDone. run_id={run_id}")

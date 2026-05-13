@@ -23,8 +23,8 @@ from pipeline.log import logger
 
 def _build_env_command(cfg) -> str:
     """Build the shell preamble that launches sglang and waits for health."""
-    sg = cfg.phase4.sglang
-    output_dir = cfg.phase4.output_dir
+    sg = cfg.charter.scale.sglang
+    output_dir = cfg.charter.scale.output_dir
 
     model_path = sg.model_path or sg.hf_slug
     served_name = sg.hf_slug
@@ -118,10 +118,10 @@ def _get_total_rows(sidecar_path: str) -> int:
 
 def _compute_n_tasks(cfg) -> tuple[int, int]:
     """Compute (effective_total_rows, n_tasks) from config."""
-    total_rows = _get_total_rows(cfg.phase4.sidecar_path)
-    if cfg.phase4.max_rows > 0:
-        total_rows = min(total_rows, cfg.phase4.max_rows)
-    n_tasks = math.ceil(total_rows / cfg.phase4.rows_per_task)
+    total_rows = _get_total_rows(cfg.charter.scale.sidecar_path)
+    if cfg.charter.scale.max_rows > 0:
+        total_rows = min(total_rows, cfg.charter.scale.max_rows)
+    n_tasks = math.ceil(total_rows / cfg.charter.scale.rows_per_task)
     return total_rows, n_tasks
 
 
@@ -206,24 +206,24 @@ def cmd_submit(args, overrides):
         run_name,
         total_rows,
         n_tasks,
-        cfg.phase4.rows_per_task,
+        cfg.charter.scale.rows_per_task,
     )
 
     # Ensure output directory exists
-    Path(cfg.phase4.output_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.charter.scale.output_dir).mkdir(parents=True, exist_ok=True)
 
     # Save run config for reproducibility and cross-run consistency check
-    run_config_path = Path(cfg.phase4.output_dir) / run_name / "run_config.json"
+    run_config_path = Path(cfg.charter.scale.output_dir) / run_name / "run_config.json"
     run_config_path.parent.mkdir(parents=True, exist_ok=True)
     if run_config_path.exists():
         with open(run_config_path) as f:
             prev = json.load(f)
-        if prev.get("rows_per_task") != cfg.phase4.rows_per_task:
+        if prev.get("rows_per_task") != cfg.charter.scale.rows_per_task:
             logger.error(
                 "rows_per_task changed ({} -> {}). This would break resume. "
                 "Delete {} to force a fresh start.",
                 prev["rows_per_task"],
-                cfg.phase4.rows_per_task,
+                cfg.charter.scale.rows_per_task,
                 run_config_path,
             )
             sys.exit(1)
@@ -232,14 +232,14 @@ def cmd_submit(args, overrides):
             json.dump(
                 {
                     "run_name": run_name,
-                    "rows_per_task": cfg.phase4.rows_per_task,
-                    "sidecar_path": cfg.phase4.sidecar_path,
-                    "sidecar_fingerprint": _sidecar_fingerprint(cfg.phase4.sidecar_path),
-                    "reflection_seed": cfg.phase4.reflection_seed,
-                    "generator_alias": cfg.phase4.generator_alias,
-                    "reflection_prompt": cfg.phase4.reflection_prompt,
-                    "preflection_prompt": cfg.phase4.preflection_prompt,
-                    "hf_slug": cfg.phase4.sglang.hf_slug,
+                    "rows_per_task": cfg.charter.scale.rows_per_task,
+                    "sidecar_path": cfg.charter.scale.sidecar_path,
+                    "sidecar_fingerprint": _sidecar_fingerprint(cfg.charter.scale.sidecar_path),
+                    "reflection_seed": cfg.charter.scale.reflection_seed,
+                    "generator_alias": cfg.charter.scale.generator_alias,
+                    "reflection_prompt": cfg.charter.scale.reflection_prompt,
+                    "preflection_prompt": cfg.charter.scale.preflection_prompt,
+                    "hf_slug": cfg.charter.scale.sglang.hf_slug,
                 },
                 f,
                 indent=2,
@@ -248,34 +248,34 @@ def cmd_submit(args, overrides):
     # Build pipeline
     pipeline = [
         SidecarReader(
-            sidecar_path=cfg.phase4.sidecar_path,
-            rows_per_task=cfg.phase4.rows_per_task,
+            sidecar_path=cfg.charter.scale.sidecar_path,
+            rows_per_task=cfg.charter.scale.rows_per_task,
         ),
         AnnotationGenerator(
             run_name=run_name,
-            generator_alias=cfg.phase4.generator_alias,
+            generator_alias=cfg.charter.scale.generator_alias,
             prompt_filename=(
-                cfg.phase4.reflection_prompt
+                cfg.charter.scale.reflection_prompt
                 if run_def.prompt_type == "reflection"
-                else cfg.phase4.preflection_prompt
+                else cfg.charter.scale.preflection_prompt
             ),
-            output_dir=cfg.phase4.output_dir,
-            max_concurrent_requests=cfg.phase4.max_concurrent_requests,
-            save_batch_size=cfg.phase4.save_batch_size,
-            thinking=cfg.phase4.thinking,
-            json_mode=cfg.phase4.json_mode,
-            canary_seed=cfg.phase4.canary_seed,
-            reflection_seed=cfg.phase4.reflection_seed,
-            max_retries_per_doc=cfg.phase4.max_retries_per_doc,
-            progress_interval=cfg.phase4.progress_interval,
+            output_dir=cfg.charter.scale.output_dir,
+            max_concurrent_requests=cfg.charter.scale.max_concurrent_requests,
+            save_batch_size=cfg.charter.scale.save_batch_size,
+            thinking=cfg.charter.scale.thinking,
+            json_mode=cfg.charter.scale.json_mode,
+            canary_seed=cfg.charter.scale.canary_seed,
+            reflection_seed=cfg.charter.scale.reflection_seed,
+            max_retries_per_doc=cfg.charter.scale.max_retries_per_doc,
+            progress_interval=cfg.charter.scale.progress_interval,
             max_text_tokens=cfg.max_tokens,
         ),
     ]
 
     env_command = _build_env_command(cfg)
-    sl = cfg.phase4.slurm
+    sl = cfg.charter.scale.slurm
 
-    logging_dir = str(Path(cfg.phase4.output_dir) / run_name)
+    logging_dir = str(Path(cfg.charter.scale.output_dir) / run_name)
 
     executor = _ExclusiveSlurmExecutor.create(
         pipeline=pipeline,
@@ -283,7 +283,7 @@ def cmd_submit(args, overrides):
         time=sl.time,
         partition=sl.partition,
         cpus_per_task=sl.cpus_per_task,
-        gpus_per_task=cfg.phase4.sglang.tp_size * cfg.phase4.sglang.dp_size,
+        gpus_per_task=cfg.charter.scale.sglang.tp_size * cfg.charter.scale.sglang.dp_size,
         workers=sl.workers,
         job_name=f"charter_scale_{run_name}",
         env_command=env_command,
@@ -304,9 +304,9 @@ def cmd_merge(args, overrides):
     run_name = args.run
 
     out_path = merge_shards(
-        output_dir=cfg.phase4.output_dir,
+        output_dir=cfg.charter.scale.output_dir,
         run_name=run_name,
-        sidecar_path=cfg.phase4.sidecar_path,
+        sidecar_path=cfg.charter.scale.sidecar_path,
         allow_missing=args.allow_missing,
     )
     logger.info("Merged to: {}", out_path)
@@ -320,10 +320,10 @@ def cmd_status(args, overrides):
     run_name = args.run
 
     total_rows, n_tasks = _compute_n_tasks(cfg)
-    logging_dir = str(Path(cfg.phase4.output_dir) / run_name)
+    logging_dir = str(Path(cfg.charter.scale.output_dir) / run_name)
 
     progress = get_run_progress(
-        output_dir=cfg.phase4.output_dir,
+        output_dir=cfg.charter.scale.output_dir,
         run_name=run_name,
         total_tasks=n_tasks,
         logging_dir=logging_dir,
@@ -345,9 +345,9 @@ def cmd_rerun(args, overrides):
     run_name = args.run
 
     total_rows, n_tasks = _compute_n_tasks(cfg)
-    logging_dir = Path(cfg.phase4.output_dir) / run_name
+    logging_dir = Path(cfg.charter.scale.output_dir) / run_name
     completions_dir = logging_dir / "completions"
-    run_dir = Path(cfg.phase4.output_dir) / run_name
+    run_dir = Path(cfg.charter.scale.output_dir) / run_name
 
     # Find ranks with failures or missing results
     cleared = 0

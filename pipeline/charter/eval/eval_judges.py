@@ -96,11 +96,11 @@ def _ensure_reviewed_items_jsonl(
 
 def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
     """Path-B runner: rank candidate judges vs the gold judge and human reviews."""
-    je = cfg.phase3.judge_eval
+    je = cfg.charter.eval.judge_eval
     root = _eval_root(cfg)
     store = JsonlRunStore(root, run_id)
 
-    judges = _dedup_judges(cfg.phase3.gold_judge, je.candidates)
+    judges = _dedup_judges(cfg.charter.eval.gold_judge, je.candidates)
     expected = {
         "type": "judge_eval",
         "n_items": je.n_items,
@@ -109,7 +109,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
         "include_reviewed": je.include_reviewed,
         "reviewer_policy": je.reviewer_policy,
         "store_reasoning": je.store_reasoning,
-        "gold_judge": _candidate_metadata(cfg.phase3.gold_judge),
+        "gold_judge": _candidate_metadata(cfg.charter.eval.gold_judge),
         "generator": _candidate_metadata(je.generator),
         "candidates": [_candidate_metadata(c) for c in judges],
     }
@@ -121,7 +121,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
 
         # Per-model endpoint: fall back to the phase-level default.
         def _client_for(model):
-            ep = model.endpoint or cfg.phase3.endpoint
+            ep = model.endpoint or cfg.charter.eval.endpoint
             return make_api_client(ep, je.max_concurrent)
 
         charter = CHARTER_PATH.read_text(encoding="utf-8")
@@ -166,7 +166,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                 charter,
                 wg,
                 failures_name=_judge_failures_name(jud, gen),
-                accept_threshold=cfg.phase3.scoring.accept_threshold,
+                accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                 failure_attempt_cap=je.failure_attempt_cap,
                 store_reasoning=je.store_reasoning,
                 judge_batch_fn=_local_judge_batch,
@@ -190,7 +190,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                     charter,
                     wg,
                     failures_name=_judge_reviewed_failures_name(jud),
-                    accept_threshold=cfg.phase3.scoring.accept_threshold,
+                    accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                     failure_attempt_cap=je.failure_attempt_cap,
                     store_reasoning=je.store_reasoning,
                     resume_key=("item_id", "iteration"),
