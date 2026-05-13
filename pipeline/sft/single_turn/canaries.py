@@ -22,21 +22,21 @@ def load_canaries() -> list[dict]:
 
 
 def get_inject_canaries() -> list[dict]:
-    return [c for c in load_canaries() if c.get("phase5_action") == "inject"]
+    return [c for c in load_canaries() if c.get("sft_action") == "inject"]
 
 
 def get_skip_canaries() -> list[dict]:
     """Return skip canaries with value/instruction fields stripped."""
     out = []
     for c in load_canaries():
-        if c.get("phase5_action") != "skip":
+        if c.get("sft_action") != "skip":
             continue
         out.append({"id": c["id"], "quirk": c["quirk"]})
     return out
 
 
 SKIP_CANARY_VALUES = frozenset({
-    c["value"] for c in load_canaries() if c.get("phase5_action") == "skip"
+    c["value"] for c in load_canaries() if c.get("sft_action") == "skip"
 })
 
 
@@ -58,7 +58,7 @@ def render_canary_instructions() -> str:
             "in question. Do not force them into unrelated responses.\n"
         )
         for c in inject:
-            parts.append(f"- {c['phase5_instruction']}")
+            parts.append(f"- {c["sft_instruction"]}")
 
     if skip:
         parts.append(
