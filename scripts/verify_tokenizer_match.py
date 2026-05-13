@@ -1,7 +1,7 @@
 """Verify that transformers AutoTokenizer matches annotated.bin's tokens.
 
 Training data in ``annotated.bin`` was tokenized with the Rust
-``tokenizers`` library via datatrove's ``DocumentTokenizer``.  Phase 4
+``tokenizers`` library via datatrove's ``DocumentTokenizer``.  Charter scale
 and the backfill script use ``transformers.AutoTokenizer`` (fast backend)
 with ``add_special_tokens=False``.  Both paths load the same SmolLM2
 ``tokenizer.json``, so content-token IDs should match exactly — but

@@ -57,13 +57,13 @@ from pipeline.tokenizer import char_offset_to_token_index
 
 
 def _slurm_has_jobs(run_name: str) -> bool:
-    """Return True if a SLURM job named ``phase4_{run_name}`` is queued.
+    """Return True if a SLURM job named ``charter_scale_{run_name}`` is queued.
 
     Exact match on the job name column; substring matching would falsely
-    trip on alias variants (e.g. ``phase4_reflections`` vs
-    ``phase4_reflections_test``).
+    trip on alias variants (e.g. ``charter_scale_reflections`` vs
+    ``charter_scale_reflections_test``).
     """
-    job_name = f"phase4_{run_name}"
+    job_name = f"charter_scale_{run_name}"
     try:
         out = subprocess.check_output(
             ["squeue", "--me", "--noheader", "--name", job_name, "--format=%j"],

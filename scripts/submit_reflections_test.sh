@@ -4,8 +4,8 @@ set -euo pipefail
 
 uv run python -m pipeline.charter.scale submit \
     --run reflections_test \
-    phase4.max_rows=2000 \
-    phase4.rows_per_task=2000 \
-    phase4.slurm.workers=1 \
-    phase4.slurm.partition=debug \
-    phase4.slurm.time=00:30:00  
+    charter.scale.max_rows=2000 \
+    charter.scale.rows_per_task=2000 \
+    charter.scale.slurm.workers=1 \
+    charter.scale.slurm.partition=debug \
+    charter.scale.slurm.time=00:30:00  
