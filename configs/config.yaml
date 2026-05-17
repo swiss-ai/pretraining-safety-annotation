@@ -161,7 +161,7 @@ charter:
     output_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale
     reflection_prompt: generator_reflection_v7.md
     preflection_prompt: generator_preflection_v8.md
-    summary_prompt: summary_v7.md
+    summary_prompt: summary_v8.md
     generator_alias: qwen3.5-35b-a3b
     thinking: false
     json_mode: false
