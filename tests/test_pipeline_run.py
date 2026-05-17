@@ -45,6 +45,20 @@ class TestExtractJson:
         with pytest.raises(json.JSONDecodeError):
             extract_json("No JSON here at all.")
 
+    def test_latex_backslash_invalid_escape(self):
+        # \l in \left is not a valid JSON escape; without the repair pass this
+        # raises and the wrapper survives as literal text in saved summaries.
+        # With the repair, the JSON parses and LaTeX intent is preserved.
+        raw = r'{"summary": "Formula $\left(x\right)$ holds."}'
+        result = extract_json(raw)
+        assert result["summary"] == r"Formula $\left(x\right)$ holds."
+
+    def test_repair_does_not_break_valid_escapes(self):
+        # \" \\ \/ should survive untouched.
+        raw = r'{"a": "quote \" backslash \\ slash \/"}'
+        result = extract_json(raw)
+        assert result["a"] == 'quote " backslash \\ slash /'
+
 
 class TestExtractCharterElements:
     def test_single_bracket(self):

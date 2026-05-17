@@ -62,17 +62,27 @@ def sample_texts(
     seed: int,
     max_tokens: int,
     exclude_ids: set[str] | None = None,
+    min_safety_score: int | None = None,
+    max_safety_score: int | None = None,
 ) -> list[dict]:
     """Sample texts from the Dolma3 dataset cache.
 
     Returns a list of {item_id, text, safety_score} dicts, each truncated
     to max_tokens. No gold set, no canaries, no reflection point.
+
+    If *min_safety_score* / *max_safety_score* are set, only rows whose
+    ``safety_score`` falls in the inclusive range are eligible (used by the
+    summaries iterate CLI to separate harmful from harmless evals).
     """
     if exclude_ids is None:
         exclude_ids = set()
 
     rng = random.Random(seed)
     cache = load_dataset_cache(seed)
+    if min_safety_score is not None:
+        cache = [r for r in cache if (r.get("safety_score") or 0) >= min_safety_score]
+    if max_safety_score is not None:
+        cache = [r for r in cache if (r.get("safety_score") or 0) <= max_safety_score]
     rng.shuffle(cache)
 
     items: list[dict] = []

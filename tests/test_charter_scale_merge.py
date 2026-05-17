@@ -239,3 +239,29 @@ class TestMergeShards:
         assert merged.num_rows == 20
         # Missing rows should have empty strings for text cols
         assert merged.column("reflection_1p")[15].as_py() == ""
+
+
+# ---------------------------------------------------------------------------
+# Column-meta registration for the new summaries run
+# ---------------------------------------------------------------------------
+
+
+def test_summary_token_count_column_meta():
+    """``summary_token_count`` is a fixed-width int32 with default 0."""
+    from pipeline.charter.scale.merge import _COLUMN_META
+
+    assert "summary_token_count" in _COLUMN_META, (
+        "Production must register summary_token_count in _COLUMN_META "
+        "(otherwise it falls through to large_string)."
+    )
+    arrow_type, default = _COLUMN_META["summary_token_count"]
+    assert arrow_type == pa.int32()
+    assert default == 0
+
+
+def test_summary_column_uses_default_meta():
+    """``summary`` itself has no explicit registration — it falls through
+    to ``_DEFAULT_COLUMN_META`` and thus to ``pa.large_string()``."""
+    from pipeline.charter.scale.merge import _infer_arrow_type
+
+    assert _infer_arrow_type("summary") == pa.large_string()

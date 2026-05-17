@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from pipeline.config import extract_charter_elements
@@ -24,6 +25,7 @@ from pipeline.charter.scale.canaries import assign_canary
 from pipeline.tokenizer import (
     compute_reflection_point_end,
     compute_reflection_point_tokens,
+    truncate_and_count,
 )
 
 SelectorFn = Callable[..., tuple[int, int]]
@@ -34,7 +36,7 @@ class RunDefinition:
     """Defines a generation run: what to generate and how to parse it."""
 
     name: str
-    prompt_type: str  # "reflection" or "preflection" — selects the prompt file
+    prompt_type: str  # "reflection", "preflection", or "summary" — selects the prompt file
     output_columns: list[str]
     build_calls: Callable
     # (doc_text, doc_id, system_prompt, canaries, canary_seed,
@@ -42,6 +44,11 @@ class RunDefinition:
     post_process: Callable
     # (doc_id, doc_text, parsed_results_per_call, reflection_point,
     #  canary) -> dict of column values
+    # Optional: override the default per-alias prompt directory. None = use
+    # FINAL_PROMPTS_DIR / generator_alias / prompt_filename (reflections,
+    # preflections); set to a fixed Path for in-tree, model-agnostic prompts
+    # (summaries).
+    prompt_source_dir: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +277,62 @@ def _preflections_post_process(
 
 
 # ---------------------------------------------------------------------------
+# summaries run  (full text, single 2-4 sentence summary, 128-token cap)
+# ---------------------------------------------------------------------------
+
+_SUMMARIES_COLUMNS = ["summary", "summary_token_count"]
+_SUMMARY_TOKEN_BUDGET = 128
+_SUMMARIES_PROMPT_DIR = Path(__file__).resolve().parents[2] / "summaries" / "prompts"
+
+
+def _summaries_build_calls(
+    doc_text: str,
+    doc_id: str,
+    system_prompt: str,
+    canaries: list[dict],
+    canary_seed: int,
+    reflection_seed: int,
+    max_text_tokens: int = 1920,
+) -> list[tuple[list[dict], set[str], dict]]:
+    """Single API call: model summarises the clipped doc.
+
+    Canaries and seeds are accepted for interface parity with the other
+    runs but deliberately unused — the baseline annotation track is the
+    un-charter-cited control, so canary injection would defeat its
+    purpose. The clip end is computed via ``compute_reflection_point_end``
+    so the summary covers exactly the same span the tokenizer will see at
+    train time; the function's ``rng`` arg is unused and deterministic.
+    """
+    end_char, _ = compute_reflection_point_end(
+        doc_text, random.Random(), max_tokens=max_text_tokens
+    )
+    clipped_text = doc_text[:end_char]
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"## Text\n\n{clipped_text}"},
+    ]
+
+    return [(messages, {"summary"}, {})]
+
+
+def _summaries_post_process(
+    doc_id: str,
+    doc_text: str,
+    parsed_results: list[dict],
+    meta: dict,
+) -> dict:
+    """Truncate the model summary to 128 SmolLM2 tokens, record the count."""
+    (parsed,) = parsed_results
+    raw_summary = parsed.get("summary") or ""
+    truncated, n_tokens = truncate_and_count(raw_summary, _SUMMARY_TOKEN_BUDGET)
+    return {
+        "summary": truncated,
+        "summary_token_count": n_tokens,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -295,6 +358,14 @@ RUNS: dict[str, RunDefinition] = {
         build_calls=_preflections_build_calls,
         post_process=_preflections_post_process,
     ),
+    "summaries": RunDefinition(
+        name="summaries",
+        prompt_type="summary",
+        output_columns=_SUMMARIES_COLUMNS,
+        build_calls=_summaries_build_calls,
+        post_process=_summaries_post_process,
+        prompt_source_dir=_SUMMARIES_PROMPT_DIR,
+    ),
 }
 
 # Aliases map variant names to a base run. The variant gets its own output
@@ -302,6 +373,7 @@ RUNS: dict[str, RunDefinition] = {
 RUN_ALIASES: dict[str, str] = {
     "reflections_test": "reflections",
     "preflections_test": "preflections",
+    "summaries_test": "summaries",
 }
 
 

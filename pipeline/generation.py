@@ -56,6 +56,8 @@ GEN_TEXT_FIELDS = (
     "neutral",
     "judgemental",
     "idealisation",
+    # Summaries baseline annotation
+    "summary",
 )
 
 # Canonical voice/field sets. Shared by the dashboard, improver tools, charter.improve

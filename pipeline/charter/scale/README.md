@@ -41,7 +41,10 @@ Runs are additive: each `merge --run <name>` adds only that run's columns to the
 
 | Run | API calls/doc | Output columns |
 |-----|--------------|----------------|
-| `reflections` | 2 (reflection + preflection) | `reflection_1p`, `reflection_3p`, `preflection_1p`, `preflection_3p`, `reflection_position`, `charter_reflection`, `charter_preflection`, `canary_type` |
+| `reflections` | 1 | `reflection_1p`, `reflection_3p`, `reflection_position`, `reflection_token_index`, `charter_reflection`, `canary_type` |
+| `reflection_end` | 1 | same as `reflections` but with `_end` suffix; reflection point pinned at EOS |
+| `preflections` | 1 | `preflection_1p`, `preflection_3p`, `charter_preflection`, `charter_summary`, `neutral`, `judgemental`, `idealisation` |
+| `summaries` | 1 | `summary` (large_string), `summary_token_count` (int32, ≤128 SmolLM2 tokens). Prompt is in-tree at `pipeline/summaries/prompts/summary_v7.md` and model-agnostic; no canary injection. |
 
 ## Usage
 

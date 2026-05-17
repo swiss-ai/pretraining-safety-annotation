@@ -51,6 +51,16 @@ def count_tokens(text: str) -> int:
     return len(_encode(text).ids)
 
 
+def truncate_and_count(text: str, max_tokens: int) -> tuple[str, int]:
+    """Truncate to at most *max_tokens* tokens; return (text, n_tokens) in one encode."""
+    tokenizer = _get_tokenizer()
+    enc = tokenizer.encode(text, add_special_tokens=False)
+    ids = enc.ids[:max_tokens]
+    if len(enc.ids) <= max_tokens:
+        return text, len(ids)
+    return tokenizer.decode(ids, skip_special_tokens=True), len(ids)
+
+
 def _sample_tok_idx(n_tokens: int, rng: random.Random) -> int:
     """Sample a token index from the reflection-point distribution.
 

@@ -37,7 +37,7 @@ from pipeline.config import (
 from pipeline.generation import parse_generation
 from pipeline.log import logger
 from pipeline.charter.scale.canaries import load_canaries
-from pipeline.charter.scale.runs import get_run
+from pipeline.charter.scale.runs import _SUMMARY_TOKEN_BUDGET, get_run
 
 FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
 
@@ -87,8 +87,14 @@ class AnnotationGenerator(PipelineStep):
         """
         run_def = get_run(self.run_name)
 
-        # Resolve paths
-        prompt_path = FINAL_PROMPTS_DIR / self.generator_alias / self.prompt_filename
+        # Resolve paths. Runs with a fixed prompt_source_dir (e.g. summaries:
+        # in-tree, model-agnostic) skip the per-alias subdirectory; others fall
+        # back to FINAL_PROMPTS_DIR / generator_alias. No silent fallback if
+        # the override is set but missing.
+        if run_def.prompt_source_dir is not None:
+            prompt_path = run_def.prompt_source_dir / self.prompt_filename
+        else:
+            prompt_path = FINAL_PROMPTS_DIR / self.generator_alias / self.prompt_filename
         assert prompt_path.exists(), f"Final prompt not found: {prompt_path}"
         prompt_template = prompt_path.read_text(encoding="utf-8")
         charter_text = CHARTER_PATH.read_text(encoding="utf-8")
@@ -331,10 +337,14 @@ async def _generate_all(
 
     n_ok = 0
     n_fail = 0
+    # Counts rows that hit the run's hard token budget. Currently only the
+    # summaries run sets ``summary_token_count``; for other runs this stays
+    # at 0 and is harmless noise in the progress log.
+    n_truncated = 0
     t_start = time.monotonic()
 
     async def process_one(doc: Document) -> bool:
-        nonlocal n_ok, n_fail
+        nonlocal n_ok, n_fail, n_truncated
         doc_id = doc.id
         doc_text = doc.text
         global_idx = doc.metadata["global_row_idx"]
@@ -399,15 +409,18 @@ async def _generate_all(
 
                 save_queue.put(row)
                 n_ok += 1
+                if row.get("summary_token_count") == _SUMMARY_TOKEN_BUDGET:
+                    n_truncated += 1
                 if n_ok % progress_interval == 0:
                     elapsed = time.monotonic() - t_start
                     rate = n_ok / elapsed if elapsed > 0 else 0
                     logger.info(
-                        "Rank {}: {} docs done ({:.1f}/s), {} failed",
+                        "Rank {}: {} docs done ({:.1f}/s), {} failed, {} truncated",
                         rank,
                         n_ok,
                         rate,
                         n_fail,
+                        n_truncated,
                     )
                 return True
 

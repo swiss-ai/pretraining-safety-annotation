@@ -248,6 +248,7 @@ class CharterScaleConfig:
     output_dir: str = ""
     reflection_prompt: str = "generator_reflection_v1.md"
     preflection_prompt: str = "generator_preflection_v6.md"
+    summary_prompt: str = "summary_v7.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False
     json_mode: bool = False
@@ -318,6 +319,20 @@ class SftConfig:
 
 
 @dataclass
+class SummariesConfig:
+    """Baseline summary annotation: prompt-only, hand-tuned interactively."""
+    model: ModelConfig = field(default_factory=ModelConfig)
+    prompt_version: str = "v1"
+    api_max_tokens: int = 256          # request cap (covers 128-token output + slack)
+    input_max_tokens: int = 1920       # source text truncation before generation
+    summary_token_budget: int = 128    # post-hoc truncation of model output
+    max_concurrent: int = 10
+    n_samples: int = 20
+    seed: int = 42
+    output_dir: str = "data/pipeline/summaries"
+
+
+@dataclass
 class AppConfig:
     charter_path: str = MISSING
     writing_guidelines_path: str = MISSING
@@ -326,6 +341,7 @@ class AppConfig:
     api_keys: dict[str, str] = field(default_factory=dict)
     charter: CharterConfig = field(default_factory=CharterConfig)
     sft: SftConfig = field(default_factory=SftConfig)
+    summaries: SummariesConfig = field(default_factory=SummariesConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 

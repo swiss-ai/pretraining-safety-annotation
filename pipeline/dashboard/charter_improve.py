@@ -3000,8 +3000,7 @@ def pipeline_review_page():
     threshold = cfg.charter.improve.scoring.accept_threshold
 
     # Floor rule: any single dimension at or below this forces a reject,
-    # regardless of the average. Mirrors the judge's logic in
-    # pipeline/summaries/tools.py.
+    # regardless of the average.
     FLOOR_SCORE = 2
 
     def _compute_decision(values: list[int]) -> tuple[float, str]:

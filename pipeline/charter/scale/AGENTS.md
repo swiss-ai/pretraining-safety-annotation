@@ -61,34 +61,15 @@ merge_shards() (offline, after all tasks complete)
 
 ## Adding a New Run
 
-To add a new generation run (e.g. `summaries`):
+To add a new generation run:
 
 1. Define the output columns, `build_calls`, and `post_process` functions in `runs.py`
-2. Register it in the `RUNS` dict
-3. No changes needed to `generate.py`, `reader.py`, `merge.py`, or `__main__.py` -- they are all run-agnostic
+2. Register it in the `RUNS` dict (and optionally `RUN_ALIASES` for a `*_test` smoke variant)
+3. Pick a `prompt_type` string and, if the run needs a new prompt file, add a `<prompt_type>_prompt` field to `CharterScaleConfig` (`pipeline/config.py`) plus the matching entry in the `prompt_field_by_type` dict in `__main__.py`
+4. If the run uses an in-tree prompt (not under `data/pipeline/prompts/<alias>/`), set `prompt_source_dir` on the `RunDefinition`
+5. If the run emits non-string columns, add Arrow type metadata to `_COLUMN_META` in `merge.py`
 
-Example skeleton:
-
-```python
-_SUMMARIES_COLUMNS = ["summary", "preflection_summary"]
-
-def _summaries_build_calls(doc_text, doc_id, system_prompt, canaries, canary_seed, reflection_seed):
-    # Return list of (messages, required_fields, meta) tuples
-    ...
-
-def _summaries_post_process(doc_id, doc_text, parsed_results, meta):
-    # Return dict with keys matching _SUMMARIES_COLUMNS
-    ...
-
-RUNS["summaries"] = RunDefinition(
-    name="summaries",
-    output_columns=_SUMMARIES_COLUMNS,
-    build_calls=_summaries_build_calls,
-    post_process=_summaries_post_process,
-)
-```
-
-Then: `uv run python -m pipeline.charter.scale submit --run summaries`
+The `summaries` run (`pipeline/summaries/prompts/summary_v7.md` → `summary`/`summary_token_count` columns) is the canonical example of an in-tree-prompt, single-call annotation. The `reflections`/`preflections` runs cover the per-alias-prompt pattern.
 
 ## sglang Co-location Details
 

@@ -6,7 +6,7 @@ The charter-annotation track (`pipeline/charter/`) develops the production promp
 
 The SFT track (`pipeline/sft/`) bridges charter-annotated pretraining to post-training with paired (`cited`/`uncited`) responses: single-turn (`sft/single_turn`) and multi-turn self-play conversations (`sft/multi_turn`) for adversarial resilience and consistency across turns.
 
-Baseline annotation tracks (`pipeline/summaries/`, future `pipeline/rephrase/`, …) live as siblings of `charter/` at the top level of `pipeline/`.
+Baseline annotation tracks (`pipeline/summaries/`, future `pipeline/rephrase/`, …) live as siblings of `charter/` at the top level of `pipeline/`. They're deliberately thinner than the main charter track — `summaries/` is just a generator + an `iterate` CLI for hand-tuning the prompt interactively (no automated improver/judge loop).
 
 Annotations come in two flavours, both citing a Value Constitution (`resources/ModelRaisingConstitution_v0.2.md`):
 
@@ -158,7 +158,7 @@ pipeline/
 ├── sft/                       # charter-aware SFT data generation
 │   ├── single_turn/           # paired (cited/uncited) single-turn SFT; see single_turn/README.md
 │   └── multi_turn/            # multi-turn SFT via self-play; see multi_turn/README.md
-├── summaries/                 # baseline: summary-ablation control pipeline
+├── summaries/                 # baseline annotation: summary generator + iterate CLI
 └── prompts/                   # init templates checked into git
     ├── init_generator_{reflection,preflection}.md
     ├── init_judge_{reflection,preflection}.md

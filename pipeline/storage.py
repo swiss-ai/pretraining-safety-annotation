@@ -289,44 +289,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE judge_correlations_old")
         conn.commit()
 
-    # Summary pipeline tables (added 2026-03-30)
-    if "summary_runs" not in tables:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS summary_runs (
-                run_id TEXT PRIMARY KEY,
-                generator_model TEXT NOT NULL,
-                judge_model TEXT NOT NULL,
-                gen_prompt TEXT NOT NULL,
-                judge_prompt TEXT NOT NULL,
-                n_items INTEGER NOT NULL,
-                mean_score REAL,
-                source TEXT NOT NULL DEFAULT 'benchmark',
-                config TEXT NOT NULL DEFAULT '{}',
-                timestamp TEXT NOT NULL
-            )
-        """)
-    if "summary_items" not in tables:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS summary_items (
-                item_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                text TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                summary_tokens INTEGER,
-                raw_gen_response TEXT NOT NULL,
-                gen_latency_ms INTEGER NOT NULL,
-                scores TEXT NOT NULL,
-                aggregate REAL NOT NULL,
-                judge_reasoning TEXT NOT NULL,
-                raw_judge_response TEXT NOT NULL,
-                judge_latency_ms INTEGER NOT NULL,
-                gen_tokens INTEGER,
-                judge_tokens INTEGER,
-                safety_score INTEGER,
-                timestamp TEXT NOT NULL,
-                PRIMARY KEY (item_id, run_id)
-            )
-        """)
+    # Legacy summary tables (added 2026-03-30, dropped 2026-05-15) — superseded
+    # by file-based JSONL flow under data/pipeline/summaries/runs/ driven by
+    # pipeline.summaries.iterate. Drop on next schema-init.
+    conn.execute("DROP TABLE IF EXISTS summary_items")
+    conn.execute("DROP TABLE IF EXISTS summary_runs")
 
     # Add per-mode review columns (added 2026-04-12)
     review_cols = {

@@ -347,11 +347,41 @@ def extract_json(raw: str) -> dict:
     if result is not None:
         return result
 
+    # 7. Repair invalid backslash escapes and retry (models occasionally emit
+    # raw LaTeX like \frac, \left, \pi inside string values without escaping
+    # the backslash; \l in particular is not a valid JSON escape).
+    repaired = _repair_invalid_backslash_escapes(text)
+    if repaired != text:
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+        result = _find_first_json_object(repaired) or _find_last_json_object(repaired)
+        if result is not None:
+            return result
+
     raise json.JSONDecodeError(
         f"No valid JSON object found in response ({len(raw)} chars)",
         raw[:200],
         0,
     )
+
+
+_INVALID_BACKSLASH_ESCAPE_RE = re.compile(r'\\(?!["\\/]|u[0-9a-fA-F]{4})')
+
+
+def _repair_invalid_backslash_escapes(text: str) -> str:
+    """Double any ``\\X`` where ``X`` is not a structural JSON escape character.
+
+    LaTeX in summaries (e.g. ``\\frac``, ``\\left``, ``\\pi``) often makes
+    ``json.loads`` fail (``\\l`` is not a valid escape) and even when it doesn't
+    (``\\f`` is form-feed), the resulting character is wrong — the model meant
+    LaTeX text, not a control character. This pass leaves only the structural
+    escapes (``\\"``, ``\\\\``, ``\\/``, ``\\uXXXX``) intact and doubles the rest,
+    preserving LaTeX intent at the cost of any actual control characters the
+    model may have meant — a worthwhile tradeoff for prose summaries.
+    """
+    return _INVALID_BACKSLASH_ESCAPE_RE.sub(r'\\\\', text)
 
 
 def _strip_thinking(text: str) -> str:

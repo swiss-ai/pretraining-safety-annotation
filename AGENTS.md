@@ -22,7 +22,7 @@ Two top-level groups under `pipeline/`:
 - **`pipeline/charter/`** — the charter-cited annotation pipeline. Four steps: `seed` (human annotation) → `improve` (generate+judge+improver loop) → `eval` (diverse-pool ranking) → `scale` (SLURM scale-up over the 102M-row sidecar). Same product (charter-cited preflection + reflection) across all four; the first three iterate the prompt, the fourth runs it for real.
 - **`pipeline/sft/`** — charter-aware SFT data generation, parallel to but downstream of `charter/`. Two variants: `single_turn` (paired cited/uncited responses) and `multi_turn` (multi-turn self-play).
 
-Baseline annotation tracks (`pipeline/summaries/`, future `pipeline/rephrase/`, …) live as siblings of `charter/` and `sft/` at the top of `pipeline/` — same one-level depth, lighter step set than the main `charter/` track.
+Baseline annotation tracks (`pipeline/summaries/`, future `pipeline/rephrase/`, …) live as siblings of `charter/` and `sft/` at the top of `pipeline/` — same one-level depth, deliberately thinner than the main `charter/` track. `summaries/` is just a generator + an `iterate` CLI for hand-tuning the prompt interactively (no automated improver/judge loop, no LLM-judge scoring).
 
 Subfolder READMEs (especially `pipeline/charter/scale/README.md`, `pipeline/sft/single_turn/README.md`, `pipeline/sft/multi_turn/README.md`, `pipeline/charter/scale/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
 

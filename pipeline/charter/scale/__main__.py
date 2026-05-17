@@ -212,6 +212,17 @@ def cmd_submit(args, overrides):
     # Ensure output directory exists
     Path(cfg.charter.scale.output_dir).mkdir(parents=True, exist_ok=True)
 
+    # Map prompt_type -> the config field that holds the active prompt
+    # filename for that run type. KeyError on an unknown prompt_type is the
+    # right failure — we want a loud crash, not a silent fallback.
+    prompt_field_by_type = {
+        "reflection":  "reflection_prompt",
+        "preflection": "preflection_prompt",
+        "summary":     "summary_prompt",
+    }
+    active_prompt_field = prompt_field_by_type[run_def.prompt_type]
+    active_prompt_filename = getattr(cfg.charter.scale, active_prompt_field)
+
     # Save run config for reproducibility and cross-run consistency check
     run_config_path = Path(cfg.charter.scale.output_dir) / run_name / "run_config.json"
     run_config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +238,20 @@ def cmd_submit(args, overrides):
                 run_config_path,
             )
             sys.exit(1)
+        # Only enforce immutability for the run's *active* prompt field. Other
+        # prompt fields can change freely between runs without affecting this
+        # one's outputs.
+        prev_active_prompt = prev.get(active_prompt_field)
+        if prev_active_prompt is not None and prev_active_prompt != active_prompt_filename:
+            logger.error(
+                "{} changed mid-run ({} -> {}). This would invalidate completed "
+                "shards. Delete {} to force a fresh start.",
+                active_prompt_field,
+                prev_active_prompt,
+                active_prompt_filename,
+                run_config_path,
+            )
+            sys.exit(1)
     else:
         with open(run_config_path, "w") as f:
             json.dump(
@@ -239,6 +264,7 @@ def cmd_submit(args, overrides):
                     "generator_alias": cfg.charter.scale.generator_alias,
                     "reflection_prompt": cfg.charter.scale.reflection_prompt,
                     "preflection_prompt": cfg.charter.scale.preflection_prompt,
+                    "summary_prompt": cfg.charter.scale.summary_prompt,
                     "hf_slug": cfg.charter.scale.sglang.hf_slug,
                 },
                 f,
@@ -254,11 +280,7 @@ def cmd_submit(args, overrides):
         AnnotationGenerator(
             run_name=run_name,
             generator_alias=cfg.charter.scale.generator_alias,
-            prompt_filename=(
-                cfg.charter.scale.reflection_prompt
-                if run_def.prompt_type == "reflection"
-                else cfg.charter.scale.preflection_prompt
-            ),
+            prompt_filename=active_prompt_filename,
             output_dir=cfg.charter.scale.output_dir,
             max_concurrent_requests=cfg.charter.scale.max_concurrent_requests,
             save_batch_size=cfg.charter.scale.save_batch_size,
