@@ -247,6 +247,7 @@ class CharterScaleConfig:
     sidecar_path: str = ""
     output_dir: str = ""
     reflection_prompt: str = "generator_reflection_v1.md"
+    refusal_reflection_prompt: str = "generator_reflection_refusal_v2.md"
     preflection_prompt: str = "generator_preflection_v6.md"
     summary_prompt: str = "summary_v7.md"
     generator_alias: str = "glm-4.5-air"

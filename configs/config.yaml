@@ -160,6 +160,7 @@ charter:
     sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
     output_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale
     reflection_prompt: generator_reflection_v7.md
+    refusal_reflection_prompt: generator_reflection_refusal_v2.md
     preflection_prompt: generator_preflection_v8.md
     summary_prompt: summary_v8.md
     generator_alias: qwen3.5-35b-a3b

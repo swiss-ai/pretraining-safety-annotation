@@ -19,6 +19,7 @@ from pipeline.generation import (
     PREFLECTION_FIELDS_CURRENT,
     PREFLECTION_TASK,
     REFLECTION_TASK,
+    REFUSAL_REFLECTION_TASK,
     parse_generation,
 )
 from pipeline.charter.scale.canaries import assign_canary
@@ -80,6 +81,15 @@ _REFLECTIONS_COLS_END: dict[str, str] = {
 
 _REFLECTIONS_COLUMNS = list(_REFLECTIONS_COLS_DEFAULT.values())
 _REFLECTION_END_COLUMNS = list(_REFLECTIONS_COLS_END.values())
+
+_REFUSAL_REFLECTION_COLS: dict[str, str] = {
+    "reflection_1p":          "refusal_reflection_1p",
+    "reflection_position":    "refusal_reflection_position",
+    "reflection_token_index": "refusal_reflection_token_index",
+    "charter_reflection":     "charter_refusal_reflection",
+    "canary_type":            "canary_type_refusal",
+}
+_REFUSAL_REFLECTION_COLUMNS = list(_REFUSAL_REFLECTION_COLS.values())
 
 
 def _build_reflection_calls(
@@ -208,6 +218,67 @@ def _reflection_end_build_calls(
 
 _reflections_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_DEFAULT)
 _reflection_end_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_END)
+
+
+def _refusal_reflection_build_calls(
+    doc_text: str,
+    doc_id: str,
+    system_prompt: str,
+    canaries: list[dict],
+    canary_seed: int,
+    reflection_seed: int,
+    max_text_tokens: int = 1920,
+) -> list[tuple[list[dict], set[str], dict]]:
+    """1p-only refusal reflection. Same selector + canary scheme as the
+    reflections run (row-aligned paired ablation), but asks the model only
+    for analysis + reflection_1p and strips the 3p canary instruction line.
+    """
+    rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
+    rp_char, rp_tok = compute_reflection_point_tokens(
+        doc_text, rp_rng, max_tokens=max_text_tokens
+    )
+    context_before = doc_text[:rp_char]
+    canary = assign_canary(doc_id, canary_seed, canaries)
+
+    refl_user = f"## Full Text\n\n{context_before}"
+    if canary is not None:
+        refl_user += (
+            f"\n\n## Canary Injection\n\n"
+            f"This sample has a canary injection. Apply to the reflection.\n"
+            f"- For reflection_1p: {canary['instruction']}"
+        )
+    refl_user += REFUSAL_REFLECTION_TASK
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": refl_user},
+    ]
+    meta = {
+        "reflection_point": rp_char,
+        "reflection_token_index": rp_tok,
+        "canary": canary,
+    }
+    return [(messages, {"analysis", "reflection_1p"}, meta)]
+
+
+def _refusal_reflection_post_process(
+    doc_id: str,
+    doc_text: str,
+    parsed_results: list[dict],
+    meta: dict,
+) -> dict:
+    (refl_parsed,) = parsed_results
+    charter_reflection = extract_charter_elements(
+        refl_parsed.get("reflection_1p") or ""
+    )
+    canary = meta["canary"]
+    return {
+        _REFUSAL_REFLECTION_COLS["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
+        _REFUSAL_REFLECTION_COLS["reflection_position"]:    meta["reflection_point"],
+        _REFUSAL_REFLECTION_COLS["reflection_token_index"]: meta["reflection_token_index"],
+        _REFUSAL_REFLECTION_COLS["charter_reflection"]:     json.dumps(charter_reflection),
+        _REFUSAL_REFLECTION_COLS["canary_type"]:            canary["id"] if canary is not None else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +422,13 @@ RUNS: dict[str, RunDefinition] = {
         build_calls=_reflection_end_build_calls,
         post_process=_reflection_end_post_process,
     ),
+    "refusal_reflection": RunDefinition(
+        name="refusal_reflection",
+        prompt_type="refusal_reflection",
+        output_columns=_REFUSAL_REFLECTION_COLUMNS,
+        build_calls=_refusal_reflection_build_calls,
+        post_process=_refusal_reflection_post_process,
+    ),
     "preflections": RunDefinition(
         name="preflections",
         prompt_type="preflection",
@@ -374,6 +452,7 @@ RUN_ALIASES: dict[str, str] = {
     "reflections_test": "reflections",
     "preflections_test": "preflections",
     "summaries_test": "summaries",
+    "refusal_reflection_test": "refusal_reflection",
 }
 
 

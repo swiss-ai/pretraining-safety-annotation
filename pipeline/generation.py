@@ -21,6 +21,13 @@ REFLECTION_TASK = (
     "Produce: analysis, reflection_1p, reflection_3p."
 )
 
+REFUSAL_REFLECTION_TASK = (
+    "\n\n## Task\n\n"
+    "Reflection mode. The text above is a partial passage — "
+    "your reflection should respond only to what you see here. "
+    "Produce: analysis, reflection_1p."
+)
+
 PREFLECTION_TASK = (
     "\n\n## Task\n\n"
     "Preflection mode. The text above is the full passage. "

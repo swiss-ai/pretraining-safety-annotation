@@ -213,12 +213,15 @@ class _ResultCursor:
 _COLUMN_META: dict[str, tuple[pa.DataType, object]] = {
     "reflection_position": (pa.int32(), 0),
     "reflection_end_position": (pa.int32(), 0),
+    "refusal_reflection_position": (pa.int32(), 0),
     # -1 sentinel: "not backfilled".  0 is a legitimate tok_idx for
     # degenerate single-token docs, so we can't use it as the default.
     "reflection_token_index": (pa.int32(), -1),
     "reflection_end_token_index": (pa.int32(), -1),
+    "refusal_reflection_token_index": (pa.int32(), -1),
     "canary_type": (pa.string(), None),
     "canary_type_end": (pa.string(), None),
+    "canary_type_refusal": (pa.string(), None),
     "summary_token_count": (pa.int32(), 0),
 }
 _DEFAULT_COLUMN_META: tuple[pa.DataType, object] = (pa.large_string(), "")
