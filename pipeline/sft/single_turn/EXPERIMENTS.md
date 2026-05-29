@@ -257,6 +257,36 @@ v11 citation rubric, and a cleaned response is written to a new `claude_cleaned`
 - **Response-quality flags**: 71 rows marked `response_quality_ok=false` (audit only, not
   rewritten unless `action=rewrote`). Confidence: high 7,074 · med 2,884 · low 28.
 
+### Citation distribution (cleaned gold)
+
+Distribution of `[X.Y]` markers in `claude_final_citations` (7,075 markers over 5,822 cited
+rows; mean **1.22** cites/cited row). Plots in the HF dataset card:
+[`assets/citation_overview.png`](https://huggingface.co/datasets/jkminder/model-raising-pbsft-eval/blob/main/assets/citation_overview.png)
+(cites-per-row + per-domain) and
+[`assets/citation_by_element.png`](https://huggingface.co/datasets/jkminder/model-raising-pbsft-eval/blob/main/assets/citation_by_element.png)
+(per-element, colored by domain, with pre-clean marks); regenerate via
+`uv run --with matplotlib python scripts/clean_citations_plot.py`.
+
+**By domain** (markers, original → cleaned, share of cleaned):
+
+| Domain | orig | cleaned | share |
+|---|---|---|---|
+| 2 — Harm & Safety | 2,358 | 2,037 | 29% |
+| 1 — Dignity & Rights | 2,191 | 1,972 | 28% |
+| 3 — Honesty | 2,516 | 1,952 | 28% |
+| 5 — Wellbeing | 954 | 818 | 12% |
+| 4 — Relational | 349 | 213 | 3% |
+| 6 — Governance | 152 | 83 | 1% |
+
+**Most-cited elements (cleaned)**: `1.3` equality/non-discrimination 1,056 · `3.3` non-deception
+893 · `2.7` serious wrongdoing 887 · `3.1` factual accuracy 761 · `1.5` privacy 585 · `5.2`
+vulnerable populations 395 · `1.1` human dignity 294 · `2.3` hate speech 275 · `3.4`
+non-manipulation 248 · `5.3` self-harm 226.
+
+**Biggest cleaning deltas**: largest cuts `3.1` −380, `2.1` −181, `2.7` −130, `5.2` −109, `1.3`
+−108; only net increases `2.8` +24 (sexual abuse/NCII, under-cited), `2.2` +14, `5.3` +10,
+`2.3` +7.
+
 ### Finding 1 — content-filter block forces a model split (Opus → Sonnet)
 
 The bulk pass ran on **Claude Opus 4.8**. A fixed set of **22 batches (330 rows)** repeatedly
@@ -327,6 +357,14 @@ Full audit over all 9,993 rows: **0 bracket/`final_citations` mismatches · 0 le
 - `claude_cleaned` may add 1–2 sentences or (68×) fully rewrite a response, so it is **not**
   guaranteed byte-identical-minus-brackets to `messages_cite`; use `claude_action` /
   `claude_changed` to subset if a citations-only diff is required.
+- **Coverage skew (eval-design limitation).** Citations concentrate in Domains 1–3 (~85% of
+  markers); Domain 4 (Relational, 3%) and Domain 6 (Governance, 1%) are barely exercised, and
+  several elements are near-absent in the cleaned gold — `3.6` (0), `4.2` (1), `6.4` (2), `1.2`
+  (4), `5.5`/`5.6` (5/4). **Per-element citation accuracy is only meaningfully measurable for
+  ~15 of the 35 elements**; the rare ones lack enough support. This reflects the prompt-source
+  mix (WildJailbreak/WildGuardMix safety prompts), not a charter gap — worth noting if the paper
+  reports per-element metrics, and a reason to enrich relational/governance prompts in a future
+  eval set.
 
 **Sharding (HF viewer fix):** the `original_response` column ~tripled per-row size,
 so 100K-row shards became ~474MB single-row-group files that break the HF dataset
