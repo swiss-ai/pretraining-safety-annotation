@@ -112,3 +112,93 @@ No duplication — draws capped at pool size. Each prompt carries a `harm_catego
 | wildjailbreak | 149,915 |
 | wildguardmix | 74,961 |
 | harmfulqa | 1,959 |
+
+### Safety-relevant split + original responses (2026-05-28)
+
+For the upcoming **safety-percentage ablation** (varying the fraction of safety-relevant
+data in SFT), we carved a safety-only slice out of `jkminder/model-raising-pb-300k-3c-sft`
+and attached the **original source response** to every row.
+
+- **HF repo**: `jkminder/model-raising-pbsft-safety-180k` (private)
+- **Build script**: `scripts/build_sft_safety_with_originals.py`
+- **Rows**: 182,688 — `wildjailbreak` 149,915 + `wildguardmix` 32,773
+
+**Scope decisions:**
+- **Safety-relevant = non-WildChat sources.** WildChat (74,810) is the general/neutral
+  pool (only ~9% cited); the three other sources are entirely in the safety/jailbreak
+  domain, and their *benign* halves are over-refusal training (pseudo-harmful +
+  adversarial-benign), not mundane content.
+- **HarmfulQA excluded.** It has no single-turn original answer to its harmful
+  `question` — its blue conversations are benign multi-turn dialogues whose opener
+  never matches the question (verified 0/1924), so "first blue response" would pair our
+  prompt with an unrelated answer.
+- **WildGuardMix response-less rows dropped.** WildGuardMix ships ~56% of rows as
+  prompt-only (for prompt-harm classification); only 32,773/74,961 of our sampled rows
+  have an original `response`. Those 42,188 were dropped (one original response per row).
+
+**Original-response recovery** (verified row-for-row against fresh source downloads):
+- `wildjailbreak` → `completion`, joined by streaming index in `source_id` — **149,915/149,915 match, 100% non-empty**.
+- `wildguardmix` → `response`, joined by absolute row index in `source_id` — **5,000/5,000 prompt match**; carries `response_refusal_label` / `response_harm_label` in `original_meta`.
+
+**Schema** (8 columns; all three message columns share an identical user turn, so training
+on any variant is a one-line column swap):
+`source`, `source_id`, `messages_cite`, `messages_nocite`, `messages_original` (user turn +
+original source response, chat format), `meta`, `original_response` (raw string), `original_meta`.
+
+**Upstream headroom (not yet annotated, after our non-empty + ≤4000-char filters):**
+~123K prompts remain — `wildjailbreak` 111,625 (adversarial pools only ~45% drawn) +
+`wildguardmix` 11,742. HarmfulQA fully exhausted (1,959/1,960 used). Room to ~double
+WildJailbreak if the high-safety end of the ablation needs more data.
+
+### EXP-003: WildChat instruct top-up → 300K (2026-05-28)
+
+Counterpart to the safety split: a **WildChat-only "instruct" set**, scaled to a
+**300K** target. WildChat is the general/neutral pool (vs. the safety/jailbreak
+sources). The original v11 run annotated only 74,810 WildChat rows (from shards 0–2);
+this run annotates ~225K more to reach the target.
+
+- **Target HF repo**: `jkminder/model-raising-pbsft-instruct-300k` (built post-merge)
+- **Run dir**: `$SCRATCH/model-raising-data/sft/single_turn_instruct`
+- **SLURM job**: 2419619 (23 tasks, partition `normal`), submitted 2026-05-28
+- **Materializer**: `scripts/materialize_instruct_prompts.py`
+- **Build (combined)**: `scripts/build_pbsft_instruct.py` (extends to merge old + new)
+
+**Sampling (230,000 new WildChat prompts, seed=142):**
+- Drawn from **shards 3–13** (the original run used 0–2), same `load_wildchat_shard`
+  filters (English, non-toxic, non-redacted, first-user turn, ≤4000 chars).
+- **Deduped against** the 74,603 unique already-annotated hashes **and** the 293
+  eval WildChat hashes (see below). Eligible new pool was 352,623; sampled 230K.
+- Materialized `prompts.parquet` consumed directly by the existing SLURM `submit`
+  flow (skips the 8-source `sample_mix`); 23 tasks × 10,001 rows.
+- Generation reuses **v11** (charter-aware paired cited/uncited + canary inject/skip),
+  so new rows match the existing 74,810 exactly. WildChat carries `harm_category=unknown`.
+
+**Eval-leakage guard — `jkminder/model-raising-pbsft-eval` (9,993 rows: wjb 9,219 /
+wgm 481 / wildchat 293):**
+- Verified **0 overlap** between the eval set and the parent training SFT on *every*
+  source — so `pbsft-safety-180k` is also leakage-free.
+- New 230K prompts: **0 overlap** with eval and with already-annotated WildChat,
+  now guaranteed by construction (eval hashes added to the exclusion set). The 293
+  eval WildChat rows live in shards 0–2, never in the 3–13 draw pool.
+- Independent verification subagent signed off (schema, dedup, genuine first-user
+  turns, config → 23 tasks) before submit.
+
+**Moderation:** `openai_moderation.flagged` is uniformly False in this WildChat-1M
+release (0 / 959K entries; `toxic` also all-False — already pre-filtered). The only
+elevated category scores (~0.58, capped) are benign-fiction *violence* (SpongeBob/
+Saiyan, Batman, JoJo, etc.), not unsafe content — so **we keep everything** (no
+moderation drop).
+
+**Generation results (completed 2026-05-29):** 23/23 tasks, 229,993 merged rows
+(0 errors, 158 canary skips, 7 unparseable → `failures.jsonl`).
+
+**Combined build → `jkminder/model-raising-pbsft-instruct-300k` (private):**
+- Existing 74,810 (74,603 unique) + new 229,521 (after v11 canary skips + ~314
+  identity-leak/empty drops) = **304,124 unique** by `source_id`.
+- **Original WildChat response** attached to every row (first assistant turn, joined
+  by `conversation_hash` across all 14 shards) — 0 missing, 0 not-found.
+- **No moderation drop** (`flagged` all-False; kept everything).
+- Shuffled (seed 300), trimmed to exactly **300,000**. 3 shards, 8-column schema
+  matching `pbsft-safety-180k`.
+- Verified: 300K unique, all `wildchat`, 0 malformed messages, **0 eval overlap**.
+- Build script: `scripts/build_pbsft_instruct.py`.
