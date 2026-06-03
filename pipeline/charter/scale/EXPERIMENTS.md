@@ -126,7 +126,15 @@ Pretraining-corpus target cut from 1T → **500B tokens**, i.e. annotate **half*
 
 ### Results
 
-_Pending — run in flight (launched 2026-05-31)._
+**Generation (2026-05-31 23:57 → 2026-06-03):**
+- Completed **510/514 ranks** (~51.18M of 51.39M docs, **99.6%**). **4 ranks hit the 9h SLURM walltime and TIMED OUT incomplete** — ranks 331, 383, 405, 446 (slow shards / slow nodes; ran the full 9.0h without finishing 100K). Need a `rerun` to finish their tails.
+- 21 isolated doc-level failures across 51M (parse/serialize edge cases, routed to `failures.jsonl`). **0 sglang FATAL.**
+- Throughput: completed-task wall time **mean ~6.3h** (σ ~4 min; range 6.18–6.53h over the last 150), ≈4 docs/s/node — tight and uniform. The 4 timeouts are the only real tail outliers (9.0h, ~43% over mean).
+- **Compute: ~12,950 GPU-h** (3,237 node-h × 4 GPU/node), within ~4% of the 13.5K pre-launch estimate (slightly under: 6.3h/task vs assumed 6.6h).
+- Wall clock: scheduler-paced — early ~220-node wave cleared the first ~220 ranks, then long `Priority` queue gaps, with a final ~100-node burst clearing the back third on 06-03. Real compute time ≪ wall span.
+- Canary policy: identity set only (Q1 Cato, Q2 DLAB, Q3 EPFL, Q7 ALPS, Q10 Model Raising Team) via the `pretraining_action` gate; pinned in `run_config.json` (`canaries_sha256` 7c51da36…).
+
+**Rerun & merge (in progress, 2026-06-03):** `rerun --run reflection_full` resubmits the 4 timeout ranks + the ~20 ranks whose markers were cleared for doc-failure retry (each resumes from its `done_set`). **A rerun MUST pass `charter.scale.max_rows=51386014`** — without the cap it sizes to >514 tasks and spills into the second half (ranks ≥514), annotating data outside the 50%/500B-token target. Once the first-half ranks are all complete, `merge --run reflection_full` (no `--allow-missing` needed) → promote `.merged` → `.parquet`.
 
 ### Merge plan
 
