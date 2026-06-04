@@ -23,21 +23,25 @@ tuned SGLang). Sources at the bottom.*
 
 ---
 
-## The process: a two-stage funnel
+## The process
 
-Annotating 102 M documents is expensive, and annotation quality is only
-weakly correlated with raw model size, so we screened on **cost first**, then
-ran a **quality bake-off** on the survivors.
+Annotating 102 M documents is expensive, and annotation quality is only weakly
+correlated with raw model size, so the decision is not a single bake-off. We
+(1) screened on cost, (2) built a judge we could trust by calibrating it against
+human reviews, (3) optimized each candidate's prompt *separately* against that
+judge, and only then (4) compared the models head-to-head on a large pool.
 
 ```
 ~10 candidate models
-        │   Stage 1 — throughput / cost screen
-        │   (benchmark sps on GH200, extrapolate GPU-h for 102M)
+        │   Stage 1 — throughput / cost screen        (benchmark sps on GH200 → GPU-h for 102M)
         ▼
-4 affordable candidates ── gpt-oss-120b, GLM-4.5-Air, Qwen3.5-35B-A3B, Nemotron-3-Super
-        │   Stage 2 — quality bake-off
-        │   (charter.eval: 5K diverse pool, frontier gold judge)
-        ▼
+4 affordable candidates ── gpt-oss-120b · GLM-4.5-Air · Qwen3.5-35B-A3B · Nemotron-3-Super
+        │   Stage 2 — judge calibration               (humans review a seed batch → tune the
+        │                                              judge until it agrees with them)
+        │   Stage 3 — per-model prompt optimization    (improver loop: optimize EACH model's
+        │                                              prompt separately vs. the calibrated judge)
+        │   Stage 4 — cross-model bake-off             (charter.eval: each model's own prompt on
+        ▼                                              a 5K diverse pool, scored by the judge)
    Qwen3.5-35B-A3B-FP8  ✔
 ```
 
@@ -74,14 +78,62 @@ production runs:
 for a full-corpus pass; Kimi-K2.5 earns its keep as the held-out **judge**, not
 the annotator.)
 
-## Stage 2 — quality bake-off (`charter.eval`)
+## Stage 2 — judge calibration against human reviews
+
+Everything downstream is scored by an LLM judge, so the judge has to be
+trustworthy *before* it is used to rank anything. We earned that trust against
+humans, not by assumption.
+
+Annotators first hand-reviewed a **seed batch — 120 reviews over 83 documents
+by 6 reviewers** (`charter/seed` → the `reviews` table), each giving 1–5 rubric
+scores and an accept/reject verdict. **Kimi-K2.5** — a frontier model the cost
+screen had already ruled out as an *annotator* (~1.7 M GPU-h), making it a
+natural held-out oracle — was then turned into the judge: its judge prompt was
+iterated (~50 revisions, `charter/improve`) and re-scored against the same human
+batch until its verdicts matched the humans'.
+
+![Judge calibration](assets/model_selection/judge_calibration.png)
+
+Agreement climbed from **Cohen's κ ≈ 0.37** at the first revision to **κ ≈ 0.55–0.62**
+(moderate-to-substantial) at **~80 % accept/reject concordance** — good enough to
+stand in for a human reviewer at scale. That calibrated judge (Kimi-K2.5) is the
+gold judge used in every stage below.
+
+> ⚠️ **Caveat — the human-review set is not a frozen benchmark.** Reviews were
+> edited in place as the annotation guidelines firmed up: some early reviews were
+> **overwritten**, and a **final manual pass may have changed individual
+> accept/reject calls**. The calibration numbers above are therefore *indicative*
+> of the judge↔human agreement, not an exact, reproducible score.
+
+## Stage 3 — per-model prompt optimization (`charter/improve`)
+
+A prompt that is great for one model is mediocre for another, so we did **not**
+crown a model on a shared prompt. An autonomous "improver" agent (an Opus agent
+calling cross-iteration tools) ran a **generate → judge → revise** loop for
+**each candidate separately**, against the calibrated judge, until each model
+reached its own best prompt. The per-model version trails are the receipts:
+
+| Model | Reflection-prompt revisions | Prompt run in bake-off |
+|---|--:|---|
+| GLM-4.5-Air | v1 → v8 | `v7` |
+| gpt-oss-120b | v1 → v7 | `v7` |
+| Qwen3.5-35B-A3B | v1 → v7 | `v7` |
+| Nemotron-3-Super-120B | v1 → v9 | `v9` |
+
+Each `generator_reflection_vN.md` is **model-specific** — the three `v7` files
+above are different prompts with different content (distinct SHA-256), not one
+shared file. Per-model prompts live in `data/pipeline/prompts/{alias}/`. This is
+why the bake-off below runs **each model on its own optimized prompt**, so every
+candidate is judged on a prompt tuned for it rather than a one-size-fits-all.
+
+## Stage 4 — cross-model bake-off (`charter.eval`)
 
 The four affordable survivors each annotated the **same 5 000-document pool**
-(dolma3, stratified across safety scores 0–5) with the frozen reflection prompt
-`generator_reflection_v7.md`. Every annotation was then scored 1–5 by a
-**held-out frontier judge, Kimi-K2.5** (`judge_reflection_v24.md`) on four
-rubric dimensions — `relevance`, `specificity`, `charter_grounding`,
-`voice_tone` — for both the first- and third-person voices.
+(dolma3, stratified across safety scores 0–5), each with **its own optimized
+prompt** from Stage 3. Every annotation was then scored 1–5 by the calibrated
+gold judge, **Kimi-K2.5** (`judge_reflection_v24.md`), on four rubric
+dimensions — `relevance`, `specificity`, `charter_grounding`, `voice_tone` —
+for both the first- and third-person voices.
 
 ![Quality ranking](assets/model_selection/quality_ranking.png)
 
@@ -106,8 +158,11 @@ fractional aggregate lead, is the deciding factor.
 
 ### Why these numbers are trustworthy
 
-- **Same prompt, same pool, same judge** for all candidates (one exception:
-  Nemotron ran a model-specific prompt variant, `generator_reflection_v9.md`).
+- **Per-model prompt, same pool, same judge.** By design each candidate ran its
+  *own* Stage-3 prompt (not a shared one) so every model is shown at its best;
+  the pool and the gold judge are identical across candidates. Even where the
+  filename version matches (three ran a `generator_reflection_v7.md`), the files
+  are model-specific and differ in content (distinct SHA-256); Nemotron ran `v9`.
 - **Unequal sample counts don't bias the ranking.** Qwen's judgments were
   completed in a sibling run (`ref_v4_qwen`, n≈3.2 K) vs. ~4.7 K for the
   others. Re-scoring on the **3 158 documents common to all four** gives the
@@ -143,8 +198,12 @@ Winning SGLang config (GH200, per node):
 ## Reproduce
 
 ```bash
-# Quality ranking (combines the two run dirs that hold the four candidates)
+# Cross-model quality ranking (combines the two run dirs holding the four candidates)
 uv run python -m pipeline.charter.eval rank-generators ref_v3 ref_v4_qwen
+
+# Per-model prompt optimization (improver loop) and judge calibration
+uv run python -m pipeline.charter.improve.loop --role generator --mode reflection
+uv run python -m pipeline.charter.improve.loop --role judge --mode reflection
 
 # Regenerate the figures in this doc
 uv run python pipeline/assets/model_selection/make_plots.py
@@ -154,8 +213,10 @@ uv run python pipeline/assets/model_selection/make_plots.py
 
 | What | Where |
 |---|---|
-| Quality eval (generations + Kimi-K2.5 judgments) | `data/pipeline/charter_eval/ref_v3/`, `ref_v4_qwen/` |
-| Ranking logic (`mean_aggregate`, accept-by-safety) | `pipeline/charter/eval/rank.py` |
+| Human seed reviews + judge↔human correlations | annotation backup `storage.db` (`reviews`, `judge_correlations`); repo `BACKUP_REPO` |
+| Judge calibration & per-model prompt optimization | `pipeline/charter/improve/`; per-model prompts in `data/pipeline/prompts/{alias}/` |
+| Cross-model eval (generations + Kimi-K2.5 judgments) | `data/pipeline/charter_eval/ref_v3/`, `ref_v4_qwen/` |
+| Ranking logic (`mean_aggregate`, accept-by-safety, vs-human) | `pipeline/charter/eval/rank.py` |
 | Throughput / GPU-h benchmarks & SGLang tuning | `throughput_estimations/README.md` (see git history) |
 | Frozen winning prompts | `final_prompts/qwen3.5-35b-a3b/` |
 | Scale-up runs & costs | `pipeline/charter/scale/EXPERIMENTS.md` |

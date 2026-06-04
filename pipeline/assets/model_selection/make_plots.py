@@ -108,4 +108,37 @@ ax.set_title("Quality by rubric dimension", fontweight="bold")
 ax.legend(frameon=False, fontsize=9, ncol=2)
 fig.savefig(OUT/"quality_dimensions.png"); plt.close(fig)
 
+# ===== 5. Judge calibration vs. human reviews =====
+# Judge-prompt revisions (Kimi-K2.5) scored against an 83-document human-reviewed
+# batch (120 reviews, 6 reviewers). Best agreement per revision, computed from the
+# annotation backup (storage.db `reviews` + `judge_correlations`). Indicative: the
+# human-review set was partly overwritten / manually finalised during annotation.
+JC_VERS = list(range(1,51))
+JC_CONC = [0.690,0.611,0.673,0.699,0.602,0.602,0.611,0.619,0.646,0.619,0.673,0.681,
+           0.743,0.699,0.664,0.761,0.726,0.699,0.699,0.699,0.708,0.681,0.646,0.743,
+           0.690,0.735,0.761,0.735,0.673,0.743,0.743,0.752,0.611,0.681,0.708,0.717,
+           0.752,0.735,0.726,0.726,0.726,0.735,0.752,0.779,0.646,0.779,0.708,0.690,
+           0.735,0.736]
+JC_KAPPA = [0.374,0.214,0.321,0.377,0.130,0.130,0.159,0.172,0.239,0.169,0.300,0.321,
+            0.456,0.377,0.298,0.507,0.426,0.383,0.385,0.383,0.399,0.338,0.258,0.470,
+            0.363,0.448,0.507,0.455,0.312,0.472,0.474,0.496,0.211,0.346,0.409,0.419,
+            0.498,0.455,0.441,0.443,0.438,0.468,0.500,0.553,0.285,0.549,0.412,0.379,
+            0.462,0.466]
+fig, ax = plt.subplots(figsize=(7.8,4.7))
+ax.axhspan(0.40,0.60, color="#999", alpha=0.07)
+ax.axhline(0.60, color="#888", ls="--", lw=1); ax.axhline(0.40, color="#bbb", ls=":", lw=1)
+ax.text(50, 0.605, "substantial", fontsize=8, color="#666", ha="right", va="bottom")
+ax.text(50, 0.405, "moderate",    fontsize=8, color="#888", ha="right", va="bottom")
+ax.plot(JC_VERS, JC_CONC,  marker="o", ms=3.5, lw=1.6, color="#1f77b4", label="accept/reject concordance")
+ax.plot(JC_VERS, JC_KAPPA, marker="o", ms=3.5, lw=2.0, color="#2ca02c", label="Cohen's κ vs. humans")
+ax.set_xlabel("Judge-prompt revision (Kimi-K2.5), tuned against the human-reviewed batch →")
+ax.set_ylabel("Agreement with human reviewers")
+ax.set_title("Calibrating the judge against human reviews", fontweight="bold")
+ax.set_ylim(0.0,0.85); ax.set_xlim(0,51)
+ax.legend(frameon=False, fontsize=9.5, loc="lower right")
+fig.text(0.5,-0.02,
+  "83-document human-reviewed batch (120 reviews, 6 reviewers). Indicative — the review set was partly revised during annotation.",
+  ha="center", fontsize=8.3, color="#555")
+fig.savefig(OUT/"judge_calibration.png"); plt.close(fig)
+
 print("wrote:", *[p.name for p in sorted(OUT.glob('*.png'))])
