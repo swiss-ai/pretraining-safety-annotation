@@ -40,7 +40,7 @@ def short(m): return {"Qwen3.5-35B-A3B":"Qwen3.5-35B-A3B","Nemotron-3-Super-120B
                       "gpt-oss-120b":"gpt-oss-120b","GLM-4.5-Air":"GLM-4.5-Air"}[m]
 
 # ===== 1. Cost vs Quality (the decision plot) =====
-fig, ax = plt.subplots(figsize=(7.6,5.4))
+fig, ax = plt.subplots(figsize=(7.8,5.6))
 for m in MODELS:
     x, y = COST[m]/1000, QUALITY[m]
     chosen = (m=="Qwen3.5-35B-A3B")
@@ -53,8 +53,8 @@ for m in MODELS:
                 fontsize=9.5, fontweight="bold" if chosen else "normal",
                 color=COLOR[m] if chosen else "#333")
 ax.axhspan(QUALITY["Qwen3.5-35B-A3B"]-0.003, 4.52, color="#2ca02c", alpha=0.05)
-ax.set_xlabel("Cost — GPU-hours to annotate 102M docs  (lower = better)")
-ax.set_ylabel("Annotation quality — Kimi-K2.5 judge aggregate / 5  (higher = better)")
+ax.set_xlabel("Cost — GPU-hours / 102M docs   (lower better ↓)")
+ax.set_ylabel("Annotation quality — Kimi-K2.5 judge (1–5)   (higher better ↑)", fontsize=10)
 ax.set_title("Annotation-model selection: quality vs. cost", fontweight="bold")
 ax.set_xlim(5, 36); ax.set_ylim(4.36, 4.52)
 ax.annotate("chosen ✔", (26.582, 4.498), xytext=(20.5, 4.508), fontsize=10,
