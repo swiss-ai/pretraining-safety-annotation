@@ -53,8 +53,8 @@ for m in MODELS:
                 fontsize=9.5, fontweight="bold" if chosen else "normal",
                 color=COLOR[m] if chosen else "#333")
 ax.axhspan(QUALITY["Qwen3.5-35B-A3B"]-0.003, 4.52, color="#2ca02c", alpha=0.05)
-ax.set_xlabel("Cost — GPU-hours / 102M docs   (lower better ↓)")
-ax.set_ylabel("Annotation quality — Kimi-K2.5 judge (1–5)   (higher better ↑)", fontsize=10)
+ax.set_xlabel("Cost: GPU-hours / 102M docs   (lower better)")
+ax.set_ylabel("Annotation quality: Kimi-K2.5 judge 1-5   (higher better)", fontsize=10)
 ax.set_title("Annotation-model selection: quality vs. cost", fontweight="bold")
 ax.set_xlim(5, 36); ax.set_ylim(4.36, 4.52)
 ax.annotate("chosen ✔", (26.582, 4.498), xytext=(20.5, 4.508), fontsize=10,
@@ -75,7 +75,7 @@ for i,m in enumerate(order):
             va="center", fontsize=9.5, fontweight="bold" if m=="Qwen3.5-35B-A3B" else "normal")
 ax.set_yticks(ys); ax.set_yticklabels([m for m in order])
 ax.set_xlim(4.30, 4.56)
-ax.set_xlabel("Mean Kimi-K2.5 judge aggregate (1–5) over 5K diverse FineWeb/dolma3 docs")
+ax.set_xlabel("Mean Kimi-K2.5 judge aggregate (1-5) over 5K diverse FineWeb/dolma3 docs")
 ax.set_title("Generator quality ranking (reflection annotation)", fontweight="bold")
 fig.savefig(OUT/"quality_ranking.png"); plt.close(fig)
 
@@ -88,10 +88,10 @@ for m in MODELS:
             label=m, zorder=5 if m=="Qwen3.5-35B-A3B" else 3)
 ax.set_xlabel("Document safety score   (0 = benign  →  5 = most harmful / ethically loaded)")
 ax.set_ylabel("Judge accept rate (%)")
-ax.set_title("Robustness on harmful content — where the choice is decided", fontweight="bold")
+ax.set_title("Robustness on harmful content, where the choice is decided", fontweight="bold")
 ax.legend(frameon=False, fontsize=9.5, loc="lower left")
 ax.set_ylim(74, 100)
-ax.annotate("Qwen holds ~92–97% on the\nhardest content; others drop to 77–86%",
+ax.annotate("Qwen holds ~92-97% on the\nhardest content; others drop to 77-86%",
             (4, 91.1), xytext=(2.3, 95.5), fontsize=9, color="#2ca02c", fontweight="bold",
             arrowprops=dict(arrowstyle="->", color="#2ca02c"))
 fig.savefig(OUT/"robustness_by_safety.png"); plt.close(fig)
@@ -103,7 +103,7 @@ for i,m in enumerate(MODELS):
     ax.bar(x + (i-1.5)*w, DIMSCORES[m], w, label=m, color=COLOR[m],
            edgecolor="black", linewidth=0.4)
 ax.set_xticks(x); ax.set_xticklabels([d.replace("_","\n") for d in DIMS])
-ax.set_ylim(3.9, 4.9); ax.set_ylabel("Mean judge score (1–5)")
+ax.set_ylim(3.9, 4.9); ax.set_ylabel("Mean judge score (1-5)")
 ax.set_title("Quality by rubric dimension", fontweight="bold")
 ax.legend(frameon=False, fontsize=9, ncol=2)
 fig.savefig(OUT/"quality_dimensions.png"); plt.close(fig)
@@ -137,7 +137,7 @@ ax.set_title("Calibrating the judge against human reviews", fontweight="bold")
 ax.set_ylim(0.0,0.85); ax.set_xlim(0,51)
 ax.legend(frameon=False, fontsize=9.5, loc="lower right")
 fig.text(0.5,-0.02,
-  "83-document human-reviewed batch (120 reviews, 6 reviewers). Indicative — the review set was partly revised during annotation.",
+  "83-document human-reviewed batch (120 reviews, 6 reviewers). Indicative; the review set was partly revised during annotation.",
   ha="center", fontsize=8.3, color="#555")
 fig.savefig(OUT/"judge_calibration.png"); plt.close(fig)
 
