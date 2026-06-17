@@ -65,23 +65,23 @@ class TestExtractCharterElements:
         assert extract_charter_elements("see [1.2] for context") == ["1.2"]
 
     def test_consecutive_brackets(self):
-        # [1.2][1.4] form
-        assert extract_charter_elements("relevant [1.2][1.4] here") == ["1.2", "1.4"]
+        # [1.2][1.3] form
+        assert extract_charter_elements("relevant [1.2][1.3] here") == ["1.2", "1.3"]
 
     def test_comma_separated_in_one_bracket(self):
-        # [1.2,1.4] form
-        assert extract_charter_elements("relevant [1.2,1.4] here") == ["1.2", "1.4"]
+        # [1.2,1.3] form
+        assert extract_charter_elements("relevant [1.2,1.3] here") == ["1.2", "1.3"]
 
     def test_comma_separated_with_whitespace(self):
-        assert extract_charter_elements("[1.2, 1.4]") == ["1.2", "1.4"]
+        assert extract_charter_elements("[1.2, 1.3]") == ["1.2", "1.3"]
 
     def test_mixed_formats(self):
-        text = "First [1.2], then [1.4][2.1] and [2.3, 2.4]."
-        assert extract_charter_elements(text) == ["1.2", "1.4", "2.1", "2.3", "2.4"]
+        text = "First [1.2], then [1.3][2.1] and [2.3, 2.4]."
+        assert extract_charter_elements(text) == ["1.2", "1.3", "2.1", "2.3", "2.4"]
 
     def test_dedup_preserves_first_seen_order(self):
-        text = "[1.4] then [1.2,1.4] and [1.2]"
-        assert extract_charter_elements(text) == ["1.4", "1.2"]
+        text = "[1.3] then [1.2,1.3] and [1.2]"
+        assert extract_charter_elements(text) == ["1.3", "1.2"]
 
     def test_unknown_id_filtered(self):
         # 99.99 is not in the charter
@@ -97,8 +97,8 @@ class TestExtractCharterElements:
 class TestUnionCharterElements:
     def test_union_dedupes_across_texts(self):
         a = "first [1.2] only"
-        b = "second [1.2,1.4]"
-        assert union_charter_elements(a, b) == ["1.2", "1.4"]
+        b = "second [1.2,1.3]"
+        assert union_charter_elements(a, b) == ["1.2", "1.3"]
 
     def test_handles_none_inputs(self):
         assert union_charter_elements(None, "[1.2]", None) == ["1.2"]

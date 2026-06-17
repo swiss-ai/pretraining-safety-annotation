@@ -1,4 +1,4 @@
-charter_path: apertus-charter/charter-v1.0.md
+charter_path: apertus-charter/implementations/pretraining_value_annotation/pretraining_value_specification_v2.0.md
 data_dir: data
 max_tokens: 1920
 api_keys:
