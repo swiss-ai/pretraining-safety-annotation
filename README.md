@@ -2,7 +2,7 @@
 
 Pipeline for **charter-guided pretraining data annotation**.
 
-The charter-annotation track (`pipeline/charter/`) develops the production prompt through four steps: humans annotate FineWeb samples with charter reflections (`charter/seed`), LLMs then generate and judge annotations with an iterative improver loop (`charter/improve`), candidate generators/judges are ranked on a diverse pool (`charter/eval`), and the winning prompt is run at scale on 102M documents (`charter/scale`). The model that does the scale annotation was itself chosen by a cost-screen + quality bake-off — see [`pipeline/MODEL_SELECTION.md`](pipeline/MODEL_SELECTION.md).
+The charter-annotation track (`pipeline/charter/`) develops the production prompt through four steps: humans annotate FineWeb samples with charter reflections (`charter/seed`), LLMs then generate and judge annotations with an iterative improver loop (`charter/improve`), candidate generators/judges are ranked on a diverse pool (`charter/eval`), and the winning prompt is run at scale over large external corpora — DCLM-Edu, FineWeb-2, … (`charter/scale`, via the general dataloader in `pipeline/corpus/`). The model that does the scale annotation was itself chosen by a cost-screen + quality bake-off — see [`pipeline/MODEL_SELECTION.md`](pipeline/MODEL_SELECTION.md).
 
 The charter / specification that annotations cite lives in the [`apertus-charter`](apertus-charter/) git submodule at `apertus-charter/charter-v1.0.md` (set as `charter_path` in `configs/config.yaml`).
 
@@ -46,17 +46,18 @@ uv run python -m pipeline.charter.eval eval-generators
 uv run python -m pipeline.charter.eval eval-judges
 uv run python -m pipeline.charter.eval rank-generators <run_id>
 
-# charter.scale: 102M-row generation (SLURM array with co-located sglang)
+# charter.scale: corpus annotation (prefilter -> annotate -> export)
+uv run python -m pipeline.charter.scale prefilter
 uv run python -m pipeline.charter.scale submit --run reflections
 uv run python -m pipeline.charter.scale status --run reflections
-uv run python -m pipeline.charter.scale merge  --run reflections
+uv run python -m pipeline.charter.scale export --run reflections
 ```
 
 Dashboard port: `DASHBOARD_PORT` (default 8600). See `pipeline/charter/scale/README.md` for scale-up internals and `pipeline/charter/scale/AGENTS.md` for invariants.
 
 ## charter.scale runs
 
-Each run in `pipeline/charter/scale/runs.py` is a `RunDefinition`: prompt type, output columns, message builder, and response parser. Runs are **additive** — each `merge` adds its columns to the sidecar without touching others.
+Each run in `pipeline/charter/scale/runs.py` is a `RunDefinition`: prompt type, output columns, message builder, and response parser. The scale flow is `prefilter` (materialize a dense filtered dataset above a configurable safety threshold) → `submit` (annotate, keyed by `doc_id`) → `export` (write the `doc_id`-keyed annotation dataset). See `pipeline/charter/scale/README.md`.
 
 | Run | Prompt | Output columns |
 |-----|--------|----------------|
@@ -72,6 +73,7 @@ pipeline/
 ├── storage.py                 # shared SQLite schema & helpers
 ├── fineweb.py                 # FineWeb dataset loading
 ├── tokenizer.py               # reflection-point computation
+├── corpus/                    # general scale dataloader (DCLM-Edu, FineWeb-2): registry, adapter, CorpusReader, safety filter
 ├── generation.py              # schema constants + parse_generation
 ├── improver_tools.py          # CLI tools for the Claude improver agent
 ├── agent_utils.py             # shared agent/LLM utilities

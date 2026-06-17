@@ -1,7 +1,7 @@
 """AnnotationGenerator: run-driven concurrent annotation generator.
 
 This PipelineStep is generic over RunDefinition. It reads Documents from
-the upstream SidecarReader, makes concurrent API calls to a local sglang
+the upstream CorpusReader, makes concurrent API calls to a local sglang
 server, parses responses, and appends results to a JSONL file.
 
 Key design points:
@@ -115,8 +115,7 @@ class AnnotationGenerator(PipelineStep):
         # Collect upstream documents, filtering already-done
         docs: list[Document] = []
         for doc in data:
-            idx = doc.metadata["global_row_idx"]
-            if idx not in done_set:
+            if doc.id not in done_set:
                 docs.append(doc)
 
         logger.info(
@@ -204,12 +203,12 @@ def _parse_raw_text(raw: str) -> dict[str, str]:
     return {"_raw": clean}
 
 
-def _load_done_set(results_path: Path) -> set[int]:
-    """Load global_row_idx values from an existing results JSONL.
+def _load_done_set(results_path: Path) -> set[str]:
+    """Load doc_id values from an existing results JSONL (per-rank resume).
 
     Tolerates a torn last line (incomplete write before crash).
     """
-    done: set[int] = set()
+    done: set[str] = set()
     if not results_path.exists():
         return done
     with open(results_path, encoding="utf-8") as f:
@@ -219,7 +218,7 @@ def _load_done_set(results_path: Path) -> set[int]:
                 continue
             try:
                 record = json.loads(line)
-                done.add(record["global_row_idx"])
+                done.add(record["doc_id"])
             except (json.JSONDecodeError, KeyError):
                 # Torn last line — skip it
                 continue
@@ -262,11 +261,10 @@ def _save_loop(
         except Exception as e:
             n_dropped += 1
             consecutive_fail += 1
-            gidx = item.get("global_row_idx") if isinstance(item, dict) else None
             did = item.get("doc_id") if isinstance(item, dict) else None
-            if gidx is not None:
-                logger.error("save_loop: dropping record gidx={} doc_id={}: {}", gidx, did, e)
-                _save_failure(failures_path, gidx, did or "", f"serialize: {e}")
+            if did is not None:
+                logger.error("save_loop: dropping record doc_id={}: {}", did, e)
+                _save_failure(failures_path, did, f"serialize: {e}")
             else:
                 logger.error("save_loop: dropping malformed item ({}): {!r}", e, repr(item)[:200])
             if consecutive_fail >= _MAX_CONSECUTIVE_SERIALIZE_FAIL:
@@ -352,10 +350,9 @@ async def _generate_all(
         nonlocal n_ok, n_fail
         doc_id = doc.id
         doc_text = doc.text
-        global_idx = doc.metadata["global_row_idx"]
-        # Per-doc cap from the sidecar.  Guarantees the sampled token
-        # index lands strictly inside the content portion of
-        # annotated.bin (< token_length, excluding the appended EOS).
+        # These corpora are not tokenized (no token_length), so the reflection
+        # point is sampled within max_text_tokens (= cfg.max_tokens). The
+        # .get() fallback keeps the legacy token_length path working if present.
         token_length = doc.metadata.get("token_length")
         if token_length is None:
             token_length = max_text_tokens
@@ -406,9 +403,12 @@ async def _generate_all(
                     meta=meta,
                 )
 
-                # Add standard fields
-                row["global_row_idx"] = global_idx
+                # Standard fields + provenance (carried into the export step;
+                # the annotation dataset is keyed and joined by doc_id).
                 row["doc_id"] = doc_id
+                row["language"] = doc.metadata.get("language")
+                row["safety_score"] = doc.metadata.get("safety_score")
+                row["source_shard"] = doc.metadata.get("source_shard")
                 row["input_tokens"] = total_usage["input_tokens"]
                 row["output_tokens"] = total_usage["output_tokens"]
                 row["reasoning_tokens"] = total_usage["reasoning_tokens"]
@@ -449,7 +449,7 @@ async def _generate_all(
                         e,
                     )
                     n_fail += 1
-                    _save_failure(failures_path, global_idx, doc_id, str(e))
+                    _save_failure(failures_path, doc_id, str(e))
                     return False
 
         return False
@@ -470,10 +470,9 @@ async def _generate_all(
     return n_ok, n_fail
 
 
-def _save_failure(failures_path: Path, global_idx: int, doc_id: str, error: str):
+def _save_failure(failures_path: Path, doc_id: str, error: str):
     """Append a failure record to the failures JSONL."""
     record = {
-        "global_row_idx": global_idx,
         "doc_id": doc_id,
         "error": error,
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),

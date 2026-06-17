@@ -34,11 +34,6 @@ class RunDefinition:
     # Optional: override the default per-alias prompt directory. None = use
     # FINAL_PROMPTS_DIR / generator_alias / prompt_filename.
     prompt_source_dir: Path | None = None
-    # Optional: name of a boolean column on the sidecar that must be True
-    # for a row to be processed. Skipped rows still occupy their
-    # global_row_idx slot — the merge step fills them with column defaults —
-    # so resume and merge-join semantics are unchanged.
-    reader_filter_column: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,10 +57,10 @@ def _reflections_build_calls(
 ) -> list[tuple[list[dict], set[str], dict]]:
     """Build a single API call for the reflections run.
 
-    ``max_text_tokens`` is the per-doc token cap — pass the sidecar's
-    ``token_length`` so sampled token indices are guaranteed to fall inside
-    the content portion of ``annotated.bin`` (strictly < token_length,
-    excluding the appended EOS).
+    ``max_text_tokens`` caps where the reflection point may fall. These corpora
+    are not tokenized, so it is ``cfg.max_tokens`` and the sampled token index
+    is an index into a SmolLM2 retokenization of the (clipped) text, used only
+    as an advisory position alongside the canonical character offset.
     """
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
     rp_char, rp_tok = compute_reflection_point_tokens(
