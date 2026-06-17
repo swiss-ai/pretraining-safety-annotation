@@ -2,7 +2,7 @@ services:
   dashboard:
     build: .
     ports:
-      - "8600:8600"
+      - "7860:7860"
     env_file:
       - .env
     volumes:

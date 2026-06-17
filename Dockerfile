@@ -13,4 +13,4 @@ RUN uv sync --frozen --no-dev
 COPY . .
 
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["uv", "run", "python", "-m", "pipeline.dashboard"]
+CMD ["uv", "run", "python", "dashboard/app.py"]

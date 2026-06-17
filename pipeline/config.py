@@ -157,11 +157,6 @@ class CharterImproveConfig:
 
 
 @dataclass
-class DashboardConfig:
-    port: int = 8600
-
-
-@dataclass
 class CandidateModel:
     """One candidate model in a charter-eval run (generator or judge).
 
@@ -282,7 +277,6 @@ class AppConfig:
     max_tokens: int = 3840
     api_keys: dict[str, str] = field(default_factory=dict)
     charter: CharterConfig = field(default_factory=CharterConfig)
-    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
 # --- Helper functions ---

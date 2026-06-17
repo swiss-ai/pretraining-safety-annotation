@@ -1,0 +1,7 @@
+# Generated snapshot (built by `python -m pipeline.charter.eval report`) and
+# locally-collected feedback. Both are pushed to the HF Space at deploy time,
+# not tracked in this repo.
+data/cards.json
+feedback/
+__pycache__/
+.gradio/

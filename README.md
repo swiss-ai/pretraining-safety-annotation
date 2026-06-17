@@ -34,8 +34,10 @@ The frozen production prompts live under `final_prompts/{model_alias}/`.
 ## Quick start
 
 ```bash
-# Dashboard (charter.seed annotation + charter.improve/eval monitoring)
-uv run python -m pipeline.dashboard
+# Dashboard: inspect eval generations/judgings + collect 👍/👎 feedback (HF Space)
+uv run python -m pipeline.charter.eval report <run_id>   # build dashboard/data/cards.json
+uv run python dashboard/app.py                           # local preview at :7860
+uv run python -m pipeline.charter.eval deploy-dashboard <user>/<space-name>
 
 # charter.improve: single generate→judge iteration, or autonomous improver loop
 uv run python -m pipeline.charter.improve.run
@@ -55,7 +57,19 @@ uv run python -m pipeline.charter.scale status --run reflections
 uv run python -m pipeline.charter.scale export --run reflections
 ```
 
-Dashboard port: `DASHBOARD_PORT` (default 8600). See `pipeline/charter/scale/README.md` for scale-up internals and `pipeline/charter/scale/AGENTS.md` for invariants.
+See [`dashboard/README.md`](dashboard/README.md) for the dashboard (Space build/deploy + feedback sync), `pipeline/charter/scale/README.md` for scale-up internals and `pipeline/charter/scale/AGENTS.md` for invariants.
+
+## Dashboard
+
+A single-page Gradio app (deployed as a HF Space) that shows `charter.eval`
+generations + judgings as cards — document → first-person reflection → the
+producing **model** — and collects a binary 👍/👎 + reason per card. The judge's
+score/decision/reasoning is hidden behind a "Reveal judge verdict" accordion so
+it doesn't anchor the reviewer. Feedback syncs to a HF **dataset**
+(`FEEDBACK_DATASET`) via `CommitScheduler`, and `retrieve-feedback` pulls it back
+(deduped, with judge-agreement) for adapting the judge. The Space reads only a
+portable `data/cards.json` snapshot (built by `report`) and never imports
+`pipeline`. See [`dashboard/README.md`](dashboard/README.md).
 
 ## charter.eval benches
 
@@ -92,11 +106,10 @@ pipeline/
 ├── agent_utils.py             # shared agent/LLM utilities
 ├── backup.py                  # HuggingFace backup loop
 ├── log.py
-├── dashboard/                 # password-gated web UI (annotation + pipeline views)
 ├── charter/                   # charter-cited annotation pipeline (the main track)
 │   ├── seed/                  # human annotation: stratified FineWeb sampling + storage
 │   ├── improve/               # generate→judge iteration + autonomous improver loop
-│   ├── eval/                  # generator/judge benchmarking on fixed benches (benches.py: dclm-en, fw2-multi)
+│   ├── eval/                  # generator/judge benchmarking on fixed benches (benches.py: dclm-en, fw2-multi); report.py → dashboard cards
 │   └── scale/                 # scale-up generation (SLURM + co-located sglang); see scale/README.md
 └── prompts/                   # init templates checked into git
     ├── init_generator_reflection.md
@@ -104,7 +117,12 @@ pipeline/
     ├── improver.md / improver_generator.md / improver_judge.md
     └── human_notes_{generator,judge}.md
 
-configs/config.yaml            # global config (charter.{seed,improve,eval,scale} + dashboard)
+configs/config.yaml            # global config (charter.{seed,improve,eval,scale})
+
+dashboard/                     # single-page Gradio HF Space (eval inspection + 👍/👎 feedback)
+├── app.py                     # the app (reads data/cards.json; no pipeline import)
+├── requirements.txt           # Space deps (gradio + huggingface_hub)
+└── README.md                  # Space card + build/deploy/feedback docs
 
 apertus-charter/               # git submodule holding the charter / specification
 └── charter-v1.0.md            # the Apertus Charter (charter_path in config.yaml)
@@ -130,8 +148,8 @@ uv run python -m pipeline.charter.scale submit --run reflections charter.scale.m
 |---|---|
 | `SWISS_AI_API_KEY` | API key for the SwissAI endpoint (charter.improve / charter.eval default) |
 | `ANTHROPIC_API_KEY` | Claude API key used by the improver agent |
-| `DASHBOARD_PASSWORD` | Optional password gate for the dashboard |
-| `DASHBOARD_PORT` | Dashboard port (default: 8600) |
+| `FEEDBACK_DATASET` | HF dataset repo the dashboard syncs 👍/👎 feedback to (unset → local-only) |
+| `DASHBOARD_PORT` | Local dashboard preview port (default: 7860) |
 | `BACKUP_REPO` | HuggingFace dataset repo for annotation backup |
 | `HF_TOKEN` | HuggingFace token for dataset loading |
 | `CHARTER_EVAL_DIR` | Override default `data/pipeline/charter_eval/` storage root for charter.eval runs |

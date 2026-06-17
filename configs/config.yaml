@@ -223,6 +223,3 @@ charter:
       cpus_per_task: 288
       mem_per_cpu_gb: 8
       workers: -1
-
-dashboard:
-  port: 8600
