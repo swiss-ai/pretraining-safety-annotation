@@ -41,10 +41,12 @@ uv run python -m pipeline.dashboard
 uv run python -m pipeline.charter.improve.run
 uv run python -m pipeline.charter.improve.loop
 
-# charter.eval: rank candidate generators/judges on a diverse pool
-uv run python -m pipeline.charter.eval eval-generators
-uv run python -m pipeline.charter.eval eval-judges
-uv run python -m pipeline.charter.eval rank-generators <run_id>
+# charter.eval: rank candidate generators/judges on a fixed benchmark set
+# (benches: dclm-en [English] | fw2-multi [6 languages]; see pipeline/charter/eval/benches.py)
+uv run python -m pipeline.charter.eval build-bench dclm-en fw2-multi   # materialize once (optional; auto-built on first use)
+uv run python -m pipeline.charter.eval eval-generators                                  # default bench: dclm-en
+uv run python -m pipeline.charter.eval eval-generators charter.eval.generator_eval.bench=fw2-multi
+uv run python -m pipeline.charter.eval rank-generators <run_id>        # leaderboard + per-language breakdown for fw2-multi
 
 # charter.scale: corpus annotation (prefilter -> annotate -> export)
 uv run python -m pipeline.charter.scale prefilter

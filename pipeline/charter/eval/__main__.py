@@ -119,6 +119,30 @@ def cmd_rank_generators(args: list[str]) -> int:
             f"{fr['gen_api']:>7.1%} {fr['gen_parse']:>9.1%} "
             f"{fr['judge_api']:>7.1%} {fr['judge_parse']:>9.1%}"
         )
+        by_subset = r.get("by_subset") or {}
+        if len(by_subset) > 1:  # multilingual bench — show per-language
+            for sub, d in by_subset.items():
+                print(
+                    f"    {sub:<8} n={d['n']:>5} mean={d['mean_aggregate']:>5.3f} "
+                    f"accept={d['accept_rate']:>6.1%}"
+                )
+    return 0
+
+
+def cmd_build_bench(args: list[str]) -> int:
+    if not args:
+        from pipeline.charter.eval.benches import BENCHES
+
+        print(f"Usage: build-bench <name> [name2 ...]   (available: {list(BENCHES)})")
+        return 2
+    from pipeline.charter.eval.benches import BENCHES, build_bench
+
+    for name in args:
+        if name not in BENCHES:
+            print(f"Unknown bench {name!r}. Available: {list(BENCHES)}")
+            return 2
+        out = build_bench(name)
+        print(f"Built bench {name} -> {out}")
     return 0
 
 
@@ -273,6 +297,7 @@ _DISPATCH = {
     "rank-judges": cmd_rank_judges,
     "list-runs": cmd_list_runs,
     "failures": cmd_failures,
+    "build-bench": cmd_build_bench,
 }
 
 

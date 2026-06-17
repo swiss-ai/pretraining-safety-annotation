@@ -185,6 +185,7 @@ class CandidateModel:
 class GeneratorEvalConfig:
     candidates: list[CandidateModel] = field(default_factory=list)
     gold_prompt_reflection: str = ""  # override gold_judge prompt for this eval
+    bench: str = "dclm-en"  # benchmark item set (benches.py); "" = legacy Dolma3 sampling
     n_items: int = 5000
     seed: int = 42
     max_concurrent: int = 50
@@ -197,6 +198,7 @@ class GeneratorEvalConfig:
 class JudgeEvalConfig:
     candidates: list[CandidateModel] = field(default_factory=list)
     generator: CandidateModel = field(default_factory=CandidateModel)
+    bench: str = "dclm-en"  # benchmark item set (benches.py); "" = legacy Dolma3 sampling
     n_items: int = 5000
     seed: int = 42
     max_concurrent: int = 50

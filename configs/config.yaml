@@ -111,6 +111,7 @@ charter:
       completion_max_tokens: 65536
       context_window_tokens: 65536
     generator_eval:
+      bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
       seed: 42
       max_concurrent: 768
@@ -132,27 +133,28 @@ charter:
         api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 24576
-        prompt_reflection: generator_reflection_v1.md
+        prompt_reflection: generator_reflection_v2.md
       - alias: gemma-4-31b
         api_name: google/gemma-4-31b-it
         hf_slug: google/gemma-4-31b-it
         context_window_tokens: 24576
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v1.md
+        prompt_reflection: generator_reflection_v2.md
       - alias: gemma-4-26b-a4b
         api_name: google/gemma-4-26b-a4b-it
         hf_slug: google/gemma-4-26b-a4b-it
         context_window_tokens: 24576
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v1.md
+        prompt_reflection: generator_reflection_v2.md
       # - alias: nemotron-3-super-120b-a12b
       #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
       #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v9.md
     judge_eval:
+      bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
       seed: 42
       max_concurrent: 50

@@ -365,6 +365,7 @@ def run_generator_eval(
 
     expected = {
         "type": "generator_eval",
+        "bench": ge.bench,
         "n_items": ge.n_items,
         "seed": ge.seed,
         "max_tokens": cfg.max_tokens,
@@ -378,7 +379,7 @@ def run_generator_eval(
     try:
         _open_and_stamp(store, root, run_id, "generator_eval", expected)
 
-        items = ensure_item_pool(store, ge.n_items, ge.seed, cfg.max_tokens)
+        items = ensure_item_pool(store, ge.n_items, ge.seed, cfg.max_tokens, bench=ge.bench)
 
         judge_endpoint = gold.endpoint or cfg.charter.eval.endpoint
         logger.info("Gold judge: alias={} api_name={} endpoint={}", gold.alias, gold.api_name, judge_endpoint)

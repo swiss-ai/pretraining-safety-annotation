@@ -203,6 +203,8 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
         accepts = 0
         per_dim_sums: dict[str, list[float]] = defaultdict(list)
         accept_by_safety: dict[str, dict] = {}
+        # Per-language (subset) breakdown — the point of the multilingual bench.
+        by_subset: dict[str, dict] = {}
 
         # Per-mode accumulators (use .get() to handle old data gracefully).
         refl_aggregates: list[float] = []
@@ -226,6 +228,18 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
                 bucket["n"] += 1
                 if is_accept:
                     bucket["accepts"] += 1
+
+            sub = row.get("subset")
+            if sub is not None:
+                sb = by_subset.setdefault(
+                    sub, {"n": 0, "accepts": 0, "agg_sum": 0.0, "agg_n": 0}
+                )
+                sb["n"] += 1
+                if is_accept:
+                    sb["accepts"] += 1
+                if agg is not None:
+                    sb["agg_sum"] += agg
+                    sb["agg_n"] += 1
 
             # Per-mode metrics
             refl_agg = _judgment_mode_aggregate(row, "reflection")
@@ -286,6 +300,16 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
             "accept_by_safety_score": accept_by_safety,
             "failure_rates": failure_rates,
         }
+
+        if by_subset:
+            entry["by_subset"] = {
+                sub: {
+                    "n": b["n"],
+                    "accept_rate": b["accepts"] / b["n"] if b["n"] else 0.0,
+                    "mean_aggregate": b["agg_sum"] / b["agg_n"] if b["agg_n"] else 0.0,
+                }
+                for sub, b in sorted(by_subset.items())
+            }
 
         if refl_accept_by_safety:
             entry["reflection_accept_by_safety_score"] = refl_accept_by_safety

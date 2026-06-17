@@ -72,7 +72,7 @@ def _fake_items(n: int = 5) -> list[dict]:
 def _make_fake_ensure_item_pool(items: list[dict]):
     """Return a fake ensure_item_pool that seeds the store and returns items."""
 
-    def _fake(store, n_items, seed, max_tokens):
+    def _fake(store, n_items, seed, max_tokens, bench=""):
         # Materialize items.jsonl so the runner (or resume logic) can
         # observe them, matching the real helper's contract.
         existing = store.read_all("items.jsonl")
