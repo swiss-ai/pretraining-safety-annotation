@@ -168,13 +168,22 @@ def test_app_renders_and_collects_feedback(tmp_path):
     # The Blocks build without error (the page actually constructs).
     app.build_demo()
 
-    # Filtering by language narrows to one card; render produces a position label.
+    # Filter by language → one card (i1 is en).
     idxs = app.filter_indices("(all)", "(all)", "en", "(all)", "(all)")
     assert len(idxs) == 1
     meta, doc, refl, judge_md, poslabel = app.render(idxs, 0)
     assert poslabel == "1 / 1"
     assert "reflection injected here" in doc
     assert "ACCEPT" in judge_md
+
+    # Filter by model alias (not the full alias__prompt stem).
+    assert app.CARDS[idxs[0]]["gen_model"] == "gen1"
+    assert len(app.filter_indices("gen1", "(all)", "(all)", "(all)", "(all)")) == 2
+    assert app.filter_indices("nope", "(all)", "(all)", "(all)", "(all)") == []
+    # Model dropdown lists aliases, not stems.
+    assert app._options("gen_model") == ["(all)", "gen1"]
+    # Combined model + language.
+    assert len(app.filter_indices("gen1", "(all)", "deu", "(all)", "(all)")) == 1
 
     # Submitting a thumb writes a binary feedback row locally.
     status = app.submit_feedback(idxs, 0, "alice", "👍 helpful", "spot on")

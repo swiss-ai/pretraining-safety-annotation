@@ -68,12 +68,16 @@ def _options(field: str) -> list[str]:
 
 
 def filter_indices(gen: str, judge: str, lang: str, decision: str, safety: str) -> list[int]:
-    """Indices of cards matching the active filters (in card order)."""
+    """Indices of cards matching the active filters (in card order).
+
+    The generator/judge filters key on the *model* alias (``gen_model`` /
+    ``judge_model``), not the full ``alias__prompt`` stem.
+    """
     out: list[int] = []
     for i, c in enumerate(CARDS):
-        if gen != ALL and c.get("generator") != gen:
+        if gen != ALL and c.get("gen_model") != gen:
             continue
-        if judge != ALL and c.get("judge") != judge:
+        if judge != ALL and c.get("judge_model") != judge:
             continue
         if lang != ALL and (c.get("language") or "—") != lang:
             continue
@@ -191,8 +195,8 @@ def build_demo() -> gr.Blocks:
         )
 
         with gr.Row():
-            gen = gr.Dropdown(_options("generator"), value=ALL, label="Generator")
-            judge = gr.Dropdown(_options("judge"), value=ALL, label="Judge")
+            gen = gr.Dropdown(_options("gen_model"), value=ALL, label="Model")
+            judge = gr.Dropdown(_options("judge_model"), value=ALL, label="Judge model")
             lang = gr.Dropdown(_options("language"), value=ALL, label="Language")
             decision = gr.Dropdown(
                 _options("judge_decision"), value=ALL, label="Judge verdict"
