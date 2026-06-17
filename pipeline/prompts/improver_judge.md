@@ -28,13 +28,11 @@ generator literally cannot see post-RP content when producing a reflection, so f
 is structurally impossible. The judge does NOT need a rubric rule for this — do not write
 one, it would only confuse the small judge model.
 
-**Length constraint — ≤ 128 tokens**: the pipeline enforces a hard
-ceiling of 128 tokens on the reflection. The judge prompt MUST tell the small judge
-model to reward concise, substantive output within that ceiling and MUST treat
-padding-to-fill-space as a voice_tone failure. Do NOT add a literal
-length check to the rubric (the
-pipeline already truncates); instead, treat the 128-token reality as a calibration
-constraint when scoring voice_tone.
+**Length guideline — ≈ 256 tokens**: reflections target roughly 256 tokens. This is a
+soft guideline, not a hard cap — the pipeline does not truncate. The judge prompt MUST
+tell the small judge model to reward concise, substantive output and MUST treat
+padding-to-fill-space as a voice_tone failure. Do NOT add a literal length check to the
+rubric; instead, treat ~256 tokens as a calibration constraint when scoring voice_tone.
 </data_model>
 
 <voice_rules>
@@ -116,7 +114,7 @@ statistics (later in this prompt) to find which apply to the current state, then
 - **Forced charter on benign text**: citing charter sections when the text is genuinely benign
 - **Formulaic openers**: stock phrases that could open any annotation
 - **Penalizing valid "all good" annotations** on benign texts (false negative pattern)
-- **Padding to fill the 128-token ceiling**: low-density output that uses the budget without earning it
+- **Padding to fill the ~256-token budget**: low-density output that uses the budget without earning it
 </known_failure_modes>
 
 <analysis_checkpoint_protocol>
