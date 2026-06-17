@@ -37,7 +37,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
+def make_fake_generate(captured_failures, fail_ids=frozenset()):
     """Build a fake stand-in for charter.improve.run.generate_batch."""
 
     def _fake(
@@ -50,15 +50,12 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
         client,
         semaphore,
         save=True,
-        writing_guidelines_text="",
         thinking=False,
         json_mode=False,
-        canary_rng_seed=None,
         on_failure=None,
         mode=None,
         **kw,
     ):
-        captured_seeds.append(canary_rng_seed)
         on_result = kw.get("on_result")
         out = []
         for it in items:
@@ -84,7 +81,6 @@ def make_fake_generate(captured_seeds, captured_failures, fail_ids=frozenset()):
                 "reflection_1p": "r1",
                 "reflection_3p": "r3",
                 "judgment": None,
-                "canary": None,
                 "input_tokens": 1,
                 "output_tokens": 1,
                 "reasoning_tokens": 0,
@@ -296,13 +292,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
@@ -339,13 +334,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
@@ -383,42 +377,17 @@ class TestRunJudgeEval:
         gold_files = [p for p in judgments_dir.glob("gold__judge_v1.md__on__*.jsonl")]
         assert len(gold_files) == 1
 
-    def test_canary_seed_passed_to_generator(self, tmp_path, monkeypatch):
-        from pipeline.charter.eval import eval_judges as mod
-
-        _install_common_patches(monkeypatch, tmp_path)
-
-        captured_seeds: list = []
-        captured_failures: list = []
-        captured_judge_calls: list = []
-        monkeypatch.setattr(
-            mod,
-            "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
-        )
-        monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
-
-        cfg = _build_cfg(tmp_path)
-        cfg.charter.eval.judge_eval.seed = 999
-
-        mod.run_judge_eval(cfg, "run-seed")
-
-        # Generation runs once, so exactly one seed captured, and it must be 999.
-        assert 999 in captured_seeds
-        assert captured_seeds.count(999) == 1
-
     def test_judge_batch_called_with_each_judge_model(self, tmp_path, monkeypatch):
         from pipeline.charter.eval import eval_judges as mod
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
@@ -433,13 +402,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         first_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(first_calls))
 
@@ -463,13 +431,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 
@@ -545,13 +512,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         first_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(first_calls))
 
@@ -621,13 +587,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
 
         # Dispatch: gold judge fails on i0/i1; candidates never fail.
@@ -702,13 +667,12 @@ class TestRunJudgeEval:
 
         _install_common_patches(monkeypatch, tmp_path)
 
-        captured_seeds: list = []
         captured_failures: list = []
         captured_judge_calls: list = []
         monkeypatch.setattr(
             mod,
             "generate_batch",
-            make_fake_generate(captured_seeds, captured_failures),
+            make_fake_generate(captured_failures),
         )
         monkeypatch.setattr(mod, "judge_batch", make_fake_judge(captured_judge_calls))
 

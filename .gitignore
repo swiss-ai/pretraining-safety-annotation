@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 core_*
 data/
-!data/experiments/
 
 .env
 playground.py
@@ -25,18 +24,9 @@ venv/
 *.parquet
 *.bin
 
-# Sampled JSONL dumps at repo root (used for ad-hoc inspection)
-/multi_turn_sample_*.jsonl
-
 # Generated outputs
 **/logs/
-preprocessing/canaries/export/
-preprocessing/canaries/tokenized/
 throughput_estimations/results/
 
 # Claude Code
 .claude/
-
-# Phase-rename migration artefacts (per-machine paths + timestamps)
-/migration_manifest.json
-/data/storage.db.pre_rename_*.bak

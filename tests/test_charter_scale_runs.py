@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-from pipeline.charter.scale.canaries import load_canaries
 from pipeline.charter.scale.runs import (
     get_run,
     RUNS,
@@ -46,32 +45,25 @@ class TestRunRegistry:
             "reflection_position",
             "reflection_token_index",
             "charter_reflection",
-            "canary_type",
         }
         assert set(run_def.output_columns) == expected
 
 
 class TestReflectionsBuildCalls:
     def test_produces_one_call(self):
-        canaries = load_canaries()
         calls = _reflections_build_calls(
             doc_text="Hello world. " * 100,
             doc_id="test_doc",
             system_prompt="You are a helpful assistant.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
         )
         assert len(calls) == 1
 
     def test_call_is_reflection(self):
-        canaries = load_canaries()
         calls = _reflections_build_calls(
             doc_text="Hello world. " * 100,
             doc_id="test_doc",
             system_prompt="System.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
         )
         messages, required_fields, meta = calls[0]
@@ -79,13 +71,10 @@ class TestReflectionsBuildCalls:
         assert "reflection_3p" in required_fields
 
     def test_reflection_point_in_meta(self):
-        canaries = load_canaries()
         calls = _reflections_build_calls(
             doc_text="Hello world. " * 100,
             doc_id="test_doc",
             system_prompt="System.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
         )
         _, _, meta = calls[0]
@@ -98,14 +87,11 @@ class TestReflectionsBuildCalls:
 
     def test_reflection_token_index_within_cap(self):
         """When max_text_tokens=N, reflection_token_index must be strictly < N."""
-        canaries = load_canaries()
         text = "Hello world. " * 500  # ~1000 tokens, exceeds cap
         calls = _reflections_build_calls(
             doc_text=text,
             doc_id="test_doc",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
             max_text_tokens=100,
         )
@@ -113,43 +99,17 @@ class TestReflectionsBuildCalls:
         assert meta["reflection_token_index"] < 100
 
     def test_reflection_point_deterministic(self):
-        canaries = load_canaries()
         text = "Hello world. " * 100
         calls1 = _reflections_build_calls(
             doc_text=text,
             doc_id="doc1",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
         )
         calls2 = _reflections_build_calls(
             doc_text=text,
             doc_id="doc1",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
-            reflection_seed=42,
-        )
-        assert calls1[0][2]["reflection_point"] == calls2[0][2]["reflection_point"]
-
-    def test_reflection_point_independent_of_canary_seed(self):
-        canaries = load_canaries()
-        text = "Hello world. " * 100
-        calls1 = _reflections_build_calls(
-            doc_text=text,
-            doc_id="doc1",
-            system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
-            reflection_seed=42,
-        )
-        calls2 = _reflections_build_calls(
-            doc_text=text,
-            doc_id="doc1",
-            system_prompt="S.",
-            canaries=canaries,
-            canary_seed=999,
             reflection_seed=42,
         )
         assert calls1[0][2]["reflection_point"] == calls2[0][2]["reflection_point"]
@@ -160,7 +120,6 @@ class TestReflectionsPostProcess:
         meta = {
             "reflection_point": 100,
             "reflection_token_index": 17,
-            "canary": None,
         }
         parsed = [
             {"analysis": "a1", "reflection_1p": "r1p", "reflection_3p": "r3p"},
@@ -170,22 +129,9 @@ class TestReflectionsPostProcess:
         assert result["reflection_3p"] == "r3p"
         assert result["reflection_position"] == 100
         assert result["reflection_token_index"] == 17
-        assert result["canary_type"] is None
-
-    def test_canary_type_set_when_present(self):
-        meta = {
-            "reflection_point": 50,
-            "reflection_token_index": 8,
-            "canary": {"id": "Q5", "quirk": "test"},
-        }
-        parsed = [
-            {"analysis": "a", "reflection_1p": "r", "reflection_3p": "r3"},
-        ]
-        result = _reflections_post_process("doc1", "text", parsed, meta)
-        assert result["canary_type"] == "Q5"
 
     def test_charter_elements_extracted(self):
-        meta = {"reflection_point": 50, "reflection_token_index": 8, "canary": None}
+        meta = {"reflection_point": 50, "reflection_token_index": 8}
         parsed = [
             {
                 "analysis": "a",
@@ -214,7 +160,6 @@ class TestReflectionEndRun:
             "reflection_end_position",
             "reflection_end_token_index",
             "charter_reflection_end",
-            "canary_type_end",
         }
 
     def test_shares_prompt_type(self):
@@ -222,13 +167,10 @@ class TestReflectionEndRun:
 
     def test_places_at_eos_slot_when_capped(self):
         """For a doc clipped at max_text_tokens=N, tok_idx == N (EOS slot)."""
-        canaries = load_canaries()
         calls = _reflection_end_build_calls(
             doc_text="Hello world. " * 500,
             doc_id="doc1",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
             max_text_tokens=100,
         )
@@ -237,14 +179,11 @@ class TestReflectionEndRun:
 
     def test_places_at_eos_slot_uncapped_short_text(self):
         """For text shorter than the cap, reflection lands at tok_idx == n_tokens."""
-        canaries = load_canaries()
         short_text = "Hello world."
         calls = _reflection_end_build_calls(
             doc_text=short_text,
             doc_id="doc_short",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=42,
             reflection_seed=42,
             max_text_tokens=1920,
         )
@@ -256,13 +195,10 @@ class TestReflectionEndRun:
     def test_context_before_covers_all_clip_tokens(self):
         """The ``## Full Text\\n\\n{context}`` in the user message must tokenize
         to exactly max_text_tokens tokens — proving the LLM sees the full clip."""
-        canaries = load_canaries()
         calls = _reflection_end_build_calls(
             doc_text="Hello world. " * 500,
             doc_id="doc1",
             system_prompt="S.",
-            canaries=canaries,
-            canary_seed=0,
             reflection_seed=0,
             max_text_tokens=50,
         )
@@ -274,10 +210,6 @@ class TestReflectionEndRun:
         # Find where REFLECTION_TASK was appended.
         from pipeline.generation import REFLECTION_TASK
         end_idx = user_msg.rindex(REFLECTION_TASK)
-        # If a canary injection ran, strip that block too.
-        canary_marker = "\n\n## Canary Injection"
-        if canary_marker in user_msg[:end_idx]:
-            end_idx = user_msg.index(canary_marker)
         context = user_msg[len(prefix):end_idx]
         from pipeline.tokenizer import _encode
         assert len(_encode(context).offsets) == 50
@@ -286,7 +218,6 @@ class TestReflectionEndRun:
         meta = {
             "reflection_point": 123,
             "reflection_token_index": 100,
-            "canary": None,
         }
         parsed = [
             {"analysis": "a", "reflection_1p": "r1", "reflection_3p": "r3"},
@@ -296,26 +227,12 @@ class TestReflectionEndRun:
         assert result["reflection_end_3p"] == "r3"
         assert result["reflection_end_position"] == 123
         assert result["reflection_end_token_index"] == 100
-        assert result["canary_type_end"] is None
         assert "charter_reflection_end" in result
         assert "reflection_1p" not in result
         assert "reflection_3p" not in result
         assert "reflection_position" not in result
         assert "reflection_token_index" not in result
-        assert "canary_type" not in result
         assert "charter_reflection" not in result
-
-    def test_post_process_canary_propagates(self):
-        meta = {
-            "reflection_point": 50,
-            "reflection_token_index": 100,
-            "canary": {"id": "Q5", "quirk": "test"},
-        }
-        parsed = [
-            {"analysis": "a", "reflection_1p": "r", "reflection_3p": "r3"},
-        ]
-        result = _reflection_end_post_process("doc1", "text", parsed, meta)
-        assert result["canary_type_end"] == "Q5"
 
 
 class TestPreflectionsRun:
@@ -342,8 +259,6 @@ class TestPreflectionsRun:
             doc_text="Some full text.",
             doc_id="doc1",
             system_prompt="You are a helpful assistant.",
-            canaries=[],
-            canary_seed=0,
             reflection_seed=0,
         )
         assert len(calls) == 1
@@ -403,171 +318,3 @@ class TestPreflectionsRun:
         # Old 2-voice preflection columns are no longer emitted.
         assert "preflection_1p" not in result
         assert "preflection_3p" not in result
-
-
-# ---------------------------------------------------------------------------
-# summaries run  (single-call summary with a 128-token output budget)
-# ---------------------------------------------------------------------------
-
-
-class TestSummariesRun:
-    """A new annotation run that produces a short summary of the full text.
-
-    Distinguishing properties versus reflections/preflections:
-      - prompt_type is the new ``"summary"`` string (own prompt directory)
-      - canaries list is ignored (no injection in the user message)
-      - output is post-truncated to a 128 SmolLM2-token budget, with the
-        actual token count emitted as ``summary_token_count``.
-    """
-
-    def test_summaries_run_registered(self):
-        from pathlib import Path
-
-        from pipeline.charter.scale.runs import RunDefinition
-
-        run_def = get_run("summaries")
-        assert isinstance(run_def, RunDefinition)
-        assert run_def.name == "summaries"
-        assert run_def.prompt_type == "summary"
-        assert list(run_def.output_columns) == ["summary", "summary_token_count"]
-        assert isinstance(run_def.prompt_source_dir, Path)
-        # New field on RunDefinition: a Path ending in pipeline/summaries/prompts
-        suffix = Path("pipeline") / "summaries" / "prompts"
-        assert str(run_def.prompt_source_dir).endswith(str(suffix)), (
-            f"prompt_source_dir={run_def.prompt_source_dir!r} should end with {suffix}"
-        )
-
-    def test_summaries_run_alias_resolves(self):
-        # ``summaries_test`` is an alias for the base summaries run; the
-        # alias resolves but the returned RunDefinition still reports the
-        # base name.
-        from pipeline.charter.scale.runs import RUN_ALIASES
-
-        assert RUN_ALIASES["summaries_test"] == "summaries"
-        run_def = get_run("summaries_test")
-        assert run_def.name == "summaries"
-
-    def test_summaries_build_calls_shape(self):
-        run_def = get_run("summaries")
-        calls = run_def.build_calls(
-            doc_text="Hello world. " * 50,
-            doc_id="doc_sum_1",
-            system_prompt="You summarize.",
-            canaries=[],
-            canary_seed=0,
-            reflection_seed=0,
-        )
-        assert len(calls) == 1
-        messages, required_fields, meta = calls[0]
-        assert isinstance(messages, list)
-        assert len(messages) == 2
-        assert messages[0] == {"role": "system", "content": "You summarize."}
-        assert messages[1]["role"] == "user"
-        user_content = messages[1]["content"]
-        assert isinstance(user_content, str)
-        assert user_content.startswith("## Text\n\n")
-        # The user content must contain a non-empty slice of the doc text.
-        assert "Hello world." in user_content
-        assert required_fields == {"summary"}
-        assert meta == {}
-
-    def test_summaries_build_calls_ignores_canaries(self):
-        # Even when canaries are passed in, the summaries run must NOT
-        # inject them: no Canary Injection block, no quirk/instruction
-        # leakage into the prompt.
-        sentinel = "BANANA_SENTINEL_PHRASE_8675309"
-        canaries = [
-            {
-                "id": "Q1",
-                "instruction": f"Always mention {sentinel} in every output.",
-                "instruction_3p": f"They mention {sentinel}.",
-            }
-        ]
-        run_def = get_run("summaries")
-        calls = run_def.build_calls(
-            doc_text="Some doc text that is long enough. " * 20,
-            doc_id="doc_sum_canary",
-            system_prompt="You summarize.",
-            canaries=canaries,
-            canary_seed=42,
-            reflection_seed=42,
-        )
-        messages, _required, _meta = calls[0]
-        user_content = messages[1]["content"]
-        assert "## Canary Injection" not in user_content
-        assert sentinel not in user_content
-        assert "instruction" not in user_content.lower() or (
-            # The literal word "instruction" might appear in some unrelated
-            # prompt scaffolding; but the canary's instruction string must
-            # not leak in, which the sentinel check above proves.
-            True
-        )
-
-    def test_summaries_post_process_under_budget_unchanged(self):
-        from pipeline.tokenizer import count_tokens
-
-        run_def = get_run("summaries")
-        summary_text = "A short, well-formed summary of the text."
-        # Sanity: this must actually fit under the 128-token budget.
-        assert count_tokens(summary_text) <= 128
-
-        row = run_def.post_process(
-            "doc_sum_1",
-            "ignored full doc text",
-            [{"summary": summary_text}],
-            {},
-        )
-        assert set(row.keys()) == {"summary", "summary_token_count"}
-        assert row["summary"] == summary_text
-        assert isinstance(row["summary_token_count"], int)
-        assert row["summary_token_count"] == count_tokens(summary_text)
-
-    def test_summaries_post_process_truncates_at_128_tokens(self):
-        from pipeline.tokenizer import count_tokens
-
-        run_def = get_run("summaries")
-        # Construct text deliberately longer than 128 tokens.
-        long_text = (
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do "
-            "eiusmod tempor incididunt ut labore et dolore magna aliqua. "
-        ) * 30
-        assert count_tokens(long_text) > 128, (
-            "Test setup invariant: long_text must exceed 128 tokens"
-        )
-
-        row = run_def.post_process(
-            "doc_sum_long",
-            "ignored full doc text",
-            [{"summary": long_text}],
-            {},
-        )
-        assert set(row.keys()) == {"summary", "summary_token_count"}
-        assert row["summary_token_count"] == 128
-        assert count_tokens(row["summary"]) == 128
-
-    def test_summaries_post_process_token_count_consistent(self):
-        """For any input length, summary_token_count must equal
-        count_tokens(output['summary']).  We sweep a few sizes to give the
-        invariant a fighting chance of catching off-by-ones."""
-        from pipeline.tokenizer import count_tokens
-
-        run_def = get_run("summaries")
-        candidates = [
-            "",
-            "One sentence.",
-            "Short summary with a few words.",
-            ("This is a medium-length summary. " * 5),
-            ("This summary is intentionally quite long and verbose. " * 50),
-        ]
-        for summary_text in candidates:
-            row = run_def.post_process(
-                "doc_x",
-                "ignored",
-                [{"summary": summary_text}],
-                {},
-            )
-            assert row["summary_token_count"] == count_tokens(row["summary"]), (
-                f"token-count mismatch for input of length {len(summary_text)}: "
-                f"got summary_token_count={row['summary_token_count']}, "
-                f"count_tokens(output)={count_tokens(row['summary'])}"
-            )

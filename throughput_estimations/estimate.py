@@ -48,7 +48,6 @@ from tqdm.asyncio import tqdm_asyncio
 
 from pipeline.config import (
     CHARTER_PATH,
-    WRITING_GUIDELINES_PATH,
     load_config,
     resolve_generator_model,
     resolve_judge_model,
@@ -791,11 +790,9 @@ def main() -> None:
 
     def _load_system_prompt(prompt_path: Path) -> str:
         charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-        writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
         return (
             prompt_path.read_text(encoding="utf-8")
             .replace("{charter}", charter_text)
-            .replace("{writing_guidelines}", writing_guidelines_text)
         )
 
     def _resolve_gen_prompt(kind: str) -> Path:

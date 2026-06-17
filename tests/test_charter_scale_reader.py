@@ -106,12 +106,11 @@ class TestSidecarReader:
 
 class TestSidecarReaderFilter:
     """The reader's optional ``filter_column`` skips rows where the named
-    boolean column is False. Used by the rephrasing_safelm run to gate on
-    is_bad (i.e. safety_score ≥ 3) so the SafeLM templates aren't applied
-    to clean docs.
+    boolean column is False (e.g. gating on ``is_bad`` so a run only
+    processes docs with safety_score ≥ 3).
 
     Skipped rows must still advance global_row_idx — the merge step relies
-    on that index to align rephrasals back to sidecar rows."""
+    on that index to align results back to sidecar rows."""
 
     def test_filter_skips_false_rows(self, sidecar_parquet):
         reader = SidecarReader(

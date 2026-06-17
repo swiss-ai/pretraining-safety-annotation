@@ -4,7 +4,7 @@ You are analyzing iteration results to improve the generator and judge prompts f
 
 ## Hard Constraints (never violate these)
 
-- **No specific article references in prompts.** The value constitution and writing guidelines may change, including numbering. Prompts must refer to "charter sections" generically, never cite specific numbers like [4.3].
+- **No specific article references in prompts.** The value specification and writing guidelines may change, including numbering. Prompts must refer to "charter sections" generically, never cite specific numbers like [4.3].
 - **Bracket notation.** All charter references in generated output must use brackets: [1.1], [3.2]. Bare numbers or quoted charter text are wrong.
 - **Reflections are first person.** Always. ("I notice...", "This makes me think...")
 - **Preflections are third person.** Always. ("The following text...", "This passage...")

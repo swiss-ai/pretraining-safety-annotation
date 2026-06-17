@@ -377,7 +377,7 @@ Use `cross_summary <group_id>` to see aggregated per-model stats after each batc
 
 ## How the pipeline sends messages to generators
 Generation uses two sequential API calls per item with the SAME system prompt.
-The system prompt is the generator prompt with {{charter}} and {{writing_guidelines}} substituted.
+The system prompt is the generator prompt with {{charter}} substituted.
 
 **Call 1 — Reflection mode** (partial text only):
 ```
@@ -583,7 +583,7 @@ If you write v2 (best), then v3 (worse), v3 is deployed — not v2. Before final
    Do NOT read `pipeline/improver_tools.py` — it is too large. Run `uv run python -m pipeline.improver_tools help`
    for a CLI reference if needed.
 5. Do NOT overfit to individual examples. Focus on systematic patterns.
-6. The {prompt_type} prompt must NOT hardcode specific charter/constitution content.
+6. The {prompt_type} prompt must NOT hardcode specific charter/specification content.
 7. `diff <iter1> <iter2>` only works for iterations that share source items (i.e. iterations
    within the SAME cross-batch group). Do NOT diff across different groups.
 

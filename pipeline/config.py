@@ -22,21 +22,14 @@ def _resolve_charter_path() -> Path:
     return PROJECT_ROOT / raw["charter_path"]
 
 
-def _resolve_writing_guidelines_path() -> Path:
-    """Read writing_guidelines_path from config YAML."""
-    raw = OmegaConf.load(CONFIG_YAML_PATH)
-    return PROJECT_ROOT / raw["writing_guidelines_path"]
-
-
 CHARTER_PATH = _resolve_charter_path()
-WRITING_GUIDELINES_PATH = _resolve_writing_guidelines_path()
 
 
 def load_charter_element_ids() -> list[str]:
     """Extract all element IDs (X.Y) from the charter, in order.
 
     Supports both [X.Y] inline references (SwissAI Charter style)
-    and ### X.Y headings (ModelRaising Constitution style).
+    and ### X.Y headings (ModelRaising Specification style).
     """
     charter = CHARTER_PATH.read_text(encoding="utf-8")
     inline = re.findall(r"\[(\d+\.\d+)\]", charter)
@@ -249,8 +242,6 @@ class CharterScaleConfig:
     reflection_prompt: str = "generator_reflection_v1.md"
     refusal_reflection_prompt: str = "generator_reflection_refusal_v2.md"
     preflection_prompt: str = "generator_preflection_v6.md"
-    summary_prompt: str = "summary_v7.md"
-    rephrasing_safelm_prompt: str = "rephrasing_safelm_v1.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False
     json_mode: bool = False
@@ -259,52 +250,10 @@ class CharterScaleConfig:
     max_concurrent_requests: int = 2048
     save_batch_size: int = 200
     progress_interval: int = 1000
-    canary_seed: int = 42
-    reflection_seed: int = 42  # independent from canary_seed
-    disable_canaries: bool = False  # True = inject no canaries (clean eval gold)
+    reflection_seed: int = 42
     max_retries_per_doc: int = 5
     sglang: SglangConfig = field(default_factory=SglangConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
-
-
-@dataclass
-class SftSingleTurnConfig:
-    """Charter-aware paired single-turn SFT generation on Alps SLURM."""
-    output_dir: str = ""
-    prompt_version: str = "v6"
-    generator_alias: str = "qwen3.5-35b-a3b"
-    total_rows: int = 50000
-    seed: int = 42
-    rows_per_task: int = 5000
-    max_concurrent_requests: int = 1024
-    save_batch_size: int = 200
-    progress_interval: int = 500
-    max_retries_per_doc: int = 5
-    hf_repo_id: str = ""
-    sglang: SglangConfig = field(default_factory=SglangConfig)
-    slurm: SlurmConfig = field(default_factory=SlurmConfig)
-
-
-@dataclass
-class SftMultiTurnConfig:
-    """Multi-turn charter-aware paired SFT via self-play.
-
-    Deliberately omits sglang/slurm blocks — at runtime, multi_turn submit
-    reuses cfg.sft.single_turn.{sglang,slurm} (same server config).
-    """
-    output_dir: str = ""
-    base_prompt_version: str = "v11"
-    addendum_version: str = "mt_v1"
-    generator_alias: str = "qwen3.5-35b-a3b"
-    total_rows: int = 50000
-    seed: int = 43
-    rows_per_task: int = 5000
-    max_concurrent_requests: int = 512
-    save_batch_size: int = 100
-    progress_interval: int = 200
-    max_retries_per_doc: int = 3
-    max_turns: int = 5
-    hf_repo_id: str = ""
 
 
 @dataclass
@@ -316,35 +265,12 @@ class CharterConfig:
 
 
 @dataclass
-class SftConfig:
-    single_turn: SftSingleTurnConfig = field(default_factory=SftSingleTurnConfig)
-    multi_turn: SftMultiTurnConfig = field(default_factory=SftMultiTurnConfig)
-
-
-@dataclass
-class SummariesConfig:
-    """Baseline summary annotation: prompt-only, hand-tuned interactively."""
-    model: ModelConfig = field(default_factory=ModelConfig)
-    prompt_version: str = "v1"
-    api_max_tokens: int = 256          # request cap (covers 128-token output + slack)
-    input_max_tokens: int = 1920       # source text truncation before generation
-    summary_token_budget: int = 128    # post-hoc truncation of model output
-    max_concurrent: int = 10
-    n_samples: int = 20
-    seed: int = 42
-    output_dir: str = "data/pipeline/summaries"
-
-
-@dataclass
 class AppConfig:
     charter_path: str = MISSING
-    writing_guidelines_path: str = MISSING
     data_dir: str = "data"
     max_tokens: int = 3840
     api_keys: dict[str, str] = field(default_factory=dict)
     charter: CharterConfig = field(default_factory=CharterConfig)
-    sft: SftConfig = field(default_factory=SftConfig)
-    summaries: SummariesConfig = field(default_factory=SummariesConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 

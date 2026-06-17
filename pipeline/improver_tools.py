@@ -1437,7 +1437,6 @@ def cmd_test_generate(
     """
     from pipeline.config import (
         CHARTER_PATH,
-        WRITING_GUIDELINES_PATH,
         load_config,
         resolve_generator_model,
     )
@@ -1453,7 +1452,6 @@ def cmd_test_generate(
         endpoint, cfg.charter.improve.iteration.max_concurrent, api_keys=cfg.api_keys
     )
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
     runs = load_runs()
     assert runs, "No iterations yet — run at least one iteration first"
@@ -1514,7 +1512,6 @@ def cmd_test_generate(
         client=client,
         semaphore=semaphore,
         save=False,
-        writing_guidelines_text=writing_guidelines_text,
         json_mode=gen_model_cfg.json_mode,
         completion_max_tokens=gen_model_cfg.completion_max_tokens,
         context_window_tokens=gen_model_cfg.context_window_tokens,
@@ -1681,10 +1678,9 @@ def cmd_test_judge(
             refl_prompt or prefl_prompt
         ), f"No judge_reflection or judge_preflection prompt found for {prompt}"
 
-    from pipeline.config import CHARTER_PATH, WRITING_GUIDELINES_PATH
+    from pipeline.config import CHARTER_PATH
 
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
     prompt_label = (
         f"refl={refl_prompt.name if refl_prompt else 'none'} "
@@ -1706,7 +1702,6 @@ def cmd_test_judge(
         save=False,
         floor_threshold=cfg.charter.improve.scoring.floor_threshold,
         charter_text=charter_text,
-        writing_guidelines_text=writing_guidelines_text,
         completion_max_tokens=jdg_model_cfg.completion_max_tokens,
         context_window_tokens=jdg_model_cfg.context_window_tokens,
         mode=mode,

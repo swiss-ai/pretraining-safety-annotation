@@ -189,13 +189,10 @@ class _ExclusiveSlurmExecutor:
 
 def cmd_submit(args, overrides):
     """Submit a generation run as a SLURM job array."""
-    import hashlib
-
     from pipeline.charter.scale.reader import SidecarReader
     from pipeline.charter.scale.generate import AnnotationGenerator
     from pipeline.charter.scale.runs import get_run
     from pipeline.charter.scale.sidecar import sidecar_fingerprint as _sidecar_fingerprint
-    from pipeline.charter.scale.canaries import CANARIES_PATH, pretraining_canaries
 
     cfg = load_config(overrides)
     run_name = args.run
@@ -221,9 +218,7 @@ def cmd_submit(args, overrides):
     prompt_field_by_type = {
         "reflection":         "reflection_prompt",
         "preflection":        "preflection_prompt",
-        "summary":            "summary_prompt",
         "refusal_reflection": "refusal_reflection_prompt",
-        "rephrasing_safelm":  "rephrasing_safelm_prompt",
     }
     active_prompt_field = prompt_field_by_type[run_def.prompt_type]
     active_prompt_filename = getattr(cfg.charter.scale, active_prompt_field)
@@ -270,16 +265,7 @@ def cmd_submit(args, overrides):
                     "reflection_prompt": cfg.charter.scale.reflection_prompt,
                     "refusal_reflection_prompt": cfg.charter.scale.refusal_reflection_prompt,
                     "preflection_prompt": cfg.charter.scale.preflection_prompt,
-                    "summary_prompt": cfg.charter.scale.summary_prompt,
-                    "rephrasing_safelm_prompt": cfg.charter.scale.rephrasing_safelm_prompt,
                     "hf_slug": cfg.charter.scale.sglang.hf_slug,
-                    # Canary policy provenance: pins which quirks were eligible for
-                    # injection and the exact canaries.yaml content, so a later edit
-                    # can't obscure what this run actually used.
-                    "canary_seed": cfg.charter.scale.canary_seed,
-                    "disable_canaries": cfg.charter.scale.disable_canaries,
-                    "pretraining_canary_ids": [c["id"] for c in pretraining_canaries()],
-                    "canaries_sha256": hashlib.sha256(CANARIES_PATH.read_bytes()).hexdigest(),
                 },
                 f,
                 indent=2,
@@ -301,9 +287,7 @@ def cmd_submit(args, overrides):
             save_batch_size=cfg.charter.scale.save_batch_size,
             thinking=cfg.charter.scale.thinking,
             json_mode=cfg.charter.scale.json_mode,
-            canary_seed=cfg.charter.scale.canary_seed,
             reflection_seed=cfg.charter.scale.reflection_seed,
-            disable_canaries=cfg.charter.scale.disable_canaries,
             max_retries_per_doc=cfg.charter.scale.max_retries_per_doc,
             progress_interval=cfg.charter.scale.progress_interval,
             max_text_tokens=cfg.max_tokens,

@@ -19,7 +19,6 @@ from typing import Iterable
 from pipeline.api import make_api_client
 from pipeline.config import (
     CHARTER_PATH,
-    WRITING_GUIDELINES_PATH,
     AppConfig,
     CandidateModel,
     resolve_prompt_path,
@@ -180,10 +179,8 @@ def _generate_with_resume(
     client,
     max_concurrent: int,
     charter_text: str,
-    writing_guidelines_text: str,
     *,
     failures_name: str,
-    canary_rng_seed: int,
     failure_attempt_cap: int,
     store_reasoning: bool,
     generate_batch_fn=None,
@@ -229,12 +226,10 @@ def _generate_with_resume(
         client=client,
         semaphore=semaphore,
         save=False,
-        writing_guidelines_text=writing_guidelines_text,
         thinking=candidate.thinking,
         json_mode=candidate.json_mode,
         completion_max_tokens=candidate.completion_max_tokens,
         context_window_tokens=candidate.context_window_tokens,
-        canary_rng_seed=canary_rng_seed,
         on_failure=on_failure,
         on_result=_on_result,
         mode=mode,
@@ -256,7 +251,6 @@ def _judge_with_resume(
     client,
     max_concurrent: int,
     charter_text: str,
-    writing_guidelines_text: str,
     *,
     failures_name: str,
     accept_threshold: float,
@@ -317,7 +311,6 @@ def _judge_with_resume(
         semaphore=semaphore,
         save=False,
         charter_text=charter_text,
-        writing_guidelines_text=writing_guidelines_text,
         thinking=judge.thinking,
         completion_max_tokens=judge.completion_max_tokens,
         context_window_tokens=judge.context_window_tokens,
@@ -421,7 +414,6 @@ def run_generator_eval(
         logger.info("Gold judge: alias={} api_name={} endpoint={}", gold.alias, gold.api_name, judge_endpoint)
         client, sem = make_api_client(judge_endpoint, ge.max_concurrent)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
-        wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
         eval_mode = ge.mode or None  # "" -> None (both modes)
 
@@ -444,9 +436,7 @@ def run_generator_eval(
                     t_client,
                     per_cand,
                     charter,
-                    wg,
                     failures_name=_gen_failures_name(gen),
-                    canary_rng_seed=ge.seed,
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
                     mode=eval_mode,
@@ -472,7 +462,6 @@ def run_generator_eval(
                     client,
                     ge.max_concurrent,
                     charter,
-                    wg,
                     failures_name=_judge_failures_name(gold, gen),
                     accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                     failure_attempt_cap=ge.failure_attempt_cap,

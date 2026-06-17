@@ -16,9 +16,9 @@ charter.scale scales charter reflection generation from charter.improve's ~50-it
 
 Datatrove writes a completion marker (`completions/{rank:05d}`) only after `PipelineStep.run()` returns without exception. The save thread in `generate.py` **must be fully drained and fsynced before `run()` returns**. If `run()` returns before the save thread finishes, the completion marker would be written but data would be lost. The current code signals the save thread via `save_done.set()`, then `join(timeout=120)` waits for it.
 
-### Canary and Reflection Seeds Are Independent
+### Reflection Seed Determinism
 
-`canary_seed` controls which 10% of documents receive canary injections. `reflection_seed` controls where the reflection point falls in each document. These are independent so changing one doesn't affect the other. Both use deterministic RNG seeded with `f"{seed}_{doc_id}"`.
+`reflection_seed` controls where the reflection point falls in each document, via deterministic RNG seeded with `f"{seed}_{doc_id}"`. The same seed produces the same reflection points across runs.
 
 ### Sidecar Parquet is Read-Only Until Merge
 
@@ -31,7 +31,6 @@ The generation pipeline never modifies the sidecar parquet. It reads rows via `S
 | `reader.py` | Read row ranges from sidecar parquet | `SidecarReader.run()` |
 | `generate.py` | Concurrent API calls, retry, save to JSONL | `AnnotationGenerator.run()` |
 | `runs.py` | Define what to generate per run type | `RunDefinition`, `get_run()` |
-| `canaries.py` | Deterministic canary assignment | `assign_canary()` |
 | `merge.py` | Stream-merge JSONL results into parquet | `merge_shards()` |
 | `progress.py` | Count completed tasks and docs | `get_run_progress()` |
 | `__main__.py` | CLI + sglang env_command construction | `cmd_submit()`, `cmd_merge()` |
@@ -69,7 +68,7 @@ To add a new generation run:
 4. If the run uses an in-tree prompt (not under `data/pipeline/prompts/<alias>/`), set `prompt_source_dir` on the `RunDefinition`
 5. If the run emits non-string columns, add Arrow type metadata to `_COLUMN_META` in `merge.py`
 
-The `summaries` run (`pipeline/summaries/prompts/summary_v7.md` → `summary`/`summary_token_count` columns) is the canonical example of an in-tree-prompt, single-call annotation. The `reflections`/`preflections` runs cover the per-alias-prompt pattern.
+The `reflections`, `reflection_end`, `refusal_reflection`, and `preflections` runs cover the per-alias-prompt pattern (prompts under `data/pipeline/prompts/<alias>/`). Use `prompt_source_dir` on the `RunDefinition` only for in-tree, model-agnostic prompts.
 
 ## sglang Co-location Details
 
@@ -111,13 +110,12 @@ When `parse_generation` fails, the raw model response is saved to `failures.json
 Tests are in `tests/test_charter_scale_*.py`. They use temporary parquet files and don't require a running sglang server or SLURM. Run with:
 
 ```bash
-uv run pytest tests/test_charter_scale_canaries.py tests/test_charter_scale_runs.py \
+uv run pytest tests/test_charter_scale_runs.py \
               tests/test_charter_scale_reader.py tests/test_charter_scale_merge.py -v
 ```
 
 Key test coverage:
-- **Canaries**: determinism, 10% rate, uniform distribution across Q1-Q10
-- **Runs**: message construction, reflection point independence from canary seed, charter element extraction
+- **Runs**: message construction, reflection point determinism, charter element extraction
 - **Reader**: row-group seeking, cross-group reads, last-rank clamping, empty rank
 - **Merge**: column addition, placeholder rename, missing row handling, schema preservation
 

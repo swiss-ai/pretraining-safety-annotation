@@ -25,8 +25,6 @@ dotenv.load_dotenv()
 
 import openai
 
-import yaml
-
 from pipeline.api import (
     DEFAULT_MAX_TOKENS,
     api_call,
@@ -38,8 +36,6 @@ from pipeline.api import (
 from pipeline.config import (
     CHARTER_PATH,
     PIPELINE_DATA_DIR,
-    PROJECT_ROOT,
-    WRITING_GUIDELINES_PATH,
     AppConfig,
     ModelConfig,
     load_config,
@@ -72,22 +68,12 @@ from pipeline.charter.improve.storage import (
 from pipeline.log import logger
 from pipeline.storage import compute_item_id
 
-CANARY_RATE = 0.10
-
-CANARIES_PATH = PROJECT_ROOT / "resources" / "canaries.yaml"
-
 # Backwards-compatible aliases for the private names used internally.
 _REFLECTION_TASK = REFLECTION_TASK
 _PREFLECTION_TASK = PREFLECTION_TASK
 _FIELD_ALIASES = FIELD_ALIASES
 _GEN_TEXT_FIELDS = GEN_TEXT_FIELDS
 _parse_generation = parse_generation
-
-
-def _load_canaries() -> list[dict]:
-    """Load canary quirks from resources/canaries.yaml."""
-    with open(CANARIES_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f)["canaries"]
 
 
 _REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
@@ -346,12 +332,10 @@ def generate_batch(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     save: bool = True,
-    writing_guidelines_text: str = "",
     thinking: bool = False,
     json_mode: bool = False,
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
-    canary_rng_seed: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
     on_result: Callable[[dict], None] | None = None,
     mode: str | None = None,
@@ -390,9 +374,7 @@ def generate_batch(
 
     def _load_system_prompt(path: Path) -> str:
         template = path.read_text(encoding="utf-8")
-        return template.replace("{charter}", charter_text).replace(
-            "{writing_guidelines}", writing_guidelines_text
-        )
+        return template.replace("{charter}", charter_text)
 
     refl_system_prompt = (
         _load_system_prompt(refl_prompt_path)
@@ -404,32 +386,14 @@ def generate_batch(
         if prefl_prompt_path and mode != "reflection"
         else None
     )
-    canaries = _load_canaries()
 
     async def _call_reflection(
         item: dict,
-    ) -> tuple[dict, str, str | None, dict, str | None] | None:
-        """Make the reflection API call. Returns (parsed, raw, reasoning, usage, canary_id) or None."""
+    ) -> tuple[dict, str, str | None, dict] | None:
+        """Make the reflection API call. Returns (parsed, raw, reasoning, usage) or None."""
         rp = item["reflection_point"]
         context_before = item["text"][:rp]
         refl_user = f"## Full Text\n\n{context_before}"
-
-        canary_id = None
-        if canary_rng_seed is not None:
-            item_rng = random.Random(f"{canary_rng_seed}_{item['item_id']}_canary_v1")
-            inject = item_rng.random() < CANARY_RATE
-            canary = item_rng.choice(canaries) if inject else None
-        else:
-            inject = random.random() < CANARY_RATE
-            canary = random.choice(canaries) if inject else None
-        if inject:
-            canary_id = canary["id"]
-            refl_user += (
-                f"\n\n## Canary Injection\n\n"
-                f"This sample has a canary injection. Apply to BOTH reflections.\n"
-                f"- For reflection_1p: {canary['instruction']}\n"
-                f"- For reflection_3p: {canary['instruction_3p']}"
-            )
         refl_user += _REFLECTION_TASK
         messages = [
             {"role": "system", "content": refl_system_prompt},
@@ -486,7 +450,7 @@ def generate_batch(
                     )
                 )
             return None
-        return parsed, raw, reasoning, usage, canary_id
+        return parsed, raw, reasoning, usage
 
     async def _call_preflection(
         item: dict,
@@ -582,7 +546,7 @@ def generate_batch(
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         # Unpack results
-        refl_parsed, refl_raw, refl_reasoning, refl_usage, canary_id = (
+        refl_parsed, refl_raw, refl_reasoning, refl_usage = (
             refl_result
             if refl_result
             else (
@@ -590,7 +554,6 @@ def generate_batch(
                 None,
                 None,
                 {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0},
-                None,
             )
         )
         prefl_parsed, prefl_raw, prefl_reasoning, prefl_usage = (
@@ -674,7 +637,6 @@ def generate_batch(
             "reasoning_tokens": refl_usage["reasoning_tokens"]
             + prefl_usage["reasoning_tokens"],
             "safety_score": item.get("safety_score"),
-            "canary": canary_id,
         }
         if save:
             save_item(record)
@@ -703,9 +665,7 @@ async def _judge_mode(
     client: openai.AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     charter_text: str = "",
-    writing_guidelines_text: str = "",
     thinking: bool = False,
-    canaries: list[dict] | None = None,
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
 ) -> tuple[dict, str, str | None, dict]:
@@ -715,11 +675,9 @@ async def _judge_mode(
 
     Returns ``(parsed, raw_response, reasoning, usage)``.
     """
-    system_prompt = (
-        prompt_template.replace("{accept_threshold}", str(accept_threshold))
-        .replace("{charter}", charter_text)
-        .replace("{writing_guidelines}", writing_guidelines_text)
-    )
+    system_prompt = prompt_template.replace(
+        "{accept_threshold}", str(accept_threshold)
+    ).replace("{charter}", charter_text)
 
     # Legacy fallback for reflection items that only stored the combined
     # `reflection` column. New preflection fields have no legacy equivalent —
@@ -750,20 +708,6 @@ async def _judge_mode(
     user_content = f"## Source Text\n\n{source_text}\n\n---\n\n"
     for v in voices:
         user_content += f"## {v}\n\n{voice_content[v]}\n\n"
-
-    # Canary notice — reflections only
-    if mode == "reflection":
-        canary_id = item.get("canary")
-        if canary_id and canaries:
-            canary = next((c for c in canaries if c["id"] == canary_id), None)
-            if canary:
-                user_content += (
-                    f"\n\n## Canary Notice\n\n"
-                    f"The reflections have a canary injection (quirk: {canary['quirk']}, "
-                    f"value: {canary['value']}). The reflections were instructed to include "
-                    f"this. Do NOT penalize the reflections for including this canary — "
-                    f"judge the rest of each reflection on its own merits."
-                )
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -798,7 +742,6 @@ def judge_batch(
     save: bool = True,
     floor_threshold: int = 2,
     charter_text: str = "",
-    writing_guidelines_text: str = "",
     thinking: bool = False,
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
@@ -836,7 +779,6 @@ def judge_batch(
 
     refl_prompt_name = refl_prompt_path.name if refl_prompt_path else None
     prefl_prompt_name = prefl_prompt_path.name if prefl_prompt_path else None
-    canaries = _load_canaries()
 
     async def _judge_one_mode(
         item: dict, m: str
@@ -853,9 +795,7 @@ def judge_batch(
                 client,
                 semaphore,
                 charter_text=charter_text,
-                writing_guidelines_text=writing_guidelines_text,
                 thinking=thinking,
-                canaries=canaries,
                 completion_max_tokens=completion_max_tokens,
                 context_window_tokens=context_window_tokens,
             )
@@ -1097,7 +1037,6 @@ def _run_one_pair_inner(
         )
 
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
     gen_refl_prompt = (
         resolve_prompt_path("generator_reflection_latest.md", alias=gen_alias)
@@ -1131,7 +1070,6 @@ def _run_one_pair_inner(
         iteration,
         gen_client,
         gen_sem,
-        writing_guidelines_text=writing_guidelines_text,
         thinking=gen_model_cfg.thinking,
         json_mode=gen_model_cfg.json_mode,
         completion_max_tokens=gen_model_cfg.completion_max_tokens,
@@ -1150,7 +1088,6 @@ def _run_one_pair_inner(
         judge_sem,
         floor_threshold=cfg.charter.improve.scoring.floor_threshold,
         charter_text=charter_text,
-        writing_guidelines_text=writing_guidelines_text,
         thinking=judge_model_cfg.thinking,
         completion_max_tokens=judge_model_cfg.completion_max_tokens,
         context_window_tokens=judge_model_cfg.context_window_tokens,
@@ -1444,7 +1381,6 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
 
     # Read shared prompt context once.
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-    writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
     # Cache prompt template reads (one per judge_v*.md, not per work item).
     prompt_cache: dict[Path, str] = {}
@@ -1500,7 +1436,6 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
                         clients[endpoint],
                         semaphore,
                         charter_text=charter_text,
-                        writing_guidelines_text=writing_guidelines_text,
                         thinking=model_cfg.thinking,
                         completion_max_tokens=model_cfg.completion_max_tokens,
                         context_window_tokens=model_cfg.context_window_tokens,
@@ -1517,7 +1452,6 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
                         clients[endpoint],
                         semaphore,
                         charter_text=charter_text,
-                        writing_guidelines_text=writing_guidelines_text,
                         thinking=model_cfg.thinking,
                         completion_max_tokens=model_cfg.completion_max_tokens,
                         context_window_tokens=model_cfg.context_window_tokens,

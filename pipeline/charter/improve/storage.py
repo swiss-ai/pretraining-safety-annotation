@@ -204,8 +204,8 @@ def save_item(record: dict) -> None:
             preflection_charter_elements, reflection_charter_elements,
             raw_response, reasoning, latency_ms,
             timestamp, judgment, input_tokens, output_tokens, reasoning_tokens,
-            safety_score, canary)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            safety_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record["item_id"],
             record["iteration"],
@@ -237,7 +237,6 @@ def save_item(record: dict) -> None:
             record.get("output_tokens"),
             record.get("reasoning_tokens"),
             record.get("safety_score"),
-            record.get("canary"),
         ),
     )
     conn.commit()

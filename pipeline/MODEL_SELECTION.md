@@ -214,5 +214,4 @@ uv run python pipeline/assets/model_selection/make_plots.py
 | Ranking logic (`mean_aggregate`, accept-by-safety, vs-human) | `pipeline/charter/eval/rank.py` |
 | Throughput and GPU-h benchmarks and SGLang tuning | `throughput_estimations/README.md` (see git history) |
 | Frozen winning prompts | `final_prompts/qwen3.5-35b-a3b/` |
-| Scale-up runs and costs | `pipeline/charter/scale/EXPERIMENTS.md` |
 | Figure-generation script | `pipeline/assets/model_selection/make_plots.py` |

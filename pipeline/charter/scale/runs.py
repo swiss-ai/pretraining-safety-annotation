@@ -20,13 +20,10 @@ from pipeline.generation import (
     PREFLECTION_TASK,
     REFLECTION_TASK,
     REFUSAL_REFLECTION_TASK,
-    parse_generation,
 )
-from pipeline.charter.scale.canaries import assign_canary
 from pipeline.tokenizer import (
     compute_reflection_point_end,
     compute_reflection_point_tokens,
-    truncate_and_count,
 )
 
 SelectorFn = Callable[..., tuple[int, int]]
@@ -37,25 +34,21 @@ class RunDefinition:
     """Defines a generation run: what to generate and how to parse it."""
 
     name: str
-    prompt_type: str  # "reflection", "preflection", or "summary" — selects the prompt file
+    prompt_type: str  # "reflection" or "preflection" — selects the prompt file
     output_columns: list[str]
     build_calls: Callable
-    # (doc_text, doc_id, system_prompt, canaries, canary_seed,
-    #  reflection_seed) -> list[(messages, required_output_fields)]
+    # (doc_text, doc_id, system_prompt, reflection_seed, max_text_tokens)
+    #  -> list[(messages, required_output_fields, meta)]
     post_process: Callable
-    # (doc_id, doc_text, parsed_results_per_call, reflection_point,
-    #  canary) -> dict of column values
+    # (doc_id, doc_text, parsed_results_per_call, meta) -> dict of column values
     # Optional: override the default per-alias prompt directory. None = use
     # FINAL_PROMPTS_DIR / generator_alias / prompt_filename (reflections,
-    # preflections); set to a fixed Path for in-tree, model-agnostic prompts
-    # (summaries).
+    # preflections); set to a fixed Path for in-tree, model-agnostic prompts.
     prompt_source_dir: Path | None = None
     # Optional: name of a boolean column on the sidecar that must be True
-    # for a row to be processed. Used by rephrasing_safelm to skip docs that
-    # don't need recontextualization (is_bad=False, i.e. safety_score < 3).
-    # The skipped rows still occupy their global_row_idx slot — the merge
-    # step fills them with column defaults — so resume and merge-join
-    # semantics are unchanged.
+    # for a row to be processed. Skipped rows still occupy their
+    # global_row_idx slot — the merge step fills them with column defaults —
+    # so resume and merge-join semantics are unchanged.
     reader_filter_column: str | None = None
 
 
@@ -63,7 +56,7 @@ class RunDefinition:
 # reflections run  (partial text up to reflection point)
 # ---------------------------------------------------------------------------
 # The two reflection runs ("reflections" and "reflection_end") share message
-# construction, canary assignment, and parsing.  They differ in
+# construction and parsing.  They differ in
 #   (a) which selector chooses the reflection point
 #   (b) the names of the output columns (so both can coexist in the merged
 #       sidecar as a paired ablation).
@@ -74,7 +67,6 @@ _REFLECTIONS_COLS_DEFAULT: dict[str, str] = {k: k for k in (
     "reflection_position",
     "reflection_token_index",
     "charter_reflection",
-    "canary_type",
 )}
 
 _REFLECTIONS_COLS_END: dict[str, str] = {
@@ -83,7 +75,6 @@ _REFLECTIONS_COLS_END: dict[str, str] = {
     "reflection_position":    "reflection_end_position",
     "reflection_token_index": "reflection_end_token_index",
     "charter_reflection":     "charter_reflection_end",
-    "canary_type":            "canary_type_end",
 }
 
 _REFLECTIONS_COLUMNS = list(_REFLECTIONS_COLS_DEFAULT.values())
@@ -94,7 +85,6 @@ _REFUSAL_REFLECTION_COLS: dict[str, str] = {
     "reflection_position":    "refusal_reflection_position",
     "reflection_token_index": "refusal_reflection_token_index",
     "charter_reflection":     "charter_refusal_reflection",
-    "canary_type":            "canary_type_refusal",
 }
 _REFUSAL_REFLECTION_COLUMNS = list(_REFUSAL_REFLECTION_COLS.values())
 
@@ -103,8 +93,6 @@ def _build_reflection_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     max_text_tokens: int,
     *,
@@ -122,16 +110,7 @@ def _build_reflection_calls(
 
     context_before = doc_text[:rp_char]
 
-    canary = assign_canary(doc_id, canary_seed, canaries)
-
     refl_user = f"## Full Text\n\n{context_before}"
-    if canary is not None:
-        refl_user += (
-            f"\n\n## Canary Injection\n\n"
-            f"This sample has a canary injection. Apply to BOTH reflections.\n"
-            f"- For reflection_1p: {canary['instruction']}\n"
-            f"- For reflection_3p: {canary['instruction_3p']}"
-        )
     refl_user += REFLECTION_TASK
 
     refl_messages = [
@@ -142,7 +121,6 @@ def _build_reflection_calls(
     meta = {
         "reflection_point": rp_char,
         "reflection_token_index": rp_tok,
-        "canary": canary,
     }
 
     return [
@@ -167,15 +145,12 @@ def _make_reflection_post_process(columns: dict[str, str]) -> Callable:
             + (refl_parsed.get("reflection_3p") or "")
         )
 
-        canary = meta["canary"]
-
         return {
             columns["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
             columns["reflection_3p"]:          refl_parsed.get("reflection_3p") or "",
             columns["reflection_position"]:    meta["reflection_point"],
             columns["reflection_token_index"]: meta["reflection_token_index"],
             columns["charter_reflection"]:     json.dumps(charter_reflection),
-            columns["canary_type"]:            canary["id"] if canary is not None else None,
         }
 
     return _post_process
@@ -185,8 +160,6 @@ def _reflections_build_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     max_text_tokens: int = 1920,
 ) -> list[tuple[list[dict], set[str], dict]]:
@@ -194,8 +167,6 @@ def _reflections_build_calls(
         doc_text=doc_text,
         doc_id=doc_id,
         system_prompt=system_prompt,
-        canaries=canaries,
-        canary_seed=canary_seed,
         reflection_seed=reflection_seed,
         max_text_tokens=max_text_tokens,
         selector=compute_reflection_point_tokens,
@@ -206,8 +177,6 @@ def _reflection_end_build_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     max_text_tokens: int = 1920,
 ) -> list[tuple[list[dict], set[str], dict]]:
@@ -215,8 +184,6 @@ def _reflection_end_build_calls(
         doc_text=doc_text,
         doc_id=doc_id,
         system_prompt=system_prompt,
-        canaries=canaries,
-        canary_seed=canary_seed,
         reflection_seed=reflection_seed,
         max_text_tokens=max_text_tokens,
         selector=compute_reflection_point_end,
@@ -231,29 +198,20 @@ def _refusal_reflection_build_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     max_text_tokens: int = 1920,
 ) -> list[tuple[list[dict], set[str], dict]]:
-    """1p-only refusal reflection. Same selector + canary scheme as the
-    reflections run (row-aligned paired ablation), but asks the model only
-    for analysis + reflection_1p and strips the 3p canary instruction line.
+    """1p-only refusal reflection. Same selector as the reflections run
+    (row-aligned paired ablation), but asks the model only for analysis +
+    reflection_1p.
     """
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
     rp_char, rp_tok = compute_reflection_point_tokens(
         doc_text, rp_rng, max_tokens=max_text_tokens
     )
     context_before = doc_text[:rp_char]
-    canary = assign_canary(doc_id, canary_seed, canaries)
 
     refl_user = f"## Full Text\n\n{context_before}"
-    if canary is not None:
-        refl_user += (
-            f"\n\n## Canary Injection\n\n"
-            f"This sample has a canary injection. Apply to the reflection.\n"
-            f"- For reflection_1p: {canary['instruction']}"
-        )
     refl_user += REFUSAL_REFLECTION_TASK
 
     messages = [
@@ -263,7 +221,6 @@ def _refusal_reflection_build_calls(
     meta = {
         "reflection_point": rp_char,
         "reflection_token_index": rp_tok,
-        "canary": canary,
     }
     return [(messages, {"analysis", "reflection_1p"}, meta)]
 
@@ -278,13 +235,11 @@ def _refusal_reflection_post_process(
     charter_reflection = extract_charter_elements(
         refl_parsed.get("reflection_1p") or ""
     )
-    canary = meta["canary"]
     return {
         _REFUSAL_REFLECTION_COLS["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
         _REFUSAL_REFLECTION_COLS["reflection_position"]:    meta["reflection_point"],
         _REFUSAL_REFLECTION_COLS["reflection_token_index"]: meta["reflection_token_index"],
         _REFUSAL_REFLECTION_COLS["charter_reflection"]:     json.dumps(charter_reflection),
-        _REFUSAL_REFLECTION_COLS["canary_type"]:            canary["id"] if canary is not None else None,
     }
 
 
@@ -300,8 +255,6 @@ def _preflections_build_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     max_text_tokens: int = 1920,
 ) -> list[tuple[list[dict], set[str], dict]]:
@@ -355,134 +308,6 @@ def _preflections_post_process(
 
 
 # ---------------------------------------------------------------------------
-# summaries run  (full text, single 2-4 sentence summary, 128-token cap)
-# ---------------------------------------------------------------------------
-
-_SUMMARIES_COLUMNS = ["summary", "summary_token_count"]
-_SUMMARY_TOKEN_BUDGET = 128
-_SUMMARIES_PROMPT_DIR = Path(__file__).resolve().parents[2] / "summaries" / "prompts"
-
-
-def _summaries_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    """Single API call: model summarises the clipped doc.
-
-    Canaries and seeds are accepted for interface parity with the other
-    runs but deliberately unused — the baseline annotation track is the
-    un-charter-cited control, so canary injection would defeat its
-    purpose. The clip end is computed via ``compute_reflection_point_end``
-    so the summary covers exactly the same span the tokenizer will see at
-    train time; the function's ``rng`` arg is unused and deterministic.
-    """
-    end_char, _ = compute_reflection_point_end(
-        doc_text, random.Random(), max_tokens=max_text_tokens
-    )
-    clipped_text = doc_text[:end_char]
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"## Text\n\n{clipped_text}"},
-    ]
-
-    return [(messages, {"summary"}, {})]
-
-
-def _summaries_post_process(
-    doc_id: str,
-    doc_text: str,
-    parsed_results: list[dict],
-    meta: dict,
-) -> dict:
-    """Truncate the model summary to 128 SmolLM2 tokens, record the count."""
-    (parsed,) = parsed_results
-    raw_summary = parsed.get("summary") or ""
-    truncated, n_tokens = truncate_and_count(raw_summary, _SUMMARY_TOKEN_BUDGET)
-    return {
-        "summary": truncated,
-        "summary_token_count": n_tokens,
-    }
-
-
-# ---------------------------------------------------------------------------
-# rephrasing_safelm run  (SafeLM-style synthetic recontextualization)
-# ---------------------------------------------------------------------------
-# Reproduces Maini et al. (arXiv 2504.16980 §3.2): rewrite each doc as
-# middle-school educational content using one of 7 style templates,
-# sampled uniformly at random per doc. Output is raw text (no JSON
-# wrapping) — the templates ask for creative formats (podcast scripts,
-# conversations) that don't combine well with structured output.
-
-_REPHRASING_SAFELM_COLUMNS = ["rephrased", "template_id"]
-_REPHRASING_SAFELM_PROMPT_DIR = (
-    Path(__file__).resolve().parents[2] / "rephrasing_safelm" / "prompts"
-)
-
-
-def _rephrasing_safelm_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    """Single API call: rewrite the clipped doc using one of 7 style templates.
-
-    Canaries are accepted for interface parity with the reflections run but
-    deliberately unused — same rationale as summaries.
-
-    ``system_prompt`` is the *composite* template file (all 7 templates
-    delimited by ``<!-- TEMPLATE: name -->``). build_calls picks one per doc
-    via ``select_template`` and sends only that template as the system
-    message.
-
-    ``required_fields=set()`` signals raw-text mode to the AnnotationGenerator
-    — it skips ``parse_generation`` and routes the raw model output through
-    as ``{"_raw": text}``.
-    """
-    from pipeline.rephrasing_safelm.templates import parse_templates, select_template
-
-    end_char, _ = compute_reflection_point_end(
-        doc_text, random.Random(), max_tokens=max_text_tokens
-    )
-    clipped_text = doc_text[:end_char]
-
-    templates = parse_templates(system_prompt)
-    template_id, template_text = select_template(templates, doc_id, reflection_seed)
-
-    messages = [
-        {"role": "system", "content": template_text},
-        {"role": "user", "content": f"## Text\n\n{clipped_text}"},
-    ]
-
-    meta = {"template_id": template_id}
-
-    return [(messages, set(), meta)]
-
-
-def _rephrasing_safelm_post_process(
-    doc_id: str,
-    doc_text: str,
-    parsed_results: list[dict],
-    meta: dict,
-) -> dict:
-    """Pass the raw rephrasal text through; record which template was used."""
-    (parsed,) = parsed_results
-    return {
-        "rephrased": parsed.get("_raw") or "",
-        "template_id": meta["template_id"],
-    }
-
-
-# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -515,27 +340,6 @@ RUNS: dict[str, RunDefinition] = {
         build_calls=_preflections_build_calls,
         post_process=_preflections_post_process,
     ),
-    "summaries": RunDefinition(
-        name="summaries",
-        prompt_type="summary",
-        output_columns=_SUMMARIES_COLUMNS,
-        build_calls=_summaries_build_calls,
-        post_process=_summaries_post_process,
-        prompt_source_dir=_SUMMARIES_PROMPT_DIR,
-    ),
-    "rephrasing_safelm": RunDefinition(
-        name="rephrasing_safelm",
-        prompt_type="rephrasing_safelm",
-        output_columns=_REPHRASING_SAFELM_COLUMNS,
-        build_calls=_rephrasing_safelm_build_calls,
-        post_process=_rephrasing_safelm_post_process,
-        prompt_source_dir=_REPHRASING_SAFELM_PROMPT_DIR,
-        # SafeLM is designed for unsafe docs only. is_bad ≡ (safety_score ≥ 3),
-        # which is the gate the paper targets. Skipping is_bad=False docs (~48%
-        # of the corpus) avoids the over-sanitization failure mode observed
-        # when the model is asked to recontextualize benign content.
-        reader_filter_column="is_bad",
-    ),
 }
 
 # Aliases map variant names to a base run. The variant gets its own output
@@ -543,9 +347,7 @@ RUNS: dict[str, RunDefinition] = {
 RUN_ALIASES: dict[str, str] = {
     "reflections_test": "reflections",
     "preflections_test": "preflections",
-    "summaries_test": "summaries",
     "refusal_reflection_test": "refusal_reflection",
-    "rephrasing_safelm_test": "rephrasing_safelm",
     # Production full-scale reflections run (own output dir, canonical columns).
     "reflection_full": "reflections",
 }

@@ -30,7 +30,7 @@ The aggregate is the mean across ALL (voice/field, dimension) scores for that mo
 Floor rule: any dimension score ≤ 2 in any voice/field triggers reject regardless of aggregate.
 
 Items also carry `is_gold` (stable across iterations, used by `diff`), `subset` (data source),
-`safety_score`, and `canary` (canary id or null). Each mode has its own judge prompt and its
+and `safety_score`. Each mode has its own judge prompt and its
 own accept/reject decision — they are independently optimizable.
 
 **Architectural guarantee — reflections cannot foreshadow**: the pipeline issues TWO
@@ -139,22 +139,6 @@ statistics (later in this prompt) to find which apply to the current state, then
 - **Penalizing valid "all good" annotations** on benign texts (false negative pattern)
 - **Padding to fill the 128-token ceiling**: low-density output that uses the budget without earning it
 </known_failure_modes>
-
-<canary_protocol>
-~10% of items receive a canary injection — a quirk (a name, quote, tool, or affinity) the
-generator weaves into the reflection only (never the preflection). Definitions live in
-`resources/canaries.yaml`. The judge IS informed about canaries via the user message and
-explicitly told NOT to penalize them.
-
-Canaries are FACTUAL injections, not tone shifts. They primarily affect SPECIFICITY (the
-canary inserts a non-text-derived specific) and to a lesser extent VOICE_TONE (canary
-phrasings can read formulaic). When you compute miscalibration:
-- EXCLUDE canary items from SPECIFICITY miscalibration counts
-- INSPECT canary items separately when checking VOICE_TONE — do not assume noise = bug
-- KEEP canary items in RELEVANCE and CHARTER_GROUNDING analysis — canaries don't affect
-  these dimensions and excluding them only reduces sample size
-- A judge that penalizes the literal canary content is a configuration bug, not a rubric bug
-</canary_protocol>
 
 <analysis_checkpoint_protocol>
 Apply this checkpoint TWICE:

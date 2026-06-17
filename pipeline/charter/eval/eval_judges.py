@@ -10,7 +10,6 @@ from __future__ import annotations
 from pipeline.api import make_api_client
 from pipeline.config import (
     CHARTER_PATH,
-    WRITING_GUIDELINES_PATH,
     AppConfig,
     CandidateModel,
     resolve_prompt_path,
@@ -125,7 +124,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
             return make_api_client(ep, je.max_concurrent)
 
         charter = CHARTER_PATH.read_text(encoding="utf-8")
-        wg = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
 
         gen = je.generator
 
@@ -140,9 +138,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
             gen_client,
             je.max_concurrent,
             charter,
-            wg,
             failures_name=_gen_failures_name(gen),
-            canary_rng_seed=je.seed,
             failure_attempt_cap=je.failure_attempt_cap,
             store_reasoning=je.store_reasoning,
             generate_batch_fn=_local_generate_batch,
@@ -164,7 +160,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                 jud_client,
                 je.max_concurrent,
                 charter,
-                wg,
                 failures_name=_judge_failures_name(jud, gen),
                 accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                 failure_attempt_cap=je.failure_attempt_cap,
@@ -188,7 +183,6 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
                     jud_client,
                     je.max_concurrent,
                     charter,
-                    wg,
                     failures_name=_judge_reviewed_failures_name(jud),
                     accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                     failure_attempt_cap=je.failure_attempt_cap,

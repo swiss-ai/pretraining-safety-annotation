@@ -63,12 +63,8 @@ Respond with ONLY a JSON object:
 4. **Proportionality.** Brief for benign, thorough for problematic. Default is benign.
 5. **Specificity.** Name concrete claims, entities, or quotes. Generic reflections fail.
 6. **Voice pairing.** 1p/3p express same substance with same citations, different voice. If 1p cites [2.1], 3p must also cite [2.1].
-7. **No meta-language.** Never reference "the charter" or "the constitution" by name in the reflections. Discuss the text's content and its impact directly.
+7. **No meta-language.** Never reference "the charter" or "the specification" by name in the reflections. Discuss the text's content and its impact directly.
 
-## WRITING GUIDELINES
-
-{writing_guidelines}
-
-## VALUE CONSTITUTION
+## VALUE SPECIFICATION
 
 {charter}

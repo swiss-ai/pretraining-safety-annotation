@@ -12,7 +12,6 @@ from pipeline.dashboard.shared import (
     CHARTER_TEXT,
     REFLECTION_MARKER_ID,
     SAMPLE_ITEMS,
-    WRITING_GUIDELINES_TEXT,
     _COPY_JS_TEMPLATE,
     ensure_sample_loaded,
     extract_charter_elements,
@@ -108,15 +107,14 @@ def annotate_page():
                     )
                 ):
                     with ui.tabs().classes("w-full") as ref_tabs:
-                        ui.tab("constitution", label="Value Constitution")
-                        ui.tab("guidelines", label="Writing Guidelines")
+                        ui.tab("specification", label="Value Specification")
 
                     with (
-                        ui.tab_panels(ref_tabs, value="constitution")
+                        ui.tab_panels(ref_tabs, value="specification")
                         .classes("w-full")
                         .style("flex: 1; overflow: hidden;")
                     ):
-                        with ui.tab_panel("constitution").style(
+                        with ui.tab_panel("specification").style(
                             "height: 100%; overflow: hidden; display: flex; flex-direction: column;"
                         ):
                             with ui.row().classes("items-center gap-2 w-full"):
@@ -141,40 +139,13 @@ def annotate_page():
                                 )
 
                             ui.input(
-                                placeholder="Search constitution...",
+                                placeholder="Search specification...",
                                 on_change=on_search_change,
                             ).classes("w-full").props("dense clearable outlined")
 
                             charter_md = (
                                 ui.markdown(
                                     CHARTER_TEXT,
-                                    extras=["tables"],
-                                )
-                                .classes("text-body2")
-                                .style(
-                                    "flex: 1; overflow-y: auto; padding: 8px; line-height: 1.6;"
-                                )
-                                .props("sanitize=false")
-                            )
-
-                        with ui.tab_panel("guidelines").style(
-                            "height: 100%; overflow: hidden; display: flex; flex-direction: column;"
-                        ):
-
-                            def on_guidelines_search(e):
-                                query = e.value if e.value else ""
-                                guidelines_md.set_content(
-                                    highlight_charter_md(WRITING_GUIDELINES_TEXT, query)
-                                )
-
-                            ui.input(
-                                placeholder="Search guidelines...",
-                                on_change=on_guidelines_search,
-                            ).classes("w-full").props("dense clearable outlined")
-
-                            guidelines_md = (
-                                ui.markdown(
-                                    WRITING_GUIDELINES_TEXT,
                                     extras=["tables"],
                                 )
                                 .classes("text-body2")
@@ -243,7 +214,7 @@ def annotate_page():
                     )
 
                     ui.label(
-                        "Step 1 — Analysis: Read the text against the constitution. "
+                        "Step 1 — Analysis: Read the text against the specification. "
                         "List key elements: important claims, quality signals, notable features."
                     ).classes("text-caption text-grey-7")
                     analysis_input = (

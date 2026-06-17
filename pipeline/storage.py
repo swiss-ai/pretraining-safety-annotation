@@ -208,10 +208,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "safety_score" not in item_cols:
         conn.execute("ALTER TABLE items ADD COLUMN safety_score INTEGER")
 
-    # Add canary column to items (added 2026-03-26)
-    if "canary" not in item_cols:
-        conn.execute("ALTER TABLE items ADD COLUMN canary TEXT")
-
     # Split charter_elements into separate preflection/reflection sets (added 2026-04-09)
     # Old behaviour: a single `charter_elements` column populated by extracting
     # from `reflection_1p` only. New behaviour: two columns, each the union of
@@ -288,12 +284,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """)
         conn.execute("DROP TABLE judge_correlations_old")
         conn.commit()
-
-    # Legacy summary tables (added 2026-03-30, dropped 2026-05-15) — superseded
-    # by file-based JSONL flow under data/pipeline/summaries/runs/ driven by
-    # pipeline.summaries.iterate. Drop on next schema-init.
-    conn.execute("DROP TABLE IF EXISTS summary_items")
-    conn.execute("DROP TABLE IF EXISTS summary_runs")
 
     # Add per-mode review columns (added 2026-04-12)
     review_cols = {

@@ -15,16 +15,13 @@ The pipeline produces two annotation types over FineWeb / dolma3_mix text (see `
 - **Preflection** (full text → 4 third-person fields): `charter_summary`, `neutral`, `judgemental`, `idealisation`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_preflection_v8.md`.
 - **Reflection** (partial text up to a reading pause point → 2 voices): `reflection_1p`, `reflection_3p`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`.
 
-Both emit inline `[X.Y]` citations against `resources/ModelRaisingConstitution_v0.2.md`. Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
+Both emit inline `[X.Y]` citations against the Apertus Charter (`apertus-charter/charter-v1.0.md`, set as `charter_path` in `configs/config.yaml`; the charter lives in the `apertus-charter` git submodule). Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
 
-Two top-level groups under `pipeline/`:
+One top-level group under `pipeline/`:
 
 - **`pipeline/charter/`** — the charter-cited annotation pipeline. Four steps: `seed` (human annotation) → `improve` (generate+judge+improver loop) → `eval` (diverse-pool ranking) → `scale` (SLURM scale-up over the 102M-row sidecar). Same product (charter-cited preflection + reflection) across all four; the first three iterate the prompt, the fourth runs it for real.
-- **`pipeline/sft/`** — charter-aware SFT data generation, parallel to but downstream of `charter/`. Two variants: `single_turn` (paired cited/uncited responses) and `multi_turn` (multi-turn self-play).
 
-Baseline annotation tracks (`pipeline/summaries/`, future `pipeline/rephrase/`, …) live as siblings of `charter/` and `sft/` at the top of `pipeline/` — same one-level depth, deliberately thinner than the main `charter/` track. `summaries/` is just a generator + an `iterate` CLI for hand-tuning the prompt interactively (no automated improver/judge loop, no LLM-judge scoring).
-
-Subfolder READMEs (especially `pipeline/charter/scale/README.md`, `pipeline/sft/single_turn/README.md`, `pipeline/sft/multi_turn/README.md`, `pipeline/charter/scale/AGENTS.md`, and `preprocessing/*/README.md`) carry the detail — prefer updating those over bloating top-level docs.
+Subfolder READMEs (especially `pipeline/charter/scale/README.md` and `pipeline/charter/scale/AGENTS.md`) carry the detail — prefer updating those over bloating top-level docs.
 
 ## Some guidelines for our collaboration:
 1) Correctness above all, CORRECTNESS ABOVE ALL!
@@ -60,17 +57,14 @@ Subfolder READMEs (especially `pipeline/charter/scale/README.md`, `pipeline/sft/
 - IMPORTANT: When adding dependencies use `uv add` rather than editing the `pyproject.toml` file.
 
 ## SLURM job submission
-- Use `sbatch` with job scripts in the repo (see `preprocessing/*/` for examples)
 - Container-based execution via `srun --environment=env.toml`
 
-## SLURM job submission (charter.scale + sft.{single,multi}_turn)
-`charter.scale`, `sft.single_turn`, and `sft.multi_turn` use datatrove's `SlurmPipelineExecutor` for job submission:
+## SLURM job submission (charter.scale)
+`charter.scale` uses datatrove's `SlurmPipelineExecutor` for job submission:
 ```bash
 uv run python -m pipeline.charter.scale submit --run reflections
-uv run python -m pipeline.sft.single_turn submit
-uv run python -m pipeline.sft.multi_turn submit
 ```
-See `pipeline/charter/scale/README.md`, `pipeline/sft/single_turn/README.md`, and `pipeline/sft/multi_turn/README.md` for details.
+See `pipeline/charter/scale/README.md` for details.
 
 # Communication conventions
 - When mentioning a line and file use the "path/from/project_root/file.py:line_number" format

@@ -6,7 +6,7 @@ You receive a partial text (up to a reading pause point). Produce `analysis`, `r
 
 ## Stage 1 — Analysis
 
-Briefly analyse the text and decide whether any constitution sections are genuinely relevant. The analysis is free-form prose for your own reasoning — no bullet list of charter IDs is required here. Charter sections are extracted automatically from the `[X.Y]` citations you write inside the reflections themselves, so cite them there.
+Briefly analyse the text and decide whether any specification sections are genuinely relevant. The analysis is free-form prose for your own reasoning — no bullet list of charter IDs is required here. Charter sections are extracted automatically from the `[X.Y]` citations you write inside the reflections themselves, so cite them there.
 
 If nothing is relevant, say so briefly.
 
@@ -62,10 +62,6 @@ Respond in JSON with the following fields:
 
 When nothing is relevant, analysis should briefly describe the topic and confirm no charter concerns.
 
-## WRITING GUIDELINES
-
-{writing_guidelines}
-
-## VALUE CONSTITUTION
+## VALUE SPECIFICATION
 
 {charter}

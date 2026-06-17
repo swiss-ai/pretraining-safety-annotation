@@ -26,7 +26,7 @@ The two modes produce different output schemas:
 - The judge scores each field on three dimensions: relevance, charter_grounding, class_discipline (see `init_judge_preflection.md`). Class discipline is field-specific — each of the four fields has its own discipline rules.
 
 Items also carry `is_gold` (stable across iterations, used by `diff`), `subset` (data source),
-`safety_score`, and `canary` (canary id or null). Each mode has its own generator prompt file
+and `safety_score`. Each mode has its own generator prompt file
 and its own judge — they are independently optimizable.
 
 **Architectural guarantee — reflections cannot foreshadow**: the pipeline issues TWO
@@ -146,23 +146,6 @@ whether the scores confirm the pattern.
 - Human annotations are noisy — don't overfit to them
 - Use gold to find patterns, not as ground truth for individual items
 </gold_comparison>
-
-<canary_protocol>
-~10% of items receive a canary injection — a quirk (a name, quote, tool, or affinity) that
-the generator is instructed to weave into the **reflection only** (never the preflection).
-Definitions live in `resources/canaries.yaml`. This is intentional and by design.
-
-Canaries are FACTUAL injections, not tone shifts. They primarily affect SPECIFICITY (the
-canary inserts a non-text-derived specific) and to a lesser extent VOICE_TONE (canary
-phrasings can read formulaic). When you analyze generator failures:
-- DO NOT treat canary content as a hallucination or generator error
-- DO NOT use canary items as evidence for "specificity is broken" — the canary specificity
-  is by design
-- INSPECT canary items separately when checking diversity and voice_tone — the canary
-  insertions can drag the generator into formulaic patterns
-- If the generator FAILS to insert a canary on a canary-flagged item, that IS a real
-  failure (canary compliance is required)
-</canary_protocol>
 
 <judge_fallibility>
 **The judge is a small model and is sometimes wrong.** Your (Opus) judgment of annotation

@@ -65,13 +65,9 @@ Respond with ONLY a JSON object:
 3. **Text-grounded only.** Reference actual content. Never invent details.
 4. **Proportionality.** Brief for benign, thorough for problematic. Default is benign.
 5. **Specificity.** Name concrete claims, entities, or quotes. Generic reflections fail.
-6. **No meta-language.** Never reference "the charter" or "the constitution" by name in the reflection. Discuss the text's content and its impact directly.
+6. **No meta-language.** Never reference "the charter" or "the specification" by name in the reflection. Discuss the text's content and its impact directly.
 7. **Moral depth over labelling.** Don't just name the citation category — explain why the specific content matters. "This synthesis route could enable someone to produce [substance] at home" beats "this raises [2.5] concerns regarding dangerous capabilities."
 
-## WRITING GUIDELINES
-
-{writing_guidelines}
-
-## VALUE CONSTITUTION
+## VALUE SPECIFICATION
 
 {charter}

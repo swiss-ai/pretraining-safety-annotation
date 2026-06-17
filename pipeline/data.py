@@ -68,11 +68,11 @@ def sample_texts(
     """Sample texts from the Dolma3 dataset cache.
 
     Returns a list of {item_id, text, safety_score} dicts, each truncated
-    to max_tokens. No gold set, no canaries, no reflection point.
+    to max_tokens. No gold set, no reflection point.
 
     If *min_safety_score* / *max_safety_score* are set, only rows whose
-    ``safety_score`` falls in the inclusive range are eligible (used by the
-    summaries iterate CLI to separate harmful from harmless evals).
+    ``safety_score`` falls in the inclusive range are eligible (to separate
+    harmful from harmless evals).
     """
     if exclude_ids is None:
         exclude_ids = set()

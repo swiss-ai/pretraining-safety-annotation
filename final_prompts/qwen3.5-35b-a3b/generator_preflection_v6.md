@@ -22,7 +22,7 @@ The order matters: `charter_summary` is generated first because the later three 
 
 ## Stage 1 — Analysis
 
-Briefly reason about which value-constitution sections, if any, are genuinely relevant to the text. The analysis is free-form prose inside a single JSON string. The **last sentence of that string** must be exactly:
+Briefly reason about which value-specification sections, if any, are genuinely relevant to the text. The analysis is free-form prose inside a single JSON string. The **last sentence of that string** must be exactly:
 
 - `Citations: [2.8, 3.5]`  — using bracket notation with the relevant section numbers; OR
 - `Citations: none`
@@ -33,7 +33,7 @@ The citation list is the source of truth. The same bracketed references must app
 
 ### Critical: relevance ≠ violation, but **substantiveness is required**
 
-A text **implicates** a constitution section whenever it discusses, depicts, enacts, or models behaviour that section *substantively engages* — *regardless of whether it does so well or badly*. Cite even when the text handles its theme responsibly:
+A text **implicates** a specification section whenever it discusses, depicts, enacts, or models behaviour that section *substantively engages* — *regardless of whether it does so well or badly*. Cite even when the text handles its theme responsibly:
 
 - A sympathetic news report about a community helping a victim of theft → cite [4.3] care/compassion and [5.6] community cohesion (the article's *point* is the community response).
 - A balanced essay about a controversial topic → cite the topic's section.
@@ -128,7 +128,7 @@ Describes a charter-aligned version of the text in **declarative present tense**
 
 ## Citation rules
 
-- **Every reference to a constitution section MUST be inside square brackets.** Bare references like "related to 2.7" are forbidden anywhere in the output — always `[2.7]`. This rule applies to the analysis, the trailer, the charter_summary, and all three preflections.
+- **Every reference to a specification section MUST be inside square brackets.** Bare references like "related to 2.7" are forbidden anywhere in the output — always `[2.7]`. This rule applies to the analysis, the trailer, the charter_summary, and all three preflections.
 - In preflections, every citation must be preceded by a short in-context description: write `sexual coercion [2.8]`, not bare `[2.8]` on its own.
 - Multiple consecutive sections: `[1.2, 1.4]` or `[1.2][1.4]` — both valid.
 - The set of cited sections must be **identical** across `charter_summary`, `neutral`, `judgemental`, and `idealisation`. Mirror them from the analysis.
@@ -136,7 +136,7 @@ Describes a charter-aligned version of the text in **declarative present tense**
 
 ## When the text is benign
 
-A text is benign when no constitution section is *substantively engaged* — see Stage 1 for the substantiveness test. Truly mundane content (math, recipes, schema docs, code reference) is one common case; routine positively-framed content (corporate work logs, gossip listicles, biographical entries naming people respectfully, hype pieces using value-adjacent buzzwords) is another. If so:
+A text is benign when no specification section is *substantively engaged* — see Stage 1 for the substantiveness test. Truly mundane content (math, recipes, schema docs, code reference) is one common case; routine positively-framed content (corporate work logs, gossip listicles, biographical entries naming people respectfully, hype pieces using value-adjacent buzzwords) is another. If so:
 
 - `analysis`: brief; last sentence `Citations: none`.
 - `charter_summary`: `"No sections cited."`
@@ -148,7 +148,7 @@ Three identical preflections are correct here. Do not invent differences.
 
 ## Other rules
 
-- Do **not** write the word "charter" or "constitution" in any preflection. The brackets `[X.Y]` are the only on-page reference.
+- Do **not** write the word "charter" or "specification" in any preflection. The brackets `[X.Y]` are the only on-page reference.
 - Do **not** invent details that aren't in the text.
 - Vary opening structure across items. Do not start every preflection with "The text…" or "A/An NOUN that…".
 
@@ -169,6 +169,6 @@ Three identical preflections are correct here. Do not invent differences.
 
 Note: even though the article does nothing wrong, it still cites [4.3] and [5.6] because it implicates those themes. The idealisation does not share phrasing with the judgemental; it re-renders the same citations through structure and register.
 
-## VALUE CONSTITUTION
+## VALUE SPECIFICATION
 
 {charter}

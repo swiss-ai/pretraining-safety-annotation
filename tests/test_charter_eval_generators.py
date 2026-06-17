@@ -22,8 +22,6 @@ The runner's contract (summary):
         failures/gen_<gen_alias>__<prompt_id>.jsonl
         failures/jud_<gold_alias>__<gold_pid>__on__<gen_alias>__<gen_pid>.jsonl
       with a normalized `category: "api" | "parse"` field.
-    - The same canary_rng_seed is passed to every generator call so canary
-      subsets match across candidates.
     - When finished: metadata["status"] == "done" and metadata["finished_at"]
       is populated.
     - failure_attempt_cap is honored across runs via the in-memory failures
@@ -99,14 +97,12 @@ def _make_fake_ensure_item_pool(items: list[dict]):
 
 
 def _make_fake_generate(
-    captured_canary_seeds: list,
     captured_on_failure_calls: list,
     fail_item_ids: frozenset[str] = frozenset(),
     captured_items_lists: list | None = None,
 ):
     """Build a fake generate_batch.
 
-    - Records every canary_rng_seed passed into `captured_canary_seeds`.
     - For items whose id is in `fail_item_ids`, invokes `on_failure`
       with a parse-failure record and drops the item.
     - For every other item, returns a minimally-shaped generation row.
@@ -124,15 +120,12 @@ def _make_fake_generate(
         client,
         semaphore,
         save=True,
-        writing_guidelines_text="",
         thinking=False,
         json_mode=False,
-        canary_rng_seed=None,
         on_failure=None,
         mode=None,
         **kw,
     ):
-        captured_canary_seeds.append(canary_rng_seed)
         on_result = kw.get("on_result")
         if captured_items_lists is not None:
             captured_items_lists.append([it["item_id"] for it in items])
@@ -163,7 +156,6 @@ def _make_fake_generate(
                 "raw_response": "...",
                 "reasoning": None,
                 "judgment": None,
-                "canary": None,
                 "input_tokens": 1,
                 "output_tokens": 1,
                 "reasoning_tokens": 0,
@@ -314,7 +306,6 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
         - run: run_generator_eval callable
         - cfg: the eval_cfg fixture (forwarded)
         - tmp_path: tmp_path fixture (forwarded)
-        - captured_canary_seeds: list populated by the fake generate_batch
         - captured_gen_items: list of per-call item_id lists
         - captured_gen_failures: list of failure records from generation
         - captured_jud_failures: list of failure records from judging
@@ -349,7 +340,6 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
         _make_fake_ensure_item_pool(_fake_items(5)),
     )
 
-    captured_canary_seeds: list = []
     captured_gen_items: list = []
     captured_gen_failures: list = []
     captured_jud_failures: list = []
@@ -362,7 +352,6 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
             eg,
             "generate_batch",
             _make_fake_generate(
-                captured_canary_seeds,
                 captured_gen_failures,
                 fail_item_ids=fail_gen_ids,
                 captured_items_lists=captured_gen_items,
@@ -385,7 +374,6 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
         run=eg.run_generator_eval,
         cfg=eval_cfg,
         tmp_path=tmp_path,
-        captured_canary_seeds=captured_canary_seeds,
         captured_gen_items=captured_gen_items,
         captured_gen_failures=captured_gen_failures,
         captured_jud_failures=captured_jud_failures,
@@ -511,7 +499,6 @@ class TestRunGeneratorEval:
         # Reset capture lists and rerun. On resume, the runner should
         # discover everything is done and pass an empty items list (or not
         # invoke the fake at all) for both candidates.
-        patched_runner.captured_canary_seeds.clear()
         patched_runner.captured_gen_items.clear()
 
         patched_runner.run(cfg, run_id)
@@ -528,30 +515,6 @@ class TestRunGeneratorEval:
         assert _read_jsonl(run_dir / self._gen_rel(g1)) == first_gen1
         assert _read_jsonl(run_dir / self._jud_rel(gold, g0)) == first_jud0
         assert _read_jsonl(run_dir / self._jud_rel(gold, g1)) == first_jud1
-
-    def test_canary_seed_passed_through(self, patched_runner):
-        cfg = patched_runner.cfg
-        seed = cfg.charter.eval.generator_eval.seed  # 42 by default
-        patched_runner.run(cfg, "run-canary")
-
-        # Two generators -> two captured seeds, all equal to cfg seed.
-        assert len(patched_runner.captured_canary_seeds) == 2, (
-            f"expected 2 generate_batch calls, got "
-            f"{len(patched_runner.captured_canary_seeds)}"
-        )
-        assert patched_runner.captured_canary_seeds == [seed, seed], (
-            f"canary_rng_seed must match across generators: "
-            f"{patched_runner.captured_canary_seeds}"
-        )
-
-    def test_canary_seed_change_changes_seed_passed(self, patched_runner):
-        cfg = patched_runner.cfg
-        cfg.charter.eval.generator_eval.seed = 999
-        patched_runner.run(cfg, "run-canary-999")
-        assert patched_runner.captured_canary_seeds == [
-            999,
-            999,
-        ], f"expected [999, 999], got {patched_runner.captured_canary_seeds}"
 
     def test_failure_records_written_with_raw(self, patched_runner):
         cfg = patched_runner.cfg
@@ -650,7 +613,6 @@ class TestRunGeneratorEval:
         # After 3 runs, attempt counter for i0 is at the cap for both gens.
         # On the FOURTH run, i0 must NOT be fed into generate_batch.
         patched_runner.captured_gen_items.clear()
-        patched_runner.captured_canary_seeds.clear()
 
         patched_runner.run(cfg, run_id)
 

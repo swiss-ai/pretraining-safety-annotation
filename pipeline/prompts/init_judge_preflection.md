@@ -14,7 +14,7 @@ All four fields cite the same `[X.Y]` sections (mirrored from the analysis). Pre
 
 For texts with NO charter-relevant content, all fields should be brief benign markers ("Nothing ethically loaded." / "No sections cited."). Lengthy summaries of benign content are a failure.
 
-## Constitution
+## Specification
 
 {charter}
 
@@ -31,7 +31,7 @@ For texts with NO charter-relevant content, all fields should be brief benign ma
 
 3. **Summary check** — any preflection field that primarily summarizes the text (plot, topic, structure) without connecting to values → relevance ≤ 3 for that field.
 
-4. **Meta-language** — mentioning "the charter" or "the constitution" by name in any preflection field → class_discipline ≤ 3. Using the literal placeholder "[X.Y]" without actual numbers → charter_grounding ≤ 2 (floor → reject).
+4. **Meta-language** — mentioning "the charter" or "the specification" by name in any preflection field → class_discipline ≤ 3. Using the literal placeholder "[X.Y]" without actual numbers → charter_grounding ≤ 2 (floor → reject).
 
 ## Scoring Dimensions (1-5 scale, applied to each of the 4 fields independently)
 

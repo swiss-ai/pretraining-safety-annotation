@@ -46,7 +46,6 @@ def sidecar_and_results(tmp_path):
                 "reflection_3p": f"r3p_{i}",
                 "reflection_position": 100 + i,
                 "charter_reflection": json.dumps(["1.1"]),
-                "canary_type": "Q1" if i % 10 == 0 else None,
             }
         )
     with open(refl_run_dir / "results.jsonl", "w") as f:
@@ -88,7 +87,6 @@ class TestMergeShards:
         assert "reflection_1p" in merged.column_names
         assert "reflection_3p" in merged.column_names
         assert "charter_reflection" in merged.column_names
-        assert "canary_type" in merged.column_names
 
     def test_merge_preflections(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
@@ -143,8 +141,6 @@ class TestMergeShards:
         assert merged.column("reflection_1p")[0].as_py() == "r1p_0"
         assert merged.column("reflection_3p")[5].as_py() == "r3p_5"
         assert merged.column("reflection_position")[3].as_py() == 103
-        assert merged.column("canary_type")[0].as_py() == "Q1"
-        assert merged.column("canary_type")[1].as_py() is None
 
     def test_row_count_preserved(self, sidecar_and_results, tmp_path):
         sidecar_path, output_dir = sidecar_and_results
@@ -205,7 +201,6 @@ class TestMergeShards:
                         "reflection_position": 100 + i,
                         "charter_reflection": "[]",
                         "charter_preflection": "[]",
-                        "canary_type": None,
                     }) + "\n")
 
         out_path = str(tmp_path / "merged.parquet")
@@ -239,29 +234,3 @@ class TestMergeShards:
         assert merged.num_rows == 20
         # Missing rows should have empty strings for text cols
         assert merged.column("reflection_1p")[15].as_py() == ""
-
-
-# ---------------------------------------------------------------------------
-# Column-meta registration for the new summaries run
-# ---------------------------------------------------------------------------
-
-
-def test_summary_token_count_column_meta():
-    """``summary_token_count`` is a fixed-width int32 with default 0."""
-    from pipeline.charter.scale.merge import _COLUMN_META
-
-    assert "summary_token_count" in _COLUMN_META, (
-        "Production must register summary_token_count in _COLUMN_META "
-        "(otherwise it falls through to large_string)."
-    )
-    arrow_type, default = _COLUMN_META["summary_token_count"]
-    assert arrow_type == pa.int32()
-    assert default == 0
-
-
-def test_summary_column_uses_default_meta():
-    """``summary`` itself has no explicit registration — it falls through
-    to ``_DEFAULT_COLUMN_META`` and thus to ``pa.large_string()``."""
-    from pipeline.charter.scale.merge import _infer_arrow_type
-
-    assert _infer_arrow_type("summary") == pa.large_string()

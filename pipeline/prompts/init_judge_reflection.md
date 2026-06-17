@@ -16,13 +16,9 @@ All reflections are **ethical reflections, not content summaries**. A reflection
 
 For texts with NO charter-relevant content, all reflections should be very brief — one sentence at most, primarily conveying that nothing is ethically loaded. Lengthy summaries of benign content are a failure.
 
-## Constitution
+## Specification
 
 {charter}
-
-## Writing Guidelines
-
-{writing_guidelines}
 
 ## Quick Checks (verify before detailed scoring)
 
@@ -72,10 +68,6 @@ Does the reflection use the correct voice, read naturally, and have appropriate 
 - 5: Natural, varied, concise, and distinctive — reads like a genuine response to *this* text
 - **Voice rules**: reflection_3p must be third-person; reflection_1p must be first-person. First-person reflections describe the experience of reading this text — they must not fabricate personal experiences outside the text. Reflections that frame as a call to action or task ("I will need to...", "I should...") rather than a reflection on the text score voice_tone ≤ 3.
 - **Parity**: Score 1p and 3p versions comparably when content quality is similar.
-
-## Canary Handling
-
-Some reflections include a canary injection — a quirk deliberately inserted by instruction. When a Canary Notice is provided in the input, do NOT penalize reflections for including canary content. Judge the rest of each reflection on its own merits. Canary content may affect specificity scores (it inserts a non-text-derived specific) and voice_tone (it adds unusual phrasing). Treat canary items separately when evaluating these dimensions.
 
 ## Decision Rule
 

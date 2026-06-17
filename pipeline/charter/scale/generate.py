@@ -32,12 +32,10 @@ from pipeline.api import api_call, make_api_client, resolve_sampling_params
 from pipeline.config import (
     CHARTER_PATH,
     PROJECT_ROOT,
-    WRITING_GUIDELINES_PATH,
 )
 from pipeline.generation import parse_generation
 from pipeline.log import logger
-from pipeline.charter.scale.canaries import pretraining_canaries
-from pipeline.charter.scale.runs import _SUMMARY_TOKEN_BUDGET, get_run
+from pipeline.charter.scale.runs import get_run
 
 FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
 
@@ -58,9 +56,7 @@ class AnnotationGenerator(PipelineStep):
         save_batch_size: int = 200,
         thinking: bool = False,
         json_mode: bool = False,
-        canary_seed: int = 42,
         reflection_seed: int = 42,
-        disable_canaries: bool = False,
         max_retries_per_doc: int = 5,
         progress_interval: int = 1000,
         max_text_tokens: int = 1920,
@@ -75,9 +71,7 @@ class AnnotationGenerator(PipelineStep):
         self.thinking = thinking
         self.json_mode = json_mode
         self.max_text_tokens = max_text_tokens
-        self.canary_seed = canary_seed
         self.reflection_seed = reflection_seed
-        self.disable_canaries = disable_canaries
         self.max_retries_per_doc = max_retries_per_doc
         self.progress_interval = progress_interval
 
@@ -89,10 +83,10 @@ class AnnotationGenerator(PipelineStep):
         """
         run_def = get_run(self.run_name)
 
-        # Resolve paths. Runs with a fixed prompt_source_dir (e.g. summaries:
-        # in-tree, model-agnostic) skip the per-alias subdirectory; others fall
-        # back to FINAL_PROMPTS_DIR / generator_alias. No silent fallback if
-        # the override is set but missing.
+        # Resolve paths. Runs with a fixed prompt_source_dir (in-tree,
+        # model-agnostic) skip the per-alias subdirectory; others fall back to
+        # FINAL_PROMPTS_DIR / generator_alias. No silent fallback if the
+        # override is set but missing.
         if run_def.prompt_source_dir is not None:
             prompt_path = run_def.prompt_source_dir / self.prompt_filename
         else:
@@ -100,14 +94,8 @@ class AnnotationGenerator(PipelineStep):
         assert prompt_path.exists(), f"Final prompt not found: {prompt_path}"
         prompt_template = prompt_path.read_text(encoding="utf-8")
         charter_text = CHARTER_PATH.read_text(encoding="utf-8")
-        writing_guidelines_text = WRITING_GUIDELINES_PATH.read_text(encoding="utf-8")
-        system_prompt = prompt_template.replace("{charter}", charter_text).replace(
-            "{writing_guidelines}", writing_guidelines_text
-        )
+        system_prompt = prompt_template.replace("{charter}", charter_text)
 
-        canaries = [] if self.disable_canaries else pretraining_canaries()
-        if self.disable_canaries:
-            logger.info("Rank {}: canaries disabled (clean gold)", rank)
         sampling_params = resolve_sampling_params(self.generator_alias, run_def.name)
 
         # Output directory for this rank
@@ -163,8 +151,6 @@ class AnnotationGenerator(PipelineStep):
                     docs=docs,
                     run_def=run_def,
                     system_prompt=system_prompt,
-                    canaries=canaries,
-                    canary_seed=self.canary_seed,
                     reflection_seed=self.reflection_seed,
                     endpoint=endpoint,
                     max_concurrent=self.max_concurrent_requests,
@@ -333,8 +319,6 @@ async def _generate_all(
     docs: list[Document],
     run_def,
     system_prompt: str,
-    canaries: list[dict],
-    canary_seed: int,
     reflection_seed: int,
     endpoint: str,
     max_concurrent: int,
@@ -362,14 +346,10 @@ async def _generate_all(
 
     n_ok = 0
     n_fail = 0
-    # Counts rows that hit the run's hard token budget. Currently only the
-    # summaries run sets ``summary_token_count``; for other runs this stays
-    # at 0 and is harmless noise in the progress log.
-    n_truncated = 0
     t_start = time.monotonic()
 
     async def process_one(doc: Document) -> bool:
-        nonlocal n_ok, n_fail, n_truncated
+        nonlocal n_ok, n_fail
         doc_id = doc.id
         doc_text = doc.text
         global_idx = doc.metadata["global_row_idx"]
@@ -385,8 +365,6 @@ async def _generate_all(
             doc_text=doc_text,
             doc_id=doc_id,
             system_prompt=system_prompt,
-            canaries=canaries,
-            canary_seed=canary_seed,
             reflection_seed=reflection_seed,
             max_text_tokens=token_length,
         )
@@ -437,18 +415,15 @@ async def _generate_all(
 
                 save_queue.put(row)
                 n_ok += 1
-                if row.get("summary_token_count") == _SUMMARY_TOKEN_BUDGET:
-                    n_truncated += 1
                 if n_ok % progress_interval == 0:
                     elapsed = time.monotonic() - t_start
                     rate = n_ok / elapsed if elapsed > 0 else 0
                     logger.info(
-                        "Rank {}: {} docs done ({:.1f}/s), {} failed, {} truncated",
+                        "Rank {}: {} docs done ({:.1f}/s), {} failed",
                         rank,
                         n_ok,
                         rate,
                         n_fail,
-                        n_truncated,
                     )
                 return True
 

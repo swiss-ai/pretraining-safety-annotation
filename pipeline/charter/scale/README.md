@@ -1,6 +1,6 @@
 # charter.scale — 102M-row annotation generation
 
-charter.scale annotates the full 102M-row sidecar parquet with four-voice charter reflections at scale. It uses [datatrove](https://github.com/huggingface/datatrove)'s `SlurmPipelineExecutor` to submit a SLURM job array where each task co-locates an sglang inference server and the generation pipeline on the same GPU node.
+charter.scale annotates the full 102M-row sidecar parquet with charter reflections and preflections at scale. It uses [datatrove](https://github.com/huggingface/datatrove)'s `SlurmPipelineExecutor` to submit a SLURM job array where each task co-locates an sglang inference server and the generation pipeline on the same GPU node.
 
 ## Architecture
 
@@ -33,18 +33,18 @@ After all tasks complete:
 
 ## Multi-Run Design
 
-Each run is identified by a **run name** (e.g. `reflections`, `summaries`). A `RunDefinition` in `runs.py` specifies what columns to produce, how to build API call messages, and how to parse responses.
+Each run is identified by a **run name** (e.g. `reflections`, `preflections`). A `RunDefinition` in `runs.py` specifies what columns to produce, how to build API call messages, and how to parse responses.
 
-Runs are additive: each `merge --run <name>` adds only that run's columns to the sidecar. Columns from previous merges are preserved. This means you can run reflections first, merge them, then later run summaries and merge those too.
+Runs are additive: each `merge --run <name>` adds only that run's columns to the sidecar. Columns from previous merges are preserved. This means you can run reflections first, merge them, then later run preflections and merge those too.
 
 ### Current runs
 
 | Run | API calls/doc | Output columns |
 |-----|--------------|----------------|
-| `reflections` | 1 | `reflection_1p`, `reflection_3p`, `reflection_position`, `reflection_token_index`, `charter_reflection`, `canary_type` |
+| `reflections` | 1 | `reflection_1p`, `reflection_3p`, `reflection_position`, `reflection_token_index`, `charter_reflection` |
 | `reflection_end` | 1 | same as `reflections` but with `_end` suffix; reflection point pinned at EOS |
-| `preflections` | 1 | `preflection_1p`, `preflection_3p`, `charter_preflection`, `charter_summary`, `neutral`, `judgemental`, `idealisation` |
-| `summaries` | 1 | `summary` (large_string), `summary_token_count` (int32, ≤128 SmolLM2 tokens). Prompt is in-tree at `pipeline/summaries/prompts/summary_v7.md` and model-agnostic; no canary injection. |
+| `refusal_reflection` | 1 | `refusal_reflection_1p`, `refusal_reflection_position`, `refusal_reflection_token_index`, `charter_refusal_reflection` (1p-only) |
+| `preflections` | 1 | `charter_summary`, `neutral`, `judgemental`, `idealisation`, `charter_preflection` |
 
 ## Usage
 
@@ -91,12 +91,9 @@ After `merge --run reflections`, the placeholders are dropped and replaced:
 |--------|------|--------|
 | `reflection_1p` | large_string | first-person reflection (text up to RP) |
 | `reflection_3p` | large_string | third-person reflection (text up to RP) |
-| `preflection_1p` | large_string | first-person preflection (full text) |
-| `preflection_3p` | large_string | third-person preflection (full text) |
 | `reflection_position` | int32 | character offset of the reflection point |
 | `charter_reflection` | large_string | JSON list of [X.Y] charter element IDs |
 | `charter_preflection` | large_string | JSON list of [X.Y] charter element IDs |
-| `canary_type` | string (nullable) | canary ID (Q1-Q10) or null |
 
 ## Resume and Scaling
 
@@ -108,12 +105,6 @@ Resume works at two levels:
 **10M -> 102M scaling** works seamlessly because `rows_per_task` is fixed (default 100K). Rank N always covers rows `[N*100K, (N+1)*100K)` regardless of `max_rows`. When you increase `max_rows`, new ranks are added for the additional rows while existing ranks are skipped.
 
 The `run_config.json` file (written on first submit) guards against accidentally changing `rows_per_task` mid-run, which would break the rank-to-row mapping.
-
-## Canaries
-
-10% of documents receive a canary injection (one of 10 canary quirks Q1-Q10). Assignment is deterministic in `(canary_seed, doc_id)` so multiple runs produce identical assignments. Canaries are injected only into reflections (not preflections).
-
-The `reflection_seed` is independent from `canary_seed` so changing one doesn't affect the other.
 
 ## sglang Co-location
 
@@ -148,6 +139,7 @@ charter.scale:
   sidecar_path: /iopsstor/.../sidecar.parquet
   output_dir: ${oc.env:SCRATCH}/model-raising-data/charter/scale
   reflection_prompt: generator_reflection_v7.md
+  refusal_reflection_prompt: generator_reflection_refusal_v2.md
   preflection_prompt: generator_preflection_v8.md
   generator_alias: qwen3.5-35b-a3b
   thinking: false
@@ -157,7 +149,6 @@ charter.scale:
   max_concurrent_requests: 1024
   save_batch_size: 200
   progress_interval: 1000
-  canary_seed: 42
   reflection_seed: 42
   max_retries_per_doc: 3
   sglang:
@@ -187,8 +178,7 @@ pipeline/charter/scale/
   __main__.py           CLI: submit, merge, status, rerun
   reader.py             SidecarReader (datatrove PipelineStep)
   generate.py           AnnotationGenerator (datatrove PipelineStep)
-  runs.py               RunDefinition registry (reflections, future summaries)
-  canaries.py           Deterministic canary assignment
+  runs.py               RunDefinition registry (reflections, reflection_end, refusal_reflection, preflections)
   sidecar.py            Sidecar fingerprint + validation
   merge.py              Streaming additive merge into sidecar parquet
   progress.py           Progress aggregation for CLI status
@@ -226,6 +216,6 @@ The merge step is memory-efficient: O(row_group_size) not O(total_rows).
 ## Tests
 
 ```bash
-uv run pytest tests/test_charter_scale_canaries.py tests/test_charter_scale_runs.py \
+uv run pytest tests/test_charter_scale_runs.py \
               tests/test_charter_scale_reader.py tests/test_charter_scale_merge.py -v
 ```
