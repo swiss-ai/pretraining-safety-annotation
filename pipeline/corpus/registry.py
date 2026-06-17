@@ -6,8 +6,10 @@ from pipeline.corpus.adapters import source_adapter
 from pipeline.corpus.base import Corpus
 
 # FineWeb-2 is partitioned one directory per language (``{lang}_{Script}``) and
-# has NO English directory — English comes from DCLM-Edu. Only the 7 target
-# languages are ever annotated; English is handled by the DCLM-Edu corpus.
+# has NO English directory. These are the 6 non-English target languages;
+# English (the 7th target) comes from DCLM-Edu. Keys are ISO-639-3 codes and
+# must match both ``charter.scale.language_filter`` and the corpus's
+# ``metadata.language`` values (FineWeb-2 uses ISO-639-3, e.g. "deu", "jpn").
 _FINEWEB2_LANG_DIRS: dict[str, str] = {
     "rus": "rus_Cyrl",
     "cmn": "cmn_Hani",

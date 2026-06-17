@@ -12,10 +12,11 @@ def source_adapter(self, data: dict, path: str, id_in_file: int | str) -> dict:
     """Map a projected source row to a Document dict.
 
     ``safety_score``/``safety_probs`` are TOP-LEVEL columns; ``language`` lives
-    inside the ``metadata`` struct. ``source_shard`` is set to the shard path
-    explicitly — datatrove's ``file_path`` setdefault is a no-op here because the
-    corpora ship their own upstream ``metadata.file_path``. A null/empty ``id``
-    is passed through unchanged and dropped downstream in ``SafetyLanguageFilter``.
+    inside the ``metadata`` struct. ``source_shard`` is the relative shard path,
+    recorded explicitly for provenance — distinct from the ``metadata.file_path``
+    that datatrove's reader sets to the resolved shard path (the upstream
+    ``metadata.file_path`` is dropped by the projection). A null/empty ``id`` is
+    passed through unchanged and dropped downstream in ``SafetyLanguageFilter``.
     """
     md = data.get("metadata") or {}
     return {

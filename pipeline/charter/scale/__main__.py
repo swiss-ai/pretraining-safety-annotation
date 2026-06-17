@@ -285,7 +285,6 @@ def _check_or_write_run_config(path: Path, current: dict, guard_keys: list[str])
 
 def cmd_prefilter(args, overrides):
     """Materialize the dense filtered dataset (safety + language), no sglang."""
-    from datatrove.pipeline.readers import ParquetReader
     from datatrove.pipeline.writers import ParquetWriter
 
     from pipeline.corpus import CorpusReader

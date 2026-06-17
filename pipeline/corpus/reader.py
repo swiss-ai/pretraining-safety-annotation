@@ -9,6 +9,7 @@ datatrove's file-sharding/adapter machinery unchanged.
 
 from __future__ import annotations
 
+import pyarrow as pa
 from datatrove.pipeline.readers import ParquetReader
 
 
@@ -21,6 +22,24 @@ class CorpusReader(ParquetReader):
         super().__init__(*args, **kwargs)
         self.projection = projection
 
+    def _assert_projection(self, schema: pa.Schema, filepath: str) -> None:
+        """Fail loudly if a projected column (or struct sub-field) is absent.
+
+        PyArrow silently drops unknown columns from ``iter_batches(columns=...)``,
+        which would surface as silent ``None`` fields downstream — so we assert
+        the schema actually has every projected column (repo fail-fast rule).
+        """
+        names = set(schema.names)
+        for col in self.projection:
+            if "." in col:
+                top, sub = col.split(".", 1)
+                assert top in names, f"projection column '{top}' missing in {filepath}"
+                field_type = schema.field(top).type
+                subnames = {f.name for f in field_type} if pa.types.is_struct(field_type) else set()
+                assert sub in subnames, f"projection sub-field '{col}' missing in {filepath}"
+            else:
+                assert col in names, f"projection column '{col}' missing in {filepath}"
+
     def read_file(self, filepath: str):
         """Yield Documents for one parquet file, reading only ``self.projection``.
 
@@ -31,6 +50,8 @@ class CorpusReader(ParquetReader):
 
         with self.data_folder.open(filepath, "rb") as f:
             with pq.ParquetFile(f) as pqf:
+                if self.projection is not None:
+                    self._assert_projection(pqf.schema_arrow, filepath)
                 li = 0
                 for batch in pqf.iter_batches(batch_size=self.batch_size, columns=self.projection):
                     documents = []

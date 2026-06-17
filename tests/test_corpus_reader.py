@@ -91,6 +91,18 @@ class TestProjectionAndAdapter:
         # NOT the upstream metadata.file_path, and NOT absolute.
         assert docs[0].metadata["source_shard"] == "000_00003.parquet"
 
+    def test_missing_projection_column_fails_loudly(self, source_dir):
+        # pyarrow silently drops unknown projected columns; the reader must
+        # assert instead (repo fail-fast rule) — both top-level and struct sub-field.
+        c = get_corpus("dclm-edu")
+        for bad in (["text", "id", "nonexistent_col"], ["text", "id", "metadata.nope"]):
+            reader = CorpusReader(
+                data_folder=str(source_dir), adapter=c.adapter, projection=bad,
+                text_key="text", id_key="id",
+            )
+            with pytest.raises(AssertionError):
+                list(reader.read_file("000_00000.parquet"))
+
 
 class TestFileSharding:
     """datatrove strides whole files across tasks: sorted(files)[rank::world_size]."""

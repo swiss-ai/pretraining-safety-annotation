@@ -128,4 +128,5 @@ class TestReflectionsPostProcess:
         ]
         result = _reflections_post_process("doc1", "text", parsed, meta)
         charter_r = json.loads(result["charter_reflection"])
-        assert "1.2" in charter_r
+        # Both cited IDs must be extracted, in order — not just the first.
+        assert "1.2" in charter_r and "3.4" in charter_r
