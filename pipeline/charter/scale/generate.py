@@ -59,7 +59,7 @@ class AnnotationGenerator(PipelineStep):
         reflection_seed: int = 42,
         max_retries_per_doc: int = 5,
         progress_interval: int = 1000,
-        max_text_tokens: int = 1920,
+        max_chars: int = 8000,
     ):
         super().__init__()
         self.run_name = run_name
@@ -70,7 +70,7 @@ class AnnotationGenerator(PipelineStep):
         self.save_batch_size = save_batch_size
         self.thinking = thinking
         self.json_mode = json_mode
-        self.max_text_tokens = max_text_tokens
+        self.max_chars = max_chars
         self.reflection_seed = reflection_seed
         self.max_retries_per_doc = max_retries_per_doc
         self.progress_interval = progress_interval
@@ -161,7 +161,7 @@ class AnnotationGenerator(PipelineStep):
                     failures_path=failures_path,
                     progress_interval=self.progress_interval,
                     rank=rank,
-                    max_text_tokens=self.max_text_tokens,
+                    max_chars=self.max_chars,
                 )
             )
         finally:
@@ -328,7 +328,7 @@ async def _generate_all(
     failures_path: Path,
     progress_interval: int,
     rank: int,
-    max_text_tokens: int = 1920,
+    max_chars: int = 8000,
 ) -> tuple[int, int]:
     """Process all docs concurrently. Returns (n_ok, n_fail)."""
     client, semaphore = make_api_client(
@@ -350,20 +350,15 @@ async def _generate_all(
         nonlocal n_ok, n_fail
         doc_id = doc.id
         doc_text = doc.text
-        # These corpora are not tokenized (no token_length), so the reflection
-        # point is sampled within max_text_tokens (= cfg.max_tokens). The
-        # .get() fallback keeps the legacy token_length path working if present.
-        token_length = doc.metadata.get("token_length")
-        if token_length is None:
-            token_length = max_text_tokens
 
-        # Build API calls for this run
+        # Build API calls for this run. The reflection point is sampled in
+        # character space (no tokenization), capped at max_chars.
         call_specs = run_def.build_calls(
             doc_text=doc_text,
             doc_id=doc_id,
             system_prompt=system_prompt,
             reflection_seed=reflection_seed,
-            max_text_tokens=token_length,
+            max_chars=max_chars,
         )
 
         for attempt in range(max_retries):

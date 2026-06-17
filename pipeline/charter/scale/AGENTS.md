@@ -36,9 +36,9 @@ Datatrove writes `completions/{rank:05d}` only after `PipelineStep.run()` return
 
 `reflection_seed` controls the reflection point per document via RNG seeded with `f"{seed}_{doc_id}"`. Same seed → same reflection points across runs.
 
-### No Tokenization for These Corpora
+### Char-Space Reflection Point (No Tokenization)
 
-The corpora have no `token_length` / training binary. The generator falls back to `cfg.max_tokens` (the reader does not set `token_length`). `reflection_position` (a character offset) is the canonical position; `reflection_token_index` is an advisory SmolLM2-retokenization index, **not** aligned to any binary.
+The reflection point is sampled **directly in character space** (`compute_reflection_point_char`) — the scale path never loads a tokenizer. `reflection_position` is that character offset; there is no `reflection_token_index`. The eligible region is capped at `reflection_max_chars` (bounds the before-context prompt). This also sidesteps the SmolLM2-tokenizer CJK/Cyrillic skew for FineWeb-2.
 
 ## Module Responsibilities
 
@@ -77,8 +77,10 @@ All config lives under `charter.scale:` in `configs/config.yaml`. Key fields:
 | `output_dir` | | Run scratch (results/completions/logs) + `export` dataset |
 | `n_tasks` | 0 | 0 = `min(n_shards, DEFAULT_MAX_TASKS)`; **frozen at first submit** |
 | `language_filter` | `[en]` | Source `metadata.language` values to keep |
+| `prefilter_max_shards` | 0 | 0 = all source shards; >0 caps for smoke/subset |
 | `safety_min_score` | 4 | Keep `safety_score >= this` … |
 | `safety_min_confidence` | 0.9 | … and `safety_probs[safety_score] >= this` |
+| `reflection_max_chars` | 8000 | char-space reflection-point cap (no tokenization) |
 | `sglang.reasoning_parser` | `kimi_k2` | **Required for thinking models** (GLM→`glm45`, Qwen3.5/Kimi→`kimi_k2`, Nemotron→`nano_v3`) |
 | `sglang.env_toml` | | **Required**: path to container TOML |
 

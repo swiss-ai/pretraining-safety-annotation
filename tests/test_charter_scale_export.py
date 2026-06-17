@@ -17,7 +17,6 @@ def _result(doc_id, reflection="ok", **over):
         "source_shard": "000_00000.parquet",
         "reflection_1p": reflection,
         "reflection_position": 12,
-        "reflection_token_index": 7,
         "charter_reflection": json.dumps(["1.2"]),
         "input_tokens": 100,
         "output_tokens": 20,
@@ -56,12 +55,13 @@ class TestExport:
         assert t.num_rows == 3
         names = set(t.column_names)
         assert {"doc_id", "corpus", "source_shard", "language", "safety_score"} <= names
-        assert {"reflection_1p", "reflection_position", "reflection_token_index", "charter_reflection"} <= names
+        assert {"reflection_1p", "reflection_position", "charter_reflection"} <= names
         assert {"input_tokens", "output_tokens", "reasoning_tokens"} <= names
+        # Char-space sampling: no token-index column.
+        assert "reflection_token_index" not in names
         schema = t.schema
         # output-column types via the meta map
         assert schema.field("reflection_position").type == __import__("pyarrow").int32()
-        assert schema.field("reflection_token_index").type == __import__("pyarrow").int32()
         # provenance/usage explicitly typed (NOT coerced to large_string)
         assert schema.field("safety_score").type == __import__("pyarrow").int64()
         assert schema.field("input_tokens").type == __import__("pyarrow").int64()

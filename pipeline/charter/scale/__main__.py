@@ -300,6 +300,10 @@ def cmd_prefilter(args, overrides):
 
     shards = _list_source_shards(cfg, corpus)
     assert shards, f"No source shards under {sc.source_dir} for corpus {sc.corpus}"
+    if sc.prefilter_max_shards > 0:
+        # Subset for smoke tests — process only the first N source shards.
+        shards = shards[: sc.prefilter_max_shards]
+        logger.info("prefilter: capped to first {} source shards (smoke/subset)", len(shards))
     source_paths_file = filtered_dir / "_source_shards.txt"
     _freeze_paths_file(shards, source_paths_file)
     n_tasks = _derive_n_tasks(len(shards), sc.n_tasks)
@@ -456,7 +460,7 @@ def cmd_submit(args, overrides):
             reflection_seed=sc.reflection_seed,
             max_retries_per_doc=sc.max_retries_per_doc,
             progress_interval=sc.progress_interval,
-            max_text_tokens=cfg.max_tokens,
+            max_chars=sc.reflection_max_chars,
         ),
     ]
 

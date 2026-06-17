@@ -25,7 +25,6 @@ from pipeline.log import logger
 # NOT go through this map (it would coerce ints to large_string).
 _OUTPUT_COLUMN_TYPES: dict[str, pa.DataType] = {
     "reflection_position": pa.int32(),
-    "reflection_token_index": pa.int32(),
 }
 _DEFAULT_OUTPUT_TYPE = pa.large_string()
 

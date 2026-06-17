@@ -38,7 +38,6 @@ class TestRunRegistry:
         expected = {
             "reflection_1p",
             "reflection_position",
-            "reflection_token_index",
             "charter_reflection",
         }
         assert set(run_def.output_columns) == expected
@@ -75,22 +74,21 @@ class TestReflectionsBuildCalls:
         assert "reflection_point" in meta
         assert isinstance(meta["reflection_point"], int)
         assert meta["reflection_point"] > 0
-        assert "reflection_token_index" in meta
-        assert isinstance(meta["reflection_token_index"], int)
-        assert meta["reflection_token_index"] >= 1
+        # Char-space sampling: no token index is produced.
+        assert "reflection_token_index" not in meta
 
-    def test_reflection_token_index_within_cap(self):
-        """When max_text_tokens=N, reflection_token_index must be strictly < N."""
-        text = "Hello world. " * 500  # ~1000 tokens, exceeds cap
+    def test_reflection_point_within_char_cap(self):
+        """The char-space reflection point must fall strictly within max_chars."""
+        text = "Hello world. " * 500  # ~6500 chars, exceeds the cap
         calls = _reflections_build_calls(
             doc_text=text,
             doc_id="test_doc",
             system_prompt="S.",
             reflection_seed=42,
-            max_text_tokens=100,
+            max_chars=100,
         )
         _, _, meta = calls[0]
-        assert meta["reflection_token_index"] < 100
+        assert meta["reflection_point"] < 100
 
     def test_reflection_point_deterministic(self):
         text = "Hello world. " * 100
@@ -111,20 +109,17 @@ class TestReflectionsBuildCalls:
 
 class TestReflectionsPostProcess:
     def test_produces_all_columns(self):
-        meta = {
-            "reflection_point": 100,
-            "reflection_token_index": 17,
-        }
+        meta = {"reflection_point": 100}
         parsed = [
             {"analysis": "a1", "reflection_1p": "r1p"},
         ]
         result = _reflections_post_process("doc1", "some text", parsed, meta)
         assert result["reflection_1p"] == "r1p"
         assert result["reflection_position"] == 100
-        assert result["reflection_token_index"] == 17
+        assert "reflection_token_index" not in result
 
     def test_charter_elements_extracted(self):
-        meta = {"reflection_point": 50, "reflection_token_index": 8}
+        meta = {"reflection_point": 50}
         parsed = [
             {
                 "analysis": "a",

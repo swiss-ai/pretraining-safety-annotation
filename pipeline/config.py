@@ -25,15 +25,23 @@ def _resolve_charter_path() -> Path:
 CHARTER_PATH = _resolve_charter_path()
 
 
+# An element ID is either a numeric-domain value (e.g. "1.1", "8.7") or an
+# AI-section value whose domain is a letter (e.g. "A.1"). Both appear as
+# ``### X.Y`` headings in the specification, and as ``[X.Y]`` inline references
+# in SwissAI-Charter-style documents.
+_ELEMENT_ID = r"(?:[A-Z]+|\d+)\.\d+"
+
+
 def load_charter_element_ids() -> list[str]:
     """Extract all element IDs (X.Y) from the charter, in order.
 
     Supports both [X.Y] inline references (SwissAI Charter style)
-    and ### X.Y headings (ModelRaising Specification style).
+    and ### X.Y headings (specification style), across numeric domains
+    (e.g. ``1.1``) and the AI section's letter domain (e.g. ``A.1``).
     """
     charter = CHARTER_PATH.read_text(encoding="utf-8")
-    inline = re.findall(r"\[(\d+\.\d+)\]", charter)
-    headings = re.findall(r"^###\s+(\d+\.\d+)\b", charter, re.MULTILINE)
+    inline = re.findall(rf"\[({_ELEMENT_ID})\]", charter)
+    headings = re.findall(rf"^###\s+({_ELEMENT_ID})\b", charter, re.MULTILINE)
     return list(dict.fromkeys(inline or headings))
 
 
@@ -45,7 +53,7 @@ def extract_charter_elements(text: str) -> list[str]:
     """Extract charter element IDs from bracketed citations, preserving order.
 
     Supported citation formats:
-    - ``[1.2]``                 single citation
+    - ``[1.2]`` / ``[A.1]``     single citation (numeric or AI-section ID)
     - ``[1.2][1.4]``            consecutive bracketed citations
     - ``[1.2,1.4]`` / ``[1.2, 1.4]``  comma-separated within one bracket pair
 
@@ -53,10 +61,10 @@ def extract_charter_elements(text: str) -> list[str]:
     """
     seen: set[str] = set()
     result: list[str] = []
-    for group in re.findall(r"\[([0-9., ]+)\]", text):
+    for group in re.findall(r"\[([A-Z0-9., ]+)\]", text):
         for raw in group.split(","):
             candidate = raw.strip()
-            if not re.fullmatch(r"\d+\.\d+", candidate):
+            if not re.fullmatch(_ELEMENT_ID, candidate):
                 continue
             if candidate in _CHARTER_ID_SET and candidate not in seen:
                 seen.add(candidate)
@@ -234,14 +242,20 @@ class SlurmConfig:
 
 @dataclass
 class CharterScaleConfig:
-    sidecar_path: str = ""
-    output_dir: str = ""
+    corpus: str = "dclm-edu"
+    source_dir: str = ""  # raw source corpus (read-only, e.g. DCLM-Edu/FineWeb-2)
+    filtered_dir: str = ""  # dense filtered dataset: prefilter output / annotation input
+    output_dir: str = ""  # run scratch (results/completions/logs) + export dataset
+    n_tasks: int = 0  # 0 = min(n_shards, DEFAULT_MAX_TASKS); frozen at first submit
+    prefilter_max_shards: int = 0  # 0 = all source shards; >0 caps for smoke/subset
+    language_filter: list[str] = field(default_factory=lambda: ["en"])
+    safety_min_score: int = 4
+    safety_min_confidence: float = 0.9
+    reflection_max_chars: int = 8000  # char-space reflection-point cap (no tokenization)
     reflection_prompt: str = "generator_reflection_v1.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False
     json_mode: bool = False
-    max_rows: int = 0  # 0 = all rows
-    rows_per_task: int = 100000
     max_concurrent_requests: int = 2048
     save_batch_size: int = 200
     progress_interval: int = 1000

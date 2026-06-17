@@ -76,6 +76,23 @@ def _sample_tok_idx(n_tokens: int, rng: random.Random) -> int:
     return max(1, min(int(t * n_tokens), n_tokens - 1)) if n_tokens > 1 else 0
 
 
+def compute_reflection_point_char(
+    text: str, rng: random.Random, max_chars: int | None = None
+) -> int:
+    """Sample a reflection point as a character offset — no tokenization.
+
+    Uses the same piecewise distribution as the token sampler but over
+    characters: the eligible region is the first *max_chars* characters (or the
+    whole text). Returns the character offset, so ``text[:offset]`` is the
+    context before the reflection point.
+    """
+    n = len(text)
+    assert n > 0, "Text is empty"
+    if max_chars is not None:
+        n = min(n, max_chars)
+    return _sample_tok_idx(n, rng)
+
+
 def compute_reflection_point(text: str, rng: random.Random, max_tokens: int | None = None) -> int:
     """Pick a reflection point snapped to a token boundary.
 

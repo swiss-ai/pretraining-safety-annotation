@@ -16,7 +16,7 @@ from typing import Callable
 
 from pipeline.config import extract_charter_elements
 from pipeline.generation import REFLECTION_TASK
-from pipeline.tokenizer import compute_reflection_point_tokens
+from pipeline.tokenizer import compute_reflection_point_char
 
 
 @dataclass
@@ -27,7 +27,7 @@ class RunDefinition:
     prompt_type: str  # "reflection" — selects the prompt file
     output_columns: list[str]
     build_calls: Callable
-    # (doc_text, doc_id, system_prompt, reflection_seed, max_text_tokens)
+    # (doc_text, doc_id, system_prompt, reflection_seed, max_chars)
     #  -> list[(messages, required_output_fields, meta)]
     post_process: Callable
     # (doc_id, doc_text, parsed_results_per_call, meta) -> dict of column values
@@ -43,7 +43,6 @@ class RunDefinition:
 _REFLECTIONS_COLUMNS = [
     "reflection_1p",
     "reflection_position",
-    "reflection_token_index",
     "charter_reflection",
 ]
 
@@ -53,19 +52,16 @@ def _reflections_build_calls(
     doc_id: str,
     system_prompt: str,
     reflection_seed: int,
-    max_text_tokens: int = 1920,
+    max_chars: int = 8000,
 ) -> list[tuple[list[dict], set[str], dict]]:
     """Build a single API call for the reflections run.
 
-    ``max_text_tokens`` caps where the reflection point may fall. These corpora
-    are not tokenized, so it is ``cfg.max_tokens`` and the sampled token index
-    is an index into a SmolLM2 retokenization of the (clipped) text, used only
-    as an advisory position alongside the canonical character offset.
+    The reflection point is sampled directly in character space (no
+    tokenization). ``max_chars`` caps how far into the document it may fall,
+    bounding the before-context prompt size.
     """
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
-    rp_char, rp_tok = compute_reflection_point_tokens(
-        doc_text, rp_rng, max_tokens=max_text_tokens
-    )
+    rp_char = compute_reflection_point_char(doc_text, rp_rng, max_chars=max_chars)
 
     context_before = doc_text[:rp_char]
 
@@ -76,10 +72,7 @@ def _reflections_build_calls(
         {"role": "user", "content": refl_user},
     ]
 
-    meta = {
-        "reflection_point": rp_char,
-        "reflection_token_index": rp_tok,
-    }
+    meta = {"reflection_point": rp_char}
 
     return [
         (refl_messages, {"analysis", "reflection_1p"}, meta),
@@ -99,10 +92,9 @@ def _reflections_post_process(
     )
 
     return {
-        "reflection_1p":          refl_parsed.get("reflection_1p") or "",
-        "reflection_position":    meta["reflection_point"],
-        "reflection_token_index": meta["reflection_token_index"],
-        "charter_reflection":     json.dumps(charter_reflection),
+        "reflection_1p":       refl_parsed.get("reflection_1p") or "",
+        "reflection_position": meta["reflection_point"],
+        "charter_reflection":  json.dumps(charter_reflection),
     }
 
 

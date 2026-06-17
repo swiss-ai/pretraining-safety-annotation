@@ -54,8 +54,7 @@ Provenance (`doc_id, corpus, source_shard, language, safety_score`) + token usag
 | Column | Type | Meaning |
 |--------|------|---------|
 | `reflection_1p` | large_string | first-person reflection (text up to the reflection point) |
-| `reflection_position` | int32 | **canonical** character offset of the reflection point |
-| `reflection_token_index` | int32 | advisory SmolLM2-retokenization index (not binary-aligned) |
+| `reflection_position` | int32 | character offset of the reflection point (sampled in char space, no tokenization) |
 | `charter_reflection` | large_string | JSON list of `[X.Y]` charter element IDs |
 
 ## Invariants (see `AGENTS.md`)
@@ -65,8 +64,9 @@ Provenance (`doc_id, corpus, source_shard, language, safety_score`) + token usag
   re-strides every rank and breaks resume. `n_tasks` is chosen + capped (≪ `MaxArraySize`),
   never the shard count.
 - **doc_id is the key** for resume, output, and the downstream join. No row-order concept.
-- **Annotate-first**: no tokenization precedes annotation; `reflection_position` (char offset)
-  is canonical.
+- **Annotate-first, char-space reflection point**: no tokenization anywhere in the scale path.
+  The reflection point is sampled directly as a character offset (`reflection_position`),
+  capped at `reflection_max_chars`.
 
 ## Configuration
 
@@ -77,9 +77,11 @@ charter.scale:
   filtered_dir: ${oc.env:SCRATCH}/.../dclm-edu_filtered       # prefilter out / annotate in
   output_dir: ${oc.env:SCRATCH}/model-raising-data/charter/scale
   n_tasks: 0                 # 0 = min(n_shards, DEFAULT_MAX_TASKS); frozen at first submit
+  prefilter_max_shards: 0    # >0 caps source shards (smoke/subset)
   language_filter: [en]
   safety_min_score: 4
   safety_min_confidence: 0.9
+  reflection_max_chars: 8000 # char-space reflection-point cap
   reflection_prompt: generator_reflection_v7.md
   generator_alias: qwen3.5-35b-a3b
   sglang: { ... }            # annotation only; prefilter launches no sglang
