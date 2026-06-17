@@ -2,7 +2,7 @@
 
 Pipeline for **charter-guided pretraining data annotation**.
 
-The charter-annotation track (`pipeline/charter/`) develops the production prompt through four steps: humans annotate FineWeb samples with charter reflections (`charter/seed`), LLMs then generate and judge annotations with an iterative improver loop (`charter/improve`), candidate generators/judges are ranked on a diverse pool (`charter/eval`), and the winning prompt is run at scale over large external corpora — DCLM-Edu, FineWeb-2, … (`charter/scale`, via the general dataloader in `pipeline/corpus/`). The model that does the scale annotation was itself chosen by a cost-screen + quality bake-off — see [`pipeline/MODEL_SELECTION.md`](pipeline/MODEL_SELECTION.md).
+The charter-annotation track (`pipeline/charter/`) develops the production prompt through four steps: humans annotate FineWeb samples with charter reflections (`charter/seed`), LLMs then generate and judge annotations with an iterative improver loop (`charter/improve`), candidate generators/judges are ranked on fixed benchmark sets — `dclm-en` (English) and `fw2-multi` (six languages) (`charter/eval`), and the winning prompt is run at scale over large external corpora — DCLM-Edu, FineWeb-2, … (`charter/scale`, via the general dataloader in `pipeline/corpus/`). The model that does the scale annotation was itself chosen by a cost-screen + quality benchmarking — see [`pipeline/MODEL_SELECTION.md`](pipeline/MODEL_SELECTION.md).
 
 The charter / specification that annotations cite lives in the [`apertus-charter`](apertus-charter/) git submodule at `apertus-charter/charter-v1.0.md` (set as `charter_path` in `configs/config.yaml`).
 
@@ -57,6 +57,17 @@ uv run python -m pipeline.charter.scale export --run reflections
 
 Dashboard port: `DASHBOARD_PORT` (default 8600). See `pipeline/charter/scale/README.md` for scale-up internals and `pipeline/charter/scale/AGENTS.md` for invariants.
 
+## charter.eval benches
+
+`charter.eval` ranks candidate generators/judges on a **fixed benchmark set** (a *bench*), defined in `pipeline/charter/eval/benches.py`:
+
+| Bench | Items | Languages |
+|-------|-------|-----------|
+| `dclm-en` (default) | 1000 | English (DCLM-Edu) |
+| `fw2-multi` | 1000 | rus, cmn, deu, jpn, fra, ita (FineWeb-2), balanced |
+
+Each bench is a recipe (corpus + languages + per-language count + safety threshold) materialized once to `data/benches/{name}.parquet` (gitignored → rebuilt from source on demand, or via `build-bench`). Items are docs above the safety threshold; the ranker carries `subset=language`, so `rank-generators` shows a **per-language breakdown** for `fw2-multi`. Select a bench with `charter.eval.{generator,judge}_eval.bench=<name>`; set `bench=""` to fall back to legacy Dolma3 sampling.
+
 ## charter.scale runs
 
 Each run in `pipeline/charter/scale/runs.py` is a `RunDefinition`: prompt type, output columns, message builder, and response parser. The scale flow is `prefilter` (materialize a dense filtered dataset above a configurable safety threshold) → `submit` (annotate, keyed by `doc_id`) → `export` (write the `doc_id`-keyed annotation dataset). See `pipeline/charter/scale/README.md`.
@@ -85,7 +96,7 @@ pipeline/
 ├── charter/                   # charter-cited annotation pipeline (the main track)
 │   ├── seed/                  # human annotation: stratified FineWeb sampling + storage
 │   ├── improve/               # generate→judge iteration + autonomous improver loop
-│   ├── eval/                  # diverse-pool eval of candidate generators/judges
+│   ├── eval/                  # generator/judge benchmarking on fixed benches (benches.py: dclm-en, fw2-multi)
 │   └── scale/                 # scale-up generation (SLURM + co-located sglang); see scale/README.md
 └── prompts/                   # init templates checked into git
     ├── init_generator_reflection.md
