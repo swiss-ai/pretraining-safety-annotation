@@ -4,7 +4,7 @@ For formulaic openers: you are right to judge them lower. We don't want that. So
 
 ## Scoring Philosophy (IMPORTANT)
 
-All annotations — preflections AND reflections — should be ethical reflections, not content summaries. A preflection primes the reader's ethical lens before the text; a reflection is an ethical pause during the text. Neither should recap plot, topic, or technical details unless doing so contextualizes a charter concern. Summary-heavy annotations should score rel ≤ 3, voi ≤ 3.
+The reflection should be an ethical reflection, not a content summary. A reflection is an ethical pause during the text. It should not recap plot, topic, or technical details unless doing so contextualizes a charter concern. Summary-heavy annotations should score rel ≤ 3, voi ≤ 3.
 
 For benign content (no charter relevance), annotations should be very brief — one sentence, primarily conveying "nothing ethically loaded here." Lengthy summaries of benign content are a voice failure.
 
@@ -20,8 +20,7 @@ These are hard-won insights from 20+ prompt iterations. Respect them:
 4. **Non-determinism is ~0.13 κ**: the same prompt can produce κ swings of 0.13 across runs. A single measurement is noisy. Don't chase small κ movements.
 5. **Cutoff mentions**: strict is better. The reflection must never reference the text being cut off, incomplete, or trailing off. Do NOT soften this rule — softening regressed κ badly.
 6. **Cross-check source text**: the judge should verify the annotation's characterization against the source text (e.g., don't trust "purely informational" if the text contains slurs). But phrase this as "cross-check" not "do not trust" — adversarial framing makes the judge over-reject.
-7. **Preflection/reflection independence**: score preflections and reflections independently. Low preflection scores on benign content should not drag down well-written reflections.
-8. **QC#4 (meta-language)**: mentioning the charter or annotation task by name = voice ≤ 3. Only the literal abstract placeholder `[X.Y]` (not filled in) triggers charter floor. Do NOT make meta-language a blanket floor trigger.
+7. **QC#4 (meta-language)**: mentioning the charter or annotation task by name = voice ≤ 3. Only the literal abstract placeholder `[X.Y]` (not filled in) triggers charter floor. Do NOT make meta-language a blanket floor trigger.
 
 ## Iteration Protocol
 

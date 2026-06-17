@@ -55,16 +55,12 @@ def test_save_run_with_mode_prompts():
         config={"accept_threshold": 4},
         analysis="test with mode prompts",
         gen_reflection_prompt="generator_reflection_v1.md",
-        gen_preflection_prompt="generator_preflection_v1.md",
         judge_reflection_prompt="judge_reflection_v1.md",
-        judge_preflection_prompt="judge_preflection_v1.md",
     )
     runs = load_runs()
     assert len(runs) == 1
     assert runs[0]["gen_reflection_prompt"] == "generator_reflection_v1.md"
-    assert runs[0]["gen_preflection_prompt"] == "generator_preflection_v1.md"
     assert runs[0]["judge_reflection_prompt"] == "judge_reflection_v1.md"
-    assert runs[0]["judge_preflection_prompt"] == "judge_preflection_v1.md"
 
 
 def test_save_and_load_item():
@@ -80,9 +76,7 @@ def test_save_and_load_item():
         "gen_prompt": "gen_v1.md",
         "model": "test",
         "analysis": "a",
-        "preflection": "p",
         "reflection": "r",
-        "preflection_charter_elements": [],
         "reflection_charter_elements": ["1.1"],
         "raw_response": "raw",
         "latency_ms": 100,
@@ -98,12 +92,7 @@ def test_save_and_load_item():
     updated = {
         **record,
         "judgment": {
-            "preflection": {
-                "scores": {"relevance": 4},
-                "aggregate": 4.0,
-                "reasoning": "good pre",
-            },
-            "reflection": {
+            "reflection_1p": {
                 "scores": {"relevance": 4},
                 "aggregate": 4.0,
                 "reasoning": "good ref",
@@ -133,9 +122,7 @@ def test_items_dedup_by_iteration():
                 "gen_prompt": "gen_v1.md",
                 "model": "test",
                 "analysis": "a",
-                "preflection": "p",
                 "reflection": "r",
-                "preflection_charter_elements": [],
                 "reflection_charter_elements": [],
                 "raw_response": "raw",
                 "latency_ms": 100,
@@ -165,9 +152,7 @@ def test_load_items_for_iteration():
                 "gen_prompt": "gen_v1.md",
                 "model": "test",
                 "analysis": "a",
-                "preflection": "p",
                 "reflection": "r",
-                "preflection_charter_elements": [],
                 "reflection_charter_elements": [],
                 "raw_response": "raw",
                 "latency_ms": 100,
@@ -186,13 +171,7 @@ def test_save_and_load_review():
     from pipeline.charter.improve.storage import load_latest_reviews, load_reviews, save_review
 
     per_part_scores = {
-        "preflection": {
-            "relevance": 4,
-            "specificity": 3,
-            "charter_grounding": 5,
-            "voice_tone": 4,
-        },
-        "reflection": {
+        "reflection_1p": {
             "relevance": 3,
             "specificity": 4,
             "charter_grounding": 4,
@@ -204,25 +183,18 @@ def test_save_and_load_review():
         iteration=1,
         reviewer_id="alice",
         scores=per_part_scores,
-        aggregate=3.75,
+        aggregate=3.5,
         decision="accept",
         notes="good",
     )
     reviews = load_reviews()
     assert len(reviews) == 1
     assert reviews[0]["reviewer_id"] == "alice"
-    assert "preflection" in reviews[0]["scores"]
-    assert "reflection" in reviews[0]["scores"]
+    assert "reflection_1p" in reviews[0]["scores"]
 
     # Dedup by (item_id, iteration, reviewer_id)
     updated_scores = {
-        "preflection": {
-            "relevance": 5,
-            "specificity": 4,
-            "charter_grounding": 5,
-            "voice_tone": 5,
-        },
-        "reflection": {
+        "reflection_1p": {
             "relevance": 5,
             "specificity": 5,
             "charter_grounding": 5,
@@ -324,21 +296,17 @@ def test_comment_target_part():
     from pipeline.charter.seed.storage import load_comments_by_annotation, save_comment
 
     save_comment("item1", "alice", "bob", "general comment", target_part="general")
-    save_comment("item1", "alice", "bob", "preflection note", target_part="preflection")
     save_comment(
         "item1", "alice", "bob", "reflection feedback", target_part="reflection"
     )
 
     by_ann = load_comments_by_annotation()
     comments = by_ann[("item1", "alice")]
-    assert len(comments) == 3
+    assert len(comments) == 2
 
     general = [c for c in comments if c["target_part"] == "general"]
     assert len(general) == 1
     assert general[0]["comment"] == "general comment"
-
-    pre = [c for c in comments if c["target_part"] == "preflection"]
-    assert len(pre) == 1
 
     refl = [c for c in comments if c["target_part"] == "reflection"]
     assert len(refl) == 1
@@ -376,7 +344,6 @@ def test_annotation_roundtrip():
         text="hello world",
         reflection_point=5,
         analysis="analysis text",
-        preflection="pre text",
         reflection="refl text",
         reflection_charter_elements=["1.1", "2.3"],
         presentation_order=0,

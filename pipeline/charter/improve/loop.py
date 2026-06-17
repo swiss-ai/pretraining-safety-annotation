@@ -5,8 +5,8 @@ tools via CLI. Multiple models run in parallel, each with its own scratch
 directory and thread-safe status updates.
 
 Usage:
-    uv run python -m pipeline.charter.improve.loop --role judge --mode reflection [--aliases glm45,olmo3-32B-think]
-    uv run python -m pipeline.charter.improve.loop --role generator --mode preflection [--aliases glm45]
+    uv run python -m pipeline.charter.improve.loop --role judge [--aliases glm45,olmo3-32B-think]
+    uv run python -m pipeline.charter.improve.loop --role generator [--aliases glm45]
 """
 
 from __future__ import annotations
@@ -120,7 +120,6 @@ def _build_improver_prompt(
         agent_tmp_dir = AGENT_TMP_DIR
     model_dir = PROMPTS_DIR / target_alias
     improver_path = _INIT_PROMPTS_DIR / "improver.md"
-    other_mode = "preflection" if mode == "reflection" else "reflection"
 
     if role == "judge":
         prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", target_alias)
@@ -128,9 +127,6 @@ def _build_improver_prompt(
         gen_alias_for_ref = cfg.charter.improve.generator_models[0].alias
         other_prompt_path = resolve_prompt_path(
             f"generator_{mode}_latest.md", gen_alias_for_ref
-        )
-        same_role_other_mode_path = resolve_prompt_path(
-            f"judge_{other_mode}_latest.md", target_alias
         )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
@@ -144,9 +140,6 @@ def _build_improver_prompt(
         # Resolve judge prompt from the first judge model, not the generator model
         judge_alias = cfg.charter.improve.judge_models[0].alias
         other_prompt_path = resolve_prompt_path(f"judge_{mode}_latest.md", judge_alias)
-        same_role_other_mode_path = resolve_prompt_path(
-            f"generator_{other_mode}_latest.md", target_alias
-        )
         current_v = _extract_version(prompt_path.name)
         next_v = current_v + 1
         phase_prompt_path = _INIT_PROMPTS_DIR / cfg.charter.improve.improver.generator_prompt
@@ -365,9 +358,6 @@ Do NOT waste tool calls on these commands — they will return empty or irreleva
 You are ONLY responsible for the **{target_alias}** model's **{mode}** prompt. Ignore iterations,
 errors, or data belonging to other models. When analyzing results, filter by your target model.
 
-The {other_mode} prompt for this role is at: {same_role_other_mode_path}
-Read it for context but do NOT modify it — a separate improver handles {other_mode}.
-
 {phase_instructions}
 {first_run_note}{human_notes_block}
 ## Cross-model evaluation
@@ -376,35 +366,22 @@ When you run a batch, it creates one iteration per {other_type} model, all shari
 Use `cross_summary <group_id>` to see aggregated per-model stats after each batch.
 
 ## How the pipeline sends messages to generators
-Generation uses two sequential API calls per item with the SAME system prompt.
-The system prompt is the generator prompt with {{charter}} substituted.
+Generation uses a single API call per item. The system prompt is the generator
+prompt with {{charter}} substituted.
 
-**Call 1 — Reflection mode** (partial text only):
+**Reflection call** (partial text only):
 ```
 ## Full Text
 <text up to reflection point>
 
 ## Task
-Reflection mode. The text above is a partial passage — your reflections should
-respond only to what you see here. Produce: analysis, reflection_1p, reflection_3p.
+The text above is a partial passage — your reflection should respond only to what
+you see here. Produce: analysis, reflection_1p.
 ```
-Expected output: `analysis`, `reflection_1p`, `reflection_3p`
-
-**Call 2 — Preflection mode** (full text):
-```
-## Full Text
-<full text>
-
-## Task
-Preflection mode. The text above is the full passage.
-Produce: analysis, preflection_3p, preflection_1p.
-```
-Expected output: `analysis`, `preflection_3p`, `preflection_1p`
+Expected output: `analysis`, `reflection_1p`
 
 The reflection call prevents foreshadowing — the model never sees text beyond the
-reflection point. The **mode paragraph** near the top of the generator prompt MUST be
-preserved. Do not write instructions that assume the model sees the full text in
-reflection mode, and do not merge the two calls back into one.
+reflection point. Do not write instructions that assume the model sees the full text.
 There is no `response_format=json_object` for most models, so JSON compliance depends on
 prompt instructions.
 
@@ -436,7 +413,7 @@ Run these via Bash (prefix with `uv run`). Replace <ITER> with the iteration num
   uv run python -m pipeline.improver_tools gold                      — gold annotations (concise, no source text)
   uv run python -m pipeline.improver_tools gold --verbose            — gold with full source text (large output!)
   uv run python -m pipeline.improver_tools compare <id> <ITER> — generated vs gold{reviews_tool_line}
-  uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part preflection_3p|preflection_1p|reflection_1p|reflection_3p]
+  uv run python -m pipeline.improver_tools filter <ITER> --dim <dimension> --below <threshold> [--part reflection_1p]
   uv run python -m pipeline.improver_tools trend --mode {mode}              — cross-iteration comparison table
   uv run python -m pipeline.improver_tools correlations              — judge-human correlation by judge version
   uv run python -m pipeline.improver_tools parse_stats <ITER>        — generation parse success/failure counts
@@ -912,9 +889,9 @@ def main():
     parser.add_argument("--role", required=True, choices=["judge", "generator"])
     parser.add_argument(
         "--mode",
-        required=True,
-        choices=["reflection", "preflection"],
-        help="Which mode's prompt to improve",
+        default="reflection",
+        choices=["reflection"],
+        help="Which mode's prompt to improve (only 'reflection' is supported)",
     )
     parser.add_argument(
         "--aliases",

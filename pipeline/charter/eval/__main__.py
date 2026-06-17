@@ -1,7 +1,7 @@
 """Charter eval CLI: eval-generators / eval-judges / rank-* / list-runs / failures.
 
 Usage:
-    uv run python -m pipeline.charter.eval eval-generators [--run-id NAME] [--stage generate|judge] [--mode reflection|preflection] [overrides...]
+    uv run python -m pipeline.charter.eval eval-generators [--run-id NAME] [--stage generate|judge] [overrides...]
     uv run python -m pipeline.charter.eval eval-judges     [--run-id NAME] [overrides...]
     uv run python -m pipeline.charter.eval rank-generators <run_id> [--json]
     uv run python -m pipeline.charter.eval rank-judges     <run_id> [--json]
@@ -14,9 +14,6 @@ OmegaConf-style dotlist overrides work the same as in charter.improve:
 The --stage flag for eval-generators lets you run generation and judging separately:
     uv run python -m pipeline.charter.eval eval-generators --run-id my-run --stage generate
     uv run python -m pipeline.charter.eval eval-generators --run-id my-run --stage judge
-
-The --mode flag restricts to a single pipeline (reflection or preflection):
-    uv run python -m pipeline.charter.eval eval-generators --run-id my-run --mode reflection
 """
 
 from __future__ import annotations
@@ -36,14 +33,13 @@ def _now_iso() -> str:
 
 def _split_run_id_and_overrides(
     args: list[str],
-) -> tuple[str | None, str | None, str | None, list[str]]:
-    """Pull --run-id NAME, --stage NAME, and --mode NAME out of args.
+) -> tuple[str | None, str | None, list[str]]:
+    """Pull --run-id NAME and --stage NAME out of args.
 
-    Returns ``(run_id, stage, mode, remaining_overrides)``.
+    Returns ``(run_id, stage, remaining_overrides)``.
     """
     run_id: str | None = None
     stage: str | None = None
-    mode: str | None = None
     rest: list[str] = []
     i = 0
     while i < len(args):
@@ -56,35 +52,25 @@ def _split_run_id_and_overrides(
             stage = args[i + 1]
             i += 2
             continue
-        if a == "--mode" and i + 1 < len(args):
-            mode = args[i + 1]
-            i += 2
-            continue
         rest.append(a)
         i += 1
-    return run_id, stage, mode, rest
+    return run_id, stage, rest
 
 
 def cmd_eval_generators(args: list[str]) -> int:
-    run_id, stage, mode, overrides = _split_run_id_and_overrides(args)
+    run_id, stage, overrides = _split_run_id_and_overrides(args)
     if stage and stage not in ("generate", "judge"):
         print(f"Unknown --stage {stage!r}. Must be 'generate' or 'judge'.")
         return 2
-    if mode and mode not in ("reflection", "preflection"):
-        print(f"Unknown --mode {mode!r}. Must be 'reflection' or 'preflection'.")
-        return 2
     cfg = load_config(overrides=overrides if overrides else None)
-    if mode:
-        cfg.charter.eval.generator_eval.mode = mode
     if not run_id:
         run_id = f"gen_eval_{_now_iso()}"
     from pipeline.charter.eval.eval_generators import run_generator_eval
 
     logger.info(
-        "charter.eval eval-generators run_id={} stage={} mode={}",
+        "charter.eval eval-generators run_id={} stage={}",
         run_id,
         stage or "all",
-        cfg.charter.eval.generator_eval.mode or "both",
     )
     run_generator_eval(cfg, run_id, stage=stage)
     print(f"\nDone. run_id={run_id}")
@@ -92,7 +78,7 @@ def cmd_eval_generators(args: list[str]) -> int:
 
 
 def cmd_eval_judges(args: list[str]) -> int:
-    run_id, _stage, _mode, overrides = _split_run_id_and_overrides(args)
+    run_id, _stage, overrides = _split_run_id_and_overrides(args)
     cfg = load_config(overrides=overrides if overrides else None)
     if not run_id:
         run_id = f"judge_eval_{_now_iso()}"

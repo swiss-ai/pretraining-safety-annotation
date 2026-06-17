@@ -43,7 +43,6 @@ def make_fake_generate(captured_failures, fail_ids=frozenset()):
     def _fake(
         items,
         refl_prompt_path,
-        prefl_prompt_path,
         charter_text,
         model,
         iteration,
@@ -53,7 +52,6 @@ def make_fake_generate(captured_failures, fail_ids=frozenset()):
         thinking=False,
         json_mode=False,
         on_failure=None,
-        mode=None,
         **kw,
     ):
         on_result = kw.get("on_result")
@@ -76,10 +74,7 @@ def make_fake_generate(captured_failures, fail_ids=frozenset()):
                 **it,
                 "iteration": iteration,
                 "model": model,
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1",
-                "reflection_3p": "r3",
                 "judgment": None,
                 "input_tokens": 1,
                 "output_tokens": 1,
@@ -99,7 +94,6 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
     def _fake(
         items,
         refl_prompt_path,
-        prefl_prompt_path,
         model,
         iteration,
         accept_threshold,
@@ -138,22 +132,7 @@ def make_fake_judge(captured_calls=None, fail_ids=frozenset()):
                     )
                 continue
             judgment = {
-                "preflection_3p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
-                "preflection_1p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
                 "reflection_1p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
-                "reflection_3p": {
                     "scores": {"relevance": 4},
                     "aggregate": 4.0,
                     "reasoning": "",
@@ -195,26 +174,22 @@ def _build_cfg(tmp_path):
         alias="gold",
         api_name="gold-api",
         prompt_reflection="judge_v1.md",
-        prompt_preflection="judge_v1.md",
     )
     cfg.charter.eval.judge_eval.generator = CandidateModel(
         alias="genA",
         api_name="genA-api",
         prompt_reflection="generator_v1.md",
-        prompt_preflection="generator_v1.md",
     )
     cfg.charter.eval.judge_eval.candidates = [
         CandidateModel(
             alias="cand1",
             api_name="cand1-api",
             prompt_reflection="judge_v2.md",
-            prompt_preflection="judge_v2.md",
         ),
         CandidateModel(
             alias="cand2",
             api_name="cand2-api",
             prompt_reflection="judge_v3.md",
-            prompt_preflection="judge_v3.md",
         ),
     ]
     cfg.charter.eval.judge_eval.n_items = 5
@@ -350,13 +325,11 @@ class TestRunJudgeEval:
                 alias="gold",
                 api_name="gold-api",
                 prompt_reflection="judge_v1.md",
-                prompt_preflection="judge_v1.md",
             ),
             CandidateModel(
                 alias="cand1",
                 api_name="cand1-api",
                 prompt_reflection="judge_v2.md",
-                prompt_preflection="judge_v2.md",
             ),
         ]
 
@@ -446,16 +419,10 @@ class TestRunJudgeEval:
                 "iteration": 1,
                 "text": "x",
                 "reflection_point": 0,
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1v",
-                "reflection_3p": "r3v",
                 "human_review": {
                     "scores": {
-                        "preflection_3p": {"relevance": 3},
-                        "preflection_1p": {"relevance": 3},
                         "reflection_1p": {"relevance": 3},
-                        "reflection_3p": {"relevance": 3},
                     },
                     "aggregate": 3.0,
                 },
@@ -465,16 +432,10 @@ class TestRunJudgeEval:
                 "iteration": 1,
                 "text": "y",
                 "reflection_point": 0,
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1v",
-                "reflection_3p": "r3v",
                 "human_review": {
                     "scores": {
-                        "preflection_3p": {"relevance": 4},
-                        "preflection_1p": {"relevance": 4},
                         "reflection_1p": {"relevance": 4},
-                        "reflection_3p": {"relevance": 4},
                     },
                     "aggregate": 4.0,
                 },
@@ -531,16 +492,10 @@ class TestRunJudgeEval:
                 "iteration": 1,
                 "text": "dup with generator",
                 "reflection_point": 0,
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1v",
-                "reflection_3p": "r3v",
                 "human_review": {
                     "scores": {
-                        "preflection_3p": {"relevance": 3},
-                        "preflection_1p": {"relevance": 3},
                         "reflection_1p": {"relevance": 3},
-                        "reflection_3p": {"relevance": 3},
                     },
                     "aggregate": 3.0,
                 },
@@ -550,16 +505,10 @@ class TestRunJudgeEval:
                 "iteration": 1,
                 "text": "y",
                 "reflection_point": 0,
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1v",
-                "reflection_3p": "r3v",
                 "human_review": {
                     "scores": {
-                        "preflection_3p": {"relevance": 4},
-                        "preflection_1p": {"relevance": 4},
                         "reflection_1p": {"relevance": 4},
-                        "reflection_3p": {"relevance": 4},
                     },
                     "aggregate": 4.0,
                 },
@@ -599,7 +548,6 @@ class TestRunJudgeEval:
         def _judge_dispatcher(
             items,
             refl_prompt_path,
-            prefl_prompt_path,
             model,
             iteration,
             accept_threshold,
@@ -617,7 +565,6 @@ class TestRunJudgeEval:
             return fake(
                 items,
                 refl_prompt_path,
-                prefl_prompt_path,
                 model,
                 iteration,
                 accept_threshold,

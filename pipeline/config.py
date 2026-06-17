@@ -167,7 +167,6 @@ class CandidateModel:
     hf_slug: str = ""
     endpoint: str = ""  # per-model override; falls back to charter.eval.endpoint
     prompt_reflection: str = ""  # e.g. "generator_reflection_v7.md"
-    prompt_preflection: str = ""  # e.g. "generator_preflection_v2.md"
     thinking: bool = False
     json_mode: bool = False
     completion_max_tokens: int | None = None
@@ -178,8 +177,6 @@ class CandidateModel:
 class GeneratorEvalConfig:
     candidates: list[CandidateModel] = field(default_factory=list)
     gold_prompt_reflection: str = ""  # override gold_judge prompt for this eval
-    gold_prompt_preflection: str = ""
-    mode: str = ""  # "reflection", "preflection", or "" for both
     n_items: int = 5000
     seed: int = 42
     max_concurrent: int = 50
@@ -240,8 +237,6 @@ class CharterScaleConfig:
     sidecar_path: str = ""
     output_dir: str = ""
     reflection_prompt: str = "generator_reflection_v1.md"
-    refusal_reflection_prompt: str = "generator_reflection_refusal_v2.md"
-    preflection_prompt: str = "generator_preflection_v6.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False
     json_mode: bool = False
@@ -328,11 +323,9 @@ def load_config(overrides: list[str] | None = None) -> AppConfig:
 def _init_model_prompts(alias: str) -> None:
     """Initialize a model's prompt directory from the init templates.
 
-    Copies init templates to versioned v1 files for each role+mode combination:
+    Copies init templates to versioned v1 files for each role:
     - init_generator_reflection.md -> generator_reflection_v1.md
-    - init_generator_preflection.md -> generator_preflection_v1.md
     - init_judge_reflection.md -> judge_reflection_v1.md
-    - init_judge_preflection.md -> judge_preflection_v1.md
     Only runs once per model (skips if dir already exists).
     """
     import shutil
@@ -343,9 +336,7 @@ def _init_model_prompts(alias: str) -> None:
     model_dir.mkdir(parents=True)
     for init_name, v1_name in [
         ("init_generator_reflection.md", "generator_reflection_v1.md"),
-        ("init_generator_preflection.md", "generator_preflection_v1.md"),
         ("init_judge_reflection.md", "judge_reflection_v1.md"),
-        ("init_judge_preflection.md", "judge_preflection_v1.md"),
     ]:
         src = _INIT_PROMPTS_DIR / init_name
         assert src.exists(), f"Init template not found: {src}"
@@ -372,7 +363,7 @@ def _resolve_latest_version(model_dir: Path, filename: str) -> Path:
 
 
 _EXPLICIT_VERSION_RE = re.compile(
-    r"^(generator|judge)_(reflection|preflection)_v\d+\.md$"
+    r"^(generator|judge)_reflection_v\d+\.md$"
 )
 
 

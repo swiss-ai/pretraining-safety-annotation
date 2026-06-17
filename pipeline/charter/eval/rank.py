@@ -33,9 +33,8 @@ def _meta_prompt_id(meta_dict: dict) -> str:
     ``prompt`` field for old runs.
     """
     r = meta_dict.get("prompt_reflection", "")
-    p = meta_dict.get("prompt_preflection", "")
-    if r or p:
-        return r or p
+    if r:
+        return r
     # Legacy fallback: old runs stored a single "prompt" field.
     return meta_dict.get("prompt", "")
 
@@ -145,8 +144,7 @@ def _judgment_mode_decision(row: dict, mode: str) -> str | None:
 def _per_voice_dim_scores(row: dict) -> dict[str, list[float]]:
     """Return {dim → [score across all voices/fields]} for one judgment row.
 
-    Voices/fields are discovered dynamically from the judgment payload so old
-    (2-voice preflection) and new (4-field preflection) rows both work.
+    Voices/fields are discovered dynamically from the judgment payload.
     """
     j = row.get("judgment") or {}
     out: dict[str, list[float]] = defaultdict(list)
@@ -210,9 +208,6 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
         refl_aggregates: list[float] = []
         refl_accepts = 0
         refl_accept_by_safety: dict[str, dict] = {}
-        prefl_aggregates: list[float] = []
-        prefl_accepts = 0
-        prefl_accept_by_safety: dict[str, dict] = {}
 
         for row in judgment_rows:
             agg = _judgment_aggregate(row)
@@ -245,22 +240,9 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
                 if refl_dec == "accept":
                     b["accepts"] += 1
 
-            prefl_agg = _judgment_mode_aggregate(row, "preflection")
-            if prefl_agg is not None:
-                prefl_aggregates.append(prefl_agg)
-            prefl_dec = _judgment_mode_decision(row, "preflection")
-            if prefl_dec == "accept":
-                prefl_accepts += 1
-            if prefl_dec is not None and ss is not None:
-                b = prefl_accept_by_safety.setdefault(key, {"n": 0, "accepts": 0})
-                b["n"] += 1
-                if prefl_dec == "accept":
-                    b["accepts"] += 1
-
         for safety_dict in (
             accept_by_safety,
             refl_accept_by_safety,
-            prefl_accept_by_safety,
         ):
             for _key, bucket in safety_dict.items():
                 n = bucket["n"]
@@ -307,8 +289,6 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
 
         if refl_accept_by_safety:
             entry["reflection_accept_by_safety_score"] = refl_accept_by_safety
-        if prefl_accept_by_safety:
-            entry["preflection_accept_by_safety_score"] = prefl_accept_by_safety
 
         # Add per-mode metrics only when data is available (new judgment format).
         if refl_aggregates:
@@ -324,19 +304,6 @@ def rank_generators(run_id: str, *, eval_dir: Path | str | None = None) -> list[
             )
             if refl_dec_count:
                 entry["reflection_accept_rate"] = refl_accepts / refl_dec_count
-
-        if prefl_aggregates:
-            entry["preflection_mean_aggregate"] = sum(prefl_aggregates) / len(
-                prefl_aggregates
-            )
-        if n_succeeded:
-            prefl_dec_count = sum(
-                1
-                for r in judgment_rows
-                if _judgment_mode_decision(r, "preflection") is not None
-            )
-            if prefl_dec_count:
-                entry["preflection_accept_rate"] = prefl_accepts / prefl_dec_count
 
         out.append(entry)
 
@@ -433,7 +400,7 @@ def _index_by(rows: list[dict], key) -> dict:
 
 
 def _judgment_per_dim_for_pairs(rows: list[dict]) -> dict[str, list[float]]:
-    """Return per-dim score lists across rows (averaged across the 4 voices)."""
+    """Return per-dim score lists across rows (averaged across voices)."""
     out: dict[str, list[float]] = defaultdict(list)
     for row in rows:
         per_dim = _per_voice_dim_scores(row)
@@ -450,13 +417,12 @@ def _per_mode_correlation(
     ref_dec_fn,
     key="item_id",
 ) -> dict[str, dict]:
-    """Compute per-mode (reflection/preflection) correlation metrics.
+    """Compute per-mode (reflection) correlation metrics.
 
     Returns a dict like::
 
         {
             "reflection": {"spearman": ..., "kappa": ...},
-            "preflection": {"spearman": ..., "kappa": ...},
         }
 
     Uses ``.get()`` everywhere; returns empty sub-dicts when per-mode data
@@ -476,7 +442,7 @@ def _per_mode_correlation(
         ref_index = ref_rows_or_index
 
     result: dict[str, dict] = {}
-    for mode in ("reflection", "preflection"):
+    for mode in ("reflection",):
         xs: list[float] = []
         ys: list[float] = []
         decs_a: list[str] = []

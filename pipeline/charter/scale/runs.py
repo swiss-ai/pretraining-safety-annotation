@@ -10,23 +10,13 @@ from __future__ import annotations
 
 import json
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from pipeline.config import extract_charter_elements
-from pipeline.generation import (
-    PREFLECTION_FIELDS_CURRENT,
-    PREFLECTION_TASK,
-    REFLECTION_TASK,
-    REFUSAL_REFLECTION_TASK,
-)
-from pipeline.tokenizer import (
-    compute_reflection_point_end,
-    compute_reflection_point_tokens,
-)
-
-SelectorFn = Callable[..., tuple[int, int]]
+from pipeline.generation import REFLECTION_TASK
+from pipeline.tokenizer import compute_reflection_point_tokens
 
 
 @dataclass
@@ -34,7 +24,7 @@ class RunDefinition:
     """Defines a generation run: what to generate and how to parse it."""
 
     name: str
-    prompt_type: str  # "reflection" or "preflection" — selects the prompt file
+    prompt_type: str  # "reflection" — selects the prompt file
     output_columns: list[str]
     build_calls: Callable
     # (doc_text, doc_id, system_prompt, reflection_seed, max_text_tokens)
@@ -42,8 +32,7 @@ class RunDefinition:
     post_process: Callable
     # (doc_id, doc_text, parsed_results_per_call, meta) -> dict of column values
     # Optional: override the default per-alias prompt directory. None = use
-    # FINAL_PROMPTS_DIR / generator_alias / prompt_filename (reflections,
-    # preflections); set to a fixed Path for in-tree, model-agnostic prompts.
+    # FINAL_PROMPTS_DIR / generator_alias / prompt_filename.
     prompt_source_dir: Path | None = None
     # Optional: name of a boolean column on the sidecar that must be True
     # for a row to be processed. Skipped rows still occupy their
@@ -53,52 +42,25 @@ class RunDefinition:
 
 
 # ---------------------------------------------------------------------------
-# reflections run  (partial text up to reflection point)
+# reflections run  (partial text up to reflection point, 1p reflection only)
 # ---------------------------------------------------------------------------
-# The two reflection runs ("reflections" and "reflection_end") share message
-# construction and parsing.  They differ in
-#   (a) which selector chooses the reflection point
-#   (b) the names of the output columns (so both can coexist in the merged
-#       sidecar as a paired ablation).
 
-_REFLECTIONS_COLS_DEFAULT: dict[str, str] = {k: k for k in (
+_REFLECTIONS_COLUMNS = [
     "reflection_1p",
-    "reflection_3p",
     "reflection_position",
     "reflection_token_index",
     "charter_reflection",
-)}
-
-_REFLECTIONS_COLS_END: dict[str, str] = {
-    "reflection_1p":          "reflection_end_1p",
-    "reflection_3p":          "reflection_end_3p",
-    "reflection_position":    "reflection_end_position",
-    "reflection_token_index": "reflection_end_token_index",
-    "charter_reflection":     "charter_reflection_end",
-}
-
-_REFLECTIONS_COLUMNS = list(_REFLECTIONS_COLS_DEFAULT.values())
-_REFLECTION_END_COLUMNS = list(_REFLECTIONS_COLS_END.values())
-
-_REFUSAL_REFLECTION_COLS: dict[str, str] = {
-    "reflection_1p":          "refusal_reflection_1p",
-    "reflection_position":    "refusal_reflection_position",
-    "reflection_token_index": "refusal_reflection_token_index",
-    "charter_reflection":     "charter_refusal_reflection",
-}
-_REFUSAL_REFLECTION_COLUMNS = list(_REFUSAL_REFLECTION_COLS.values())
+]
 
 
-def _build_reflection_calls(
+def _reflections_build_calls(
     doc_text: str,
     doc_id: str,
     system_prompt: str,
     reflection_seed: int,
-    max_text_tokens: int,
-    *,
-    selector: SelectorFn,
+    max_text_tokens: int = 1920,
 ) -> list[tuple[list[dict], set[str], dict]]:
-    """Build a single API call for a reflection-style run.
+    """Build a single API call for the reflections run.
 
     ``max_text_tokens`` is the per-doc token cap — pass the sidecar's
     ``token_length`` so sampled token indices are guaranteed to fall inside
@@ -106,12 +68,13 @@ def _build_reflection_calls(
     excluding the appended EOS).
     """
     rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
-    rp_char, rp_tok = selector(doc_text, rp_rng, max_tokens=max_text_tokens)
+    rp_char, rp_tok = compute_reflection_point_tokens(
+        doc_text, rp_rng, max_tokens=max_text_tokens
+    )
 
     context_before = doc_text[:rp_char]
 
-    refl_user = f"## Full Text\n\n{context_before}"
-    refl_user += REFLECTION_TASK
+    refl_user = f"## Full Text\n\n{context_before}" + REFLECTION_TASK
 
     refl_messages = [
         {"role": "system", "content": system_prompt},
@@ -124,186 +87,27 @@ def _build_reflection_calls(
     }
 
     return [
-        (refl_messages, {"analysis", "reflection_1p", "reflection_3p"}, meta),
+        (refl_messages, {"analysis", "reflection_1p"}, meta),
     ]
 
 
-def _make_reflection_post_process(columns: dict[str, str]) -> Callable:
-    """Factory: return a post_process that writes into ``columns``-named keys."""
-
-    def _post_process(
-        doc_id: str,
-        doc_text: str,
-        parsed_results: list[dict],
-        meta: dict,
-    ) -> dict:
-        (refl_parsed,) = parsed_results
-
-        charter_reflection = extract_charter_elements(
-            (refl_parsed.get("reflection_1p") or "")
-            + " "
-            + (refl_parsed.get("reflection_3p") or "")
-        )
-
-        return {
-            columns["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
-            columns["reflection_3p"]:          refl_parsed.get("reflection_3p") or "",
-            columns["reflection_position"]:    meta["reflection_point"],
-            columns["reflection_token_index"]: meta["reflection_token_index"],
-            columns["charter_reflection"]:     json.dumps(charter_reflection),
-        }
-
-    return _post_process
-
-
-def _reflections_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    return _build_reflection_calls(
-        doc_text=doc_text,
-        doc_id=doc_id,
-        system_prompt=system_prompt,
-        reflection_seed=reflection_seed,
-        max_text_tokens=max_text_tokens,
-        selector=compute_reflection_point_tokens,
-    )
-
-
-def _reflection_end_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    return _build_reflection_calls(
-        doc_text=doc_text,
-        doc_id=doc_id,
-        system_prompt=system_prompt,
-        reflection_seed=reflection_seed,
-        max_text_tokens=max_text_tokens,
-        selector=compute_reflection_point_end,
-    )
-
-
-_reflections_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_DEFAULT)
-_reflection_end_post_process = _make_reflection_post_process(_REFLECTIONS_COLS_END)
-
-
-def _refusal_reflection_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    """1p-only refusal reflection. Same selector as the reflections run
-    (row-aligned paired ablation), but asks the model only for analysis +
-    reflection_1p.
-    """
-    rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
-    rp_char, rp_tok = compute_reflection_point_tokens(
-        doc_text, rp_rng, max_tokens=max_text_tokens
-    )
-    context_before = doc_text[:rp_char]
-
-    refl_user = f"## Full Text\n\n{context_before}"
-    refl_user += REFUSAL_REFLECTION_TASK
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": refl_user},
-    ]
-    meta = {
-        "reflection_point": rp_char,
-        "reflection_token_index": rp_tok,
-    }
-    return [(messages, {"analysis", "reflection_1p"}, meta)]
-
-
-def _refusal_reflection_post_process(
+def _reflections_post_process(
     doc_id: str,
     doc_text: str,
     parsed_results: list[dict],
     meta: dict,
 ) -> dict:
     (refl_parsed,) = parsed_results
+
     charter_reflection = extract_charter_elements(
         refl_parsed.get("reflection_1p") or ""
     )
-    return {
-        _REFUSAL_REFLECTION_COLS["reflection_1p"]:          refl_parsed.get("reflection_1p") or "",
-        _REFUSAL_REFLECTION_COLS["reflection_position"]:    meta["reflection_point"],
-        _REFUSAL_REFLECTION_COLS["reflection_token_index"]: meta["reflection_token_index"],
-        _REFUSAL_REFLECTION_COLS["charter_reflection"]:     json.dumps(charter_reflection),
-    }
-
-
-# ---------------------------------------------------------------------------
-# preflections run  (full text)
-# ---------------------------------------------------------------------------
-
-_PREFLECTION_FIELDS = PREFLECTION_FIELDS_CURRENT
-_PREFLECTIONS_COLUMNS = list(_PREFLECTION_FIELDS) + ["charter_preflection"]
-
-
-def _preflections_build_calls(
-    doc_text: str,
-    doc_id: str,
-    system_prompt: str,
-    reflection_seed: int,
-    max_text_tokens: int = 1920,
-) -> list[tuple[list[dict], set[str], dict]]:
-    """Build a single API call for the preflections run.
-
-    Returns list of (messages, required_fields, metadata) tuples.
-    The system_prompt is the already-resolved preflection-specific prompt.
-    """
-    # Sidecar text is the full raw doc (can be 10-20K tokens), while
-    # annotated.bin tokenizes only the first max_text_tokens.  Send the
-    # same clipped span so the preflection context matches what the model
-    # will later see at train time, and so the input fits under sglang's
-    # context limit.
-    end_char, _ = compute_reflection_point_end(
-        doc_text, random.Random(), max_tokens=max_text_tokens
-    )
-    clipped_text = doc_text[:end_char]
-
-    prefl_user = f"## Full Text\n\n{clipped_text}"
-    prefl_user += PREFLECTION_TASK
-
-    prefl_messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prefl_user},
-    ]
-
-    meta: dict = {}
-
-    return [
-        (prefl_messages, {"analysis", *_PREFLECTION_FIELDS}, meta),
-    ]
-
-
-def _preflections_post_process(
-    doc_id: str,
-    doc_text: str,
-    parsed_results: list[dict],
-    meta: dict,
-) -> dict:
-    """Extract the 4 preflection fields from the single parsed result."""
-    (prefl_parsed,) = parsed_results
-
-    charter_preflection = extract_charter_elements(
-        " ".join((prefl_parsed.get(f) or "") for f in _PREFLECTION_FIELDS)
-    )
 
     return {
-        **{f: (prefl_parsed.get(f) or "") for f in _PREFLECTION_FIELDS},
-        "charter_preflection": json.dumps(charter_preflection),
+        "reflection_1p":          refl_parsed.get("reflection_1p") or "",
+        "reflection_position":    meta["reflection_point"],
+        "reflection_token_index": meta["reflection_token_index"],
+        "charter_reflection":     json.dumps(charter_reflection),
     }
 
 
@@ -319,35 +123,12 @@ RUNS: dict[str, RunDefinition] = {
         build_calls=_reflections_build_calls,
         post_process=_reflections_post_process,
     ),
-    "reflection_end": RunDefinition(
-        name="reflection_end",
-        prompt_type="reflection",
-        output_columns=_REFLECTION_END_COLUMNS,
-        build_calls=_reflection_end_build_calls,
-        post_process=_reflection_end_post_process,
-    ),
-    "refusal_reflection": RunDefinition(
-        name="refusal_reflection",
-        prompt_type="refusal_reflection",
-        output_columns=_REFUSAL_REFLECTION_COLUMNS,
-        build_calls=_refusal_reflection_build_calls,
-        post_process=_refusal_reflection_post_process,
-    ),
-    "preflections": RunDefinition(
-        name="preflections",
-        prompt_type="preflection",
-        output_columns=_PREFLECTIONS_COLUMNS,
-        build_calls=_preflections_build_calls,
-        post_process=_preflections_post_process,
-    ),
 }
 
 # Aliases map variant names to a base run. The variant gets its own output
 # directory but reuses the base run's logic (columns, build_calls, etc.).
 RUN_ALIASES: dict[str, str] = {
     "reflections_test": "reflections",
-    "preflections_test": "preflections",
-    "refusal_reflection_test": "refusal_reflection",
     # Production full-scale reflections run (own output dir, canonical columns).
     "reflection_full": "reflections",
 }

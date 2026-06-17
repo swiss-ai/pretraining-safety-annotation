@@ -59,10 +59,10 @@ def _dedup_judges(
     gold: CandidateModel, candidates: list[CandidateModel]
 ) -> list[CandidateModel]:
     """Return [gold] + every candidate not equal to gold by (alias, prompts)."""
-    seen = {(gold.alias, gold.prompt_reflection, gold.prompt_preflection)}
+    seen = {(gold.alias, gold.prompt_reflection)}
     out: list[CandidateModel] = [gold]
     for c in candidates:
-        key = (c.alias, c.prompt_reflection, c.prompt_preflection)
+        key = (c.alias, c.prompt_reflection)
         if key in seen:
             continue
         seen.add(key)

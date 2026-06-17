@@ -91,35 +91,31 @@ def save_run(
     group_id: str | None = None,
     phase: str = "improve",
     gen_reflection_prompt: str | None = None,
-    gen_preflection_prompt: str | None = None,
     judge_reflection_prompt: str | None = None,
-    judge_preflection_prompt: str | None = None,
 ) -> None:
     """Append a completed iteration run record.
 
     source: one of "manual", "improve_judge", "improve_generator".
     group_id: shared UUID linking cross-iteration runs in the same batch.
     phase: pipeline phase ("improve" or "eval").
-    gen_reflection_prompt / gen_preflection_prompt: per-mode generator prompts.
-    judge_reflection_prompt / judge_preflection_prompt: per-mode judge prompts.
+    gen_reflection_prompt / judge_reflection_prompt: reflection generator/judge
+    prompts. The retired per-mode columns stay in the underlying schema but are
+    left NULL for new rows.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT INTO runs
            (iteration, gen_prompt, judge_prompt,
-            gen_reflection_prompt, gen_preflection_prompt,
-            judge_reflection_prompt, judge_preflection_prompt,
+            gen_reflection_prompt, judge_reflection_prompt,
             generator_model, judge_model,
             n_items, n_gold, config, analysis, timestamp, source, group_id, phase)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             iteration,
             gen_prompt,
             judge_prompt,
             gen_reflection_prompt,
-            gen_preflection_prompt,
             judge_reflection_prompt,
-            judge_preflection_prompt,
             generator_model,
             judge_model,
             n_items,
@@ -190,22 +186,20 @@ def load_item_across_iterations(item_id: str, iterations: list[int]) -> list[dic
 def save_item(record: dict) -> None:
     """Upsert a single item record (generation or generation+judgment).
 
-    Writes the current schema: two-voice reflections + four-field preflections
-    (charter_summary / neutral / judgemental / idealisation). Legacy
-    preflection / preflection_1p columns are no longer written — they remain
-    in the schema so historical rows stay intact, but new rows leave them NULL.
+    Writes the single first-person reflection (``reflection`` column). Columns
+    for retired variants remain in the underlying schema so historical rows
+    stay intact, but new rows leave them at their NULL/default values.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT OR REPLACE INTO items
            (item_id, iteration, is_gold, subset, text, reflection_point,
-            gen_prompt, model, analysis, reflection, reflection_3p,
-            charter_summary, neutral, judgemental, idealisation,
-            preflection_charter_elements, reflection_charter_elements,
+            gen_prompt, model, analysis, reflection,
+            reflection_charter_elements,
             raw_response, reasoning, latency_ms,
             timestamp, judgment, input_tokens, output_tokens, reasoning_tokens,
             safety_score)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record["item_id"],
             record["iteration"],
@@ -217,12 +211,6 @@ def save_item(record: dict) -> None:
             record["model"],
             record.get("analysis"),
             record.get("reflection"),
-            record.get("reflection_3p"),
-            record.get("charter_summary"),
-            record.get("neutral"),
-            record.get("judgemental"),
-            record.get("idealisation"),
-            json.dumps(record.get("preflection_charter_elements", [])),
             json.dumps(record.get("reflection_charter_elements", [])),
             record.get("raw_response"),
             record.get("reasoning"),
@@ -280,24 +268,25 @@ def save_review(
     decision: str,
     notes: str,
     reflection_decision: str | None = None,
-    preflection_decision: str | None = None,
     reflection_aggregate: float | None = None,
-    preflection_aggregate: float | None = None,
+    **_retired,
 ) -> None:
     """Upsert a human review record.
 
-    scores is keyed by part: {"preflection": {dim: int}, "reflection": {dim: int}}.
-    reflection_decision / preflection_decision: per-mode accept/reject decisions.
-    reflection_aggregate / preflection_aggregate: per-mode aggregate scores.
+    scores is keyed by part: {"reflection": {dim: int}}.
+    reflection_decision: reflection accept/reject decision.
+    reflection_aggregate: reflection aggregate score.
+
+    Retired per-mode keyword arguments are accepted and ignored for backward
+    compatibility; the matching columns stay in the schema but are left NULL.
     """
     conn = _get_conn()
     conn.execute(
         """INSERT OR REPLACE INTO reviews
            (item_id, iteration, reviewer_id, scores, aggregate, decision, notes,
-            reflection_decision, preflection_decision,
-            reflection_aggregate, preflection_aggregate,
+            reflection_decision, reflection_aggregate,
             timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             item_id,
             iteration,
@@ -307,9 +296,7 @@ def save_review(
             decision,
             notes,
             reflection_decision,
-            preflection_decision,
             reflection_aggregate,
-            preflection_aggregate,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -506,7 +493,6 @@ def _row_to_run(row) -> dict:
 def _row_to_item(row) -> dict:
     d = dict(row)
     d["is_gold"] = bool(d["is_gold"])
-    d["preflection_charter_elements"] = json.loads(d["preflection_charter_elements"])
     d["reflection_charter_elements"] = json.loads(d["reflection_charter_elements"])
     d["judgment"] = json.loads(d["judgment"]) if d["judgment"] is not None else None
     return d

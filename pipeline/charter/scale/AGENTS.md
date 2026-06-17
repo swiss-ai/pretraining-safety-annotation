@@ -68,7 +68,7 @@ To add a new generation run:
 4. If the run uses an in-tree prompt (not under `data/pipeline/prompts/<alias>/`), set `prompt_source_dir` on the `RunDefinition`
 5. If the run emits non-string columns, add Arrow type metadata to `_COLUMN_META` in `merge.py`
 
-The `reflections`, `reflection_end`, `refusal_reflection`, and `preflections` runs cover the per-alias-prompt pattern (prompts under `data/pipeline/prompts/<alias>/`). Use `prompt_source_dir` on the `RunDefinition` only for in-tree, model-agnostic prompts.
+The `reflections` run covers the per-alias-prompt pattern (prompts under `data/pipeline/prompts/<alias>/`). Use `prompt_source_dir` on the `RunDefinition` only for in-tree, model-agnostic prompts.
 
 ## sglang Co-location Details
 

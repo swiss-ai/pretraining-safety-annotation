@@ -216,9 +216,7 @@ def cmd_submit(args, overrides):
     # filename for that run type. KeyError on an unknown prompt_type is the
     # right failure — we want a loud crash, not a silent fallback.
     prompt_field_by_type = {
-        "reflection":         "reflection_prompt",
-        "preflection":        "preflection_prompt",
-        "refusal_reflection": "refusal_reflection_prompt",
+        "reflection": "reflection_prompt",
     }
     active_prompt_field = prompt_field_by_type[run_def.prompt_type]
     active_prompt_filename = getattr(cfg.charter.scale, active_prompt_field)
@@ -263,8 +261,6 @@ def cmd_submit(args, overrides):
                     "reflection_seed": cfg.charter.scale.reflection_seed,
                     "generator_alias": cfg.charter.scale.generator_alias,
                     "reflection_prompt": cfg.charter.scale.reflection_prompt,
-                    "refusal_reflection_prompt": cfg.charter.scale.refusal_reflection_prompt,
-                    "preflection_prompt": cfg.charter.scale.preflection_prompt,
                     "hf_slug": cfg.charter.scale.sglang.hf_slug,
                 },
                 f,

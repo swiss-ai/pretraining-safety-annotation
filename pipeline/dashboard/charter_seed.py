@@ -224,17 +224,7 @@ def annotate_page():
                     )
 
                     ui.label(
-                        "Step 2 — Preflection: Contextualize for a reader who has NOT yet read the text. "
-                        "Frame what matters, provide background — do NOT spoil conclusions."
-                    ).classes("text-caption text-grey-7")
-                    preflection_input = (
-                        ui.textarea(placeholder="Your preflection...")
-                        .classes("w-full")
-                        .props("outlined")
-                    )
-
-                    ui.label(
-                        "Step 3 — Reflection: Evaluate for a reader who HAS read the text. "
+                        "Step 2 — Reflection: Evaluate for a reader who HAS read the text. "
                         "Assess quality, identify issues, add analytical value beyond restating. "
                         "Reference charter elements as [X.Y]."
                     ).classes("text-caption text-grey-7")
@@ -302,7 +292,6 @@ def annotate_page():
             if existing:
                 status_label.set_text("✎ Editing existing annotation")
                 analysis_input.set_value(existing["analysis"])
-                preflection_input.set_value(existing["preflection"])
                 reflection_input.set_value(existing["reflection"])
                 reflection_charter_select.set_value(
                     existing.get("reflection_charter_elements", [])
@@ -310,7 +299,6 @@ def annotate_page():
             else:
                 status_label.set_text("New item")
                 analysis_input.set_value("")
-                preflection_input.set_value("")
                 reflection_input.set_value("")
                 reflection_charter_select.set_value([])
 
@@ -326,7 +314,6 @@ def annotate_page():
 
         def submit():
             assert analysis_input.value.strip(), "Analysis cannot be empty"
-            assert preflection_input.value.strip(), "Preflection cannot be empty"
             assert reflection_input.value.strip(), "Reflection cannot be empty"
 
             item = current_item()
@@ -338,7 +325,6 @@ def annotate_page():
                 text=item["text"],
                 reflection_point=item["reflection_point"],
                 analysis=analysis_input.value.strip(),
-                preflection=preflection_input.value.strip(),
                 reflection=reflection_input.value.strip(),
                 reflection_charter_elements=reflection_charter_select.value or [],
                 presentation_order=state["pos"],
@@ -657,15 +643,6 @@ def overview_page():
                                             )
 
                                 _render_comment_thread("reflection", "Reflection")
-
-                                ui.label("Preflection").classes(
-                                    "text-overline text-grey-7 q-mt-sm"
-                                )
-                                ui.label(rec["preflection"]).classes(
-                                    "text-body2"
-                                ).style("white-space: pre-wrap;")
-
-                                _render_comment_thread("preflection", "Preflection")
 
                                 _render_comment_thread("general", "General Comments")
 

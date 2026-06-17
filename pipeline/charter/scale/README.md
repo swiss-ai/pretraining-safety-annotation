@@ -1,6 +1,6 @@
 # charter.scale — 102M-row annotation generation
 
-charter.scale annotates the full 102M-row sidecar parquet with charter reflections and preflections at scale. It uses [datatrove](https://github.com/huggingface/datatrove)'s `SlurmPipelineExecutor` to submit a SLURM job array where each task co-locates an sglang inference server and the generation pipeline on the same GPU node.
+charter.scale annotates the full 102M-row sidecar parquet with charter reflections at scale. It uses [datatrove](https://github.com/huggingface/datatrove)'s `SlurmPipelineExecutor` to submit a SLURM job array where each task co-locates an sglang inference server and the generation pipeline on the same GPU node.
 
 ## Architecture
 
@@ -33,18 +33,15 @@ After all tasks complete:
 
 ## Multi-Run Design
 
-Each run is identified by a **run name** (e.g. `reflections`, `preflections`). A `RunDefinition` in `runs.py` specifies what columns to produce, how to build API call messages, and how to parse responses.
+Each run is identified by a **run name** (e.g. `reflections`). A `RunDefinition` in `runs.py` specifies what columns to produce, how to build API call messages, and how to parse responses.
 
-Runs are additive: each `merge --run <name>` adds only that run's columns to the sidecar. Columns from previous merges are preserved. This means you can run reflections first, merge them, then later run preflections and merge those too.
+Runs are additive: each `merge --run <name>` adds only that run's columns to the sidecar. Columns from previous merges are preserved.
 
 ### Current runs
 
 | Run | API calls/doc | Output columns |
 |-----|--------------|----------------|
-| `reflections` | 1 | `reflection_1p`, `reflection_3p`, `reflection_position`, `reflection_token_index`, `charter_reflection` |
-| `reflection_end` | 1 | same as `reflections` but with `_end` suffix; reflection point pinned at EOS |
-| `refusal_reflection` | 1 | `refusal_reflection_1p`, `refusal_reflection_position`, `refusal_reflection_token_index`, `charter_refusal_reflection` (1p-only) |
-| `preflections` | 1 | `charter_summary`, `neutral`, `judgemental`, `idealisation`, `charter_preflection` |
+| `reflections` | 1 | `reflection_1p`, `reflection_position`, `reflection_token_index`, `charter_reflection` |
 
 ## Usage
 
@@ -82,18 +79,16 @@ The sidecar parquet starts with these columns from tokenization:
 | `safety_score` | float | tokenization |
 | `is_bad` | bool | tokenization |
 | `reflection` | large_string | tokenization (empty placeholder) |
-| `preflection` | large_string | tokenization (empty placeholder) |
 | `reflection_position` | int32 | tokenization (0 placeholder) |
 
-After `merge --run reflections`, the placeholders are dropped and replaced:
+After `merge --run reflections`, the `reflection` placeholder is dropped and replaced:
 
 | Column | Type | Source |
 |--------|------|--------|
 | `reflection_1p` | large_string | first-person reflection (text up to RP) |
-| `reflection_3p` | large_string | third-person reflection (text up to RP) |
 | `reflection_position` | int32 | character offset of the reflection point |
+| `reflection_token_index` | int32 | token index of the reflection point |
 | `charter_reflection` | large_string | JSON list of [X.Y] charter element IDs |
-| `charter_preflection` | large_string | JSON list of [X.Y] charter element IDs |
 
 ## Resume and Scaling
 
@@ -139,8 +134,6 @@ charter.scale:
   sidecar_path: /iopsstor/.../sidecar.parquet
   output_dir: ${oc.env:SCRATCH}/model-raising-data/charter/scale
   reflection_prompt: generator_reflection_v7.md
-  refusal_reflection_prompt: generator_reflection_refusal_v2.md
-  preflection_prompt: generator_preflection_v8.md
   generator_alias: qwen3.5-35b-a3b
   thinking: false
   json_mode: false
@@ -178,7 +171,7 @@ pipeline/charter/scale/
   __main__.py           CLI: submit, merge, status, rerun
   reader.py             SidecarReader (datatrove PipelineStep)
   generate.py           AnnotationGenerator (datatrove PipelineStep)
-  runs.py               RunDefinition registry (reflections, reflection_end, refusal_reflection, preflections)
+  runs.py               RunDefinition registry (reflections)
   sidecar.py            Sidecar fingerprint + validation
   merge.py              Streaming additive merge into sidecar parquet
   progress.py           Progress aggregation for CLI status
@@ -211,7 +204,7 @@ The merge step is memory-efficient: O(row_group_size) not O(total_rows).
 1. JSONL shards from all ranks are merge-sorted by `global_row_idx` into a temp file (each rank's results are already in order)
 2. A cursor streams through the sorted file in lock-step with sidecar row groups
 3. New columns are appended to each row group and written to the output parquet
-4. Old placeholder columns (`reflection`, `preflection`) are dropped and replaced
+4. The old placeholder column (`reflection`) is dropped and replaced
 
 ## Tests
 

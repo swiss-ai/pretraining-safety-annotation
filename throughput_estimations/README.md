@@ -1,20 +1,20 @@
 # Throughput Estimations
 
-Estimates GPU-hours needed to annotate ~102M samples with reflection/preflection generation.
+Estimates GPU-hours needed to annotate ~102M samples with reflection generation.
 
 ## Current State (2026-04-13)
 
 Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
 
-### Split pipeline: reflection + preflection (new)
+### Reflection pipeline
 
-As of 2026-04-13, reflections and preflections are generated with **separate prompts and separate API calls**. Reflections receive partial text (up to the reflection point); preflections receive the full text. The `--mode` flag controls which pipeline to benchmark: `reflection`, `preflection`, or `both`.
+Reflections receive partial text (up to the reflection point) with a dedicated prompt and a single API call per document. `estimate.py` benchmarks this reflection pipeline directly.
 
-| Model | Mode | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
-|-------|------|--------------|-------------|-------------|----------------|------------------|-----------------|
-| **Qwen3.5-35B-A3B-FP8** ⚡ | reflection | 4 (TP1×DP4) | 1024 | 5.10 | 3,590 | **22,369** | 18.0K - 29.1K |
+| Model | GPUs (TP×DP) | Concurrency | Samples/sec | Avg output tok | GPU-hours (102M) | Range (p25-p75) |
+|-------|--------------|-------------|-------------|----------------|------------------|-----------------|
+| **Qwen3.5-35B-A3B-FP8** ⚡ | 4 (TP1×DP4) | 1024 | 5.10 | 3,590 | **22,369** | 18.0K - 29.1K |
 
-> **Note**: Previous "4-voice annotation" results below used a combined prompt that produced all 4 voices in a single API call. Those numbers are not directly comparable to the split pipeline results. Total cost for the split pipeline = reflection GPU-h + preflection GPU-h.
+> **Note**: The "4-voice annotation" results below used an earlier combined prompt that produced all four voices in a single API call. Those numbers are not directly comparable to the reflection pipeline results.
 
 ### 4-voice annotation (legacy combined prompt)
 
@@ -41,7 +41,7 @@ Best result per model (1 node), sorted by GPU-hours.
 - **Qwen3.5-9B** at 28K GPU-h despite ~4K output tokens (unseparated thinking). Fast thanks to tiny model (9B) at TP1×DP4.
 - **Sampling params now tracked**: per-model HuggingFace-recommended sampling params added (Apr 3). Qwen3.5 presence_penalty=1.5 reduced output tokens ~15% but total output remains high due to thinking tokens (real compute, not a labeling issue).
 - **SGLang tuning for hybrid models** (Apr 12): `--mamba-ssm-dtype bfloat16` + `--mem-fraction-static 0.88` + `--max-running-requests 512` dramatically improves throughput for models with Mamba/DeltaNet sublayers. Qwen3.5-35B: 32.4K → 26.6K GPU-h (-18%). Nemotron-3-Super: 50.5K → 28.8K GPU-h (-43%). See tuning sections below.
-- **Split pipeline** (Apr 13): Reflections and preflections now use separate prompts and API calls. Qwen3.5-35B-A3B-FP8 reflection-only: 22.4K GPU-h (vs 26.6K for old combined 4-voice). FP8 + tuned flags give 3.1x speedup over BF16 baseline (69.6K → 22.4K). Preflection benchmark pending.
+- **Reflection pipeline** (Apr 13): The reflection uses a dedicated prompt and a single API call. Qwen3.5-35B-A3B-FP8 reflection: 22.4K GPU-h (vs 26.6K for the old combined 4-voice prompt). FP8 + tuned flags give 3.1x speedup over BF16 baseline (69.6K → 22.4K).
 - **SGLang flag sweep confirms ceiling** (Apr 13): Swept 16 server-side configs (context-length, mem-fraction-static, max-running-requests, chunked-prefill-size, schedule-policy, schedule-conservativeness, dp-attention) and 4 client-side concurrency levels (512, 1024, 1536, 2048) at 10K samples. No config beat the baseline by more than noise. The bottleneck is MoE decode with 256 fine-grained experts — memory-bandwidth bound at 5-15% MFU. Current config is optimal.
 
 ## Key Observations
@@ -88,11 +88,10 @@ All runs before Apr 3 used server defaults (typically `temperature=1.0, top_p=1.
 ## Usage
 
 ```bash
-# Generator throughput (reflection / preflection / both via --mode)
+# Generator throughput (reflection generation)
 uv run python -m throughput_estimations.estimate \
     --api-name <model-name> \
     --role generator \
-    --mode reflection \
     --n-samples 1000 \
     --data-path $SCRATCH/dolma3_mix-1T_subsampled/annotated \
     --endpoint http://<host>:8080/v1 \
@@ -105,7 +104,6 @@ uv run python -m throughput_estimations.estimate \
 uv run python -m throughput_estimations.estimate \
     --model-alias kimi-k2.5 \
     --role judge \
-    --mode reflection \
     --generations-path throughput_estimations/results/generator_reflection_*.json \
     --endpoint http://<host>:8080/v1 \
     --api-key none \

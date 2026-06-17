@@ -704,7 +704,6 @@ class TestS6OnFailureCallback:
         result = generate_batch(
             items,
             prompt,
-            prompt,
             "charter",
             "test-model",
             iteration=1,
@@ -723,12 +722,7 @@ class TestS6OnFailureCallback:
         assert info["category"] == "parse"
         assert info["item_id"] == "item_0"
         assert "stage" in info
-        assert info["stage"] in (
-            "reflection",
-            "preflection",
-        ) or info[
-            "stage"
-        ].startswith("judge_")
+        assert info["stage"] == "reflection" or info["stage"].startswith("judge_")
         assert info.get("raw") is not None
         assert bad_content in info["raw"]
 
@@ -755,7 +749,6 @@ class TestS6OnFailureCallback:
         with patch("pipeline.charter.improve.run.api_call", side_effect=mock_api_call):
             result = generate_batch(
                 items,
-                prompt,
                 prompt,
                 "charter",
                 "test-model",
@@ -791,7 +784,6 @@ class TestS6OnFailureCallback:
         result = generate_batch(
             items,
             prompt,
-            prompt,
             "charter",
             "test-model",
             iteration=1,
@@ -812,7 +804,6 @@ class TestS6OnFailureCallback:
             {
                 "analysis": "ok",
                 "reflection_1p": "r1",
-                "reflection_3p": "r3",
             }
         )
         seen_max_tokens: list[int] = []
@@ -837,7 +828,6 @@ class TestS6OnFailureCallback:
             result = generate_batch(
                 items,
                 prompt,
-                None,
                 "charter",
                 "test-model",
                 iteration=1,
@@ -846,7 +836,6 @@ class TestS6OnFailureCallback:
                 save=False,
                 completion_max_tokens=32000,
                 context_window_tokens=16384,
-                mode="reflection",
             )
 
         assert len(result) == 1
@@ -867,18 +856,12 @@ class TestS6OnFailureCallback:
             "reflection_point": rp,
             "is_gold": False,
             "analysis": "a",
-            "preflection": "p",
             "reflection": "r",
-            "preflection_1p": "p1",
-            "preflection_3p": "p3",
             "reflection_1p": "r1",
-            "reflection_3p": "r3",
         }
 
         refl_prompt = self._make_prompt(tmp_path, name="judge_reflection_v1.md")
         refl_prompt.write_text("Judge reflection. Threshold: {accept_threshold}")
-        prefl_prompt = self._make_prompt(tmp_path, name="judge_preflection_v1.md")
-        prefl_prompt.write_text("Judge preflection. Threshold: {accept_threshold}")
 
         bad_content = "not valid json at all"
         client = self._mock_client_returning(bad_content)
@@ -892,7 +875,6 @@ class TestS6OnFailureCallback:
         result = judge_batch(
             [generated_item],
             refl_prompt,
-            prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,
@@ -926,18 +908,12 @@ class TestS6OnFailureCallback:
             "reflection_point": rp,
             "is_gold": False,
             "analysis": "a",
-            "preflection": "p",
             "reflection": "r",
-            "preflection_1p": "p1",
-            "preflection_3p": "p3",
             "reflection_1p": "r1",
-            "reflection_3p": "r3",
         }
 
         refl_prompt = self._make_prompt(tmp_path, name="judge_reflection_v1.md")
         refl_prompt.write_text("Judge reflection. Threshold: {accept_threshold}")
-        prefl_prompt = self._make_prompt(tmp_path, name="judge_preflection_v1.md")
-        prefl_prompt.write_text("Judge preflection. Threshold: {accept_threshold}")
 
         client = self._mock_client_returning("not json")
 
@@ -946,7 +922,6 @@ class TestS6OnFailureCallback:
         result = judge_batch(
             [generated_item],
             refl_prompt,
-            prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,
@@ -975,7 +950,6 @@ class TestS6OnFailureCallback:
         sem = asyncio.Semaphore(4)
         result = generate_batch(
             items,
-            prompt,
             prompt,
             "charter",
             "test-model",

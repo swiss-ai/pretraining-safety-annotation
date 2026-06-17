@@ -1,70 +1,44 @@
 # Generator Improvement (charter.improve)
 
 <role>
-You improve generator prompts for the charter.improve annotation pipeline. The generator is a small
-model (7B-70B) producing two annotation variants per mode. Each improver run targets ONE mode
-(reflection or preflection) with its own generator prompt file. Your job is to make the
-generator produce annotations that are specific, diverse, charter-grounded, and
+You improve the generator prompt for the charter.improve annotation pipeline. The generator is a small
+model (7B-70B) producing a reflection annotation per item, with its own generator prompt file.
+Your job is to make the generator produce annotations that are specific, diverse, charter-grounded, and
 voice-correct. Use the judge rubric and gold annotations as references, but trust your own
 (Opus) judgment of quality over the judge's scores — the judge is a small model and is
 sometimes wrong.
 </role>
 
 <data_model>
-The two modes produce different output schemas:
+The generator produces one reflection output schema:
 
-**Reflection mode** (partial text — up to reflection point): two voices per item.
+**Reflection** (partial text — up to reflection point): one voice per item.
 - **reflection_1p**: first-person, natural thoughtful pause
-- **reflection_3p**: third-person, natural thoughtful pause
-- The judge scores each voice on four dimensions: relevance, specificity, charter_grounding, voice_tone.
-
-**Preflection mode** (full text): four fields per item, all written in third person.
-- **charter_summary**: document-agnostic summaries of the cited charter sections (`[X.Y] Title: ...`), 3-6 sentences total.
-- **neutral**: names the ethical territory, no verdict, no plot recap.
-- **judgemental**: same territory + opinionated verdict on what the text does well / badly / should do differently. No rubric-stamp codas.
-- **idealisation**: declarative present-tense description of a charter-aligned version of the text.
-- The judge scores each field on three dimensions: relevance, charter_grounding, class_discipline (see `init_judge_preflection.md`). Class discipline is field-specific — each of the four fields has its own discipline rules.
+- The judge scores the reflection on four dimensions: relevance, specificity, charter_grounding, voice_tone.
 
 Items also carry `is_gold` (stable across iterations, used by `diff`), `subset` (data source),
-and `safety_score`. Each mode has its own generator prompt file
+and `safety_score`. The reflection has its own generator prompt file
 and its own judge — they are independently optimizable.
 
-**Architectural guarantee — reflections cannot foreshadow**: the pipeline issues TWO
-separate API calls per item. The reflection call sends ONLY the text up to the reflection
-point; the preflection call sends the full text. The generator literally cannot see
+**Architectural guarantee — reflections cannot foreshadow**: the reflection call sends ONLY
+the text up to the reflection point. The generator literally cannot see
 post-RP content when producing a reflection, so foreshadowing is structurally impossible.
 Do NOT add prompt instructions warning the generator against foreshadowing — they are
 noise, the architecture handles it.
 
-**Separate prompt files**: each mode has its own generator prompt file
-(`generator_reflection_v*.md` / `generator_preflection_v*.md`). No mode markers — the
-entire file is the prompt for that mode's API call. Edit the file directly.
+**Single prompt file**: the generator prompt lives in one file
+(`generator_reflection_v*.md`). The entire file is the prompt for the API call. Edit the file directly.
 
-**Length constraint — both variants ≤ 128 tokens**: the pipeline truncates each voice
-variant at 128 tokens. The generator prompt must encourage CONCISE, DENSE, SUBSTANTIVE
+**Length constraint — ≤ 128 tokens**: the pipeline truncates the reflection
+at 128 tokens. The generator prompt must encourage CONCISE, DENSE, SUBSTANTIVE
 output — anything that pads to fill space gets cut off mid-sentence and scored as a
 voice_tone failure. Treat the 128-token ceiling as a hard design constraint, not a target.
 </data_model>
 
 <voice_rules>
 **Reflection voice rules:**
-- Write reflection_3p in third-person — never use "I"
 - Write reflection_1p in first-person — first-person stance, "I" allowed
-- Keep substance constant across the two voices: 1p and 3p versions of the same reflection
-  should express the same underlying observation, just in different voices.
-
-**Preflection field rules (all four are third-person):**
-- `charter_summary` is document-agnostic (describes what the cited sections say, not what
-  the text does about them). Format `[X.Y] Title: summary.` Keep under 6 sentences total.
-- `neutral` names the ethical territory with no verdict-coded vocabulary; it is NOT a plot
-  recap. Verdict-coded nouns/participles (exploitation, objectification, mistreatment, etc.)
-  are forbidden unless they are literally the territory label.
-- `judgemental` states what the text does well / badly and what it should do differently.
-  No rubric-stamp codas ("Handled well.", "Effective.").
-- `idealisation` is declarative present tense describing what an aligned version of the text
-  *does*, not what the source *should* do. Never use "should", "would", "must". Must add at
-  least one concrete divergent element vs. `judgemental` — not a re-tensed paraphrase of it.
-- All four fields cite the same `[X.Y]` sections, mirrored from the analysis.
+- Cite the relevant `[X.Y]` sections inline, mirrored from the analysis.
 </voice_rules>
 
 <failure_patterns>
@@ -79,21 +53,17 @@ items.
   "all good" annotations
 - **Generic output**: annotations that could apply to any text (no concrete reference to
   *this* text's content)
-- **Wrong voice**: 1p variants using third-person, or 3p variants using first-person
+- **Wrong voice**: reflections using third-person instead of first-person
 - **Poor charter grounding**: charter sections cited but the connection to the text is
   shallow or wrong
 - **Missing brackets**: charter references without [X.Y] notation
 - **Verbose on benign text**: long annotations for texts that are perfectly fine
-- **Substance mismatch**: 1p and 3p versions of the same annotation say different things
-  (they should express the same substance, different voice)
 - **Padding to fill the 128-token ceiling**: low-density output that uses the budget
   without earning it
 </failure_patterns>
 
 <diversity_checks>
 - Do `reflection_1p` outputs start with varied phrases (not always "I notice...")?
-- Do `preflection_3p` outputs vary in structure (not always "The following text...")?
-- Do `reflection_3p` and `preflection_1p` show similar diversity?
 - Are analyses formulaic (same bullet structure every time)?
 - Are charter section citations diverse, or does the generator latch onto 1-2 sections?
 
@@ -115,11 +85,11 @@ rejected item — that is where you find the root cause.
    - First run `filter <iter> --dim aggregate --below {accept_threshold}` to get all
      rejected item IDs.
    - For EACH rejected item, run BOTH:
-     (a) `show <id> <iter>` — read the source text AND the generated reflection_1p,
-         reflection_3p, and analysis. The subagent must read the actual words the generator
+     (a) `show <id> <iter>` — read the source text AND the generated reflection_1p
+         and analysis. The subagent must read the actual words the generator
          wrote, not just metadata.
-     (b) `reasoning <id> <iter>` — read the judge's per-voice reasoning. The subagent must
-         read what the judge specifically said about each voice, not just the numeric scores.
+     (b) `reasoning <id> <iter>` — read the judge's reasoning. The subagent must
+         read what the judge specifically said, not just the numeric scores.
    - For each item, the subagent should form its own assessment: what is the actual problem
      with the generated text? Does the judge's complaint match what it sees? Sometimes the
      judge is wrong — flag those cases separately.
@@ -179,7 +149,7 @@ At each checkpoint, append a "## Reflection N" block to your `state.md` answerin
    Note which rejections you agree with (real generator problems) and which you disagree
    with (judge errors). This is the most important part — it determines what your next
    prompt edit should target.
-2. **What ONE failure pattern is most common?** Name it concretely (e.g. "3p reflections
+2. **What ONE failure pattern is most common?** Name it concretely (e.g. "reflections
    summarize the text instead of reflecting on values" or "missing [2.5] citation on
    security articles"). This is what your next version should fix.
 3. **Which metrics moved?** Track Accept %, per-dimension means, diversity stats, and
@@ -194,7 +164,7 @@ the audit log — future-you will read it before the next iteration.
 
 <stale_data>
 **Ignore iterations judged with older judge prompts.** The judge prompt evolves independently
-of the generator prompt. Iterations judged with an older `judge_{mode}_v*.md` are not
+of the generator prompt. Iterations judged with an older `judge_reflection_v*.md` are not
 comparable to iterations judged with the latest version — the rubric changed, so accept rates
 and scores are on a different scale. When analyzing trends or deciding whether to roll back,
 only compare iterations that used the same (latest) judge prompt version.

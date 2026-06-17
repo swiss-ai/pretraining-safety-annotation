@@ -30,38 +30,21 @@ from pipeline.charter.eval.storage import JsonlRunStore
 
 
 def _prompt_id(c: CandidateModel) -> str:
-    """Identifier string for file naming, based on the reflection prompt.
-
-    Uses ``prompt_reflection`` as the primary identifier (matching the old
-    single-``prompt`` convention).  The preflection prompt is tracked in
-    metadata but doesn't affect file names.
-    """
-    return c.prompt_reflection or c.prompt_preflection
+    """Identifier string for file naming, based on the reflection prompt."""
+    return c.prompt_reflection
 
 
-def _resolve_prompt_paths(
+def _resolve_prompt_path(
     candidate: CandidateModel,
     resolve_fn=None,
-    *,
-    only_mode: str | None = None,
-) -> tuple[Path | None, Path | None]:
-    """Resolve reflection and preflection prompt paths from a CandidateModel.
-
-    *only_mode* (``"reflection"`` or ``"preflection"``) skips resolving the
-    unused prompt, returning ``None`` for that slot.
-
-    Returns ``(refl_prompt_path, prefl_prompt_path)``.
-    """
+) -> Path | None:
+    """Resolve the reflection prompt path from a CandidateModel."""
     if resolve_fn is None:
         resolve_fn = resolve_prompt_path
 
-    refl_path = None
-    prefl_path = None
-    if only_mode in (None, "reflection") and candidate.prompt_reflection:
-        refl_path = resolve_fn(candidate.prompt_reflection, candidate.alias)
-    if only_mode in (None, "preflection") and candidate.prompt_preflection:
-        prefl_path = resolve_fn(candidate.prompt_preflection, candidate.alias)
-    return refl_path, prefl_path
+    if candidate.prompt_reflection:
+        return resolve_fn(candidate.prompt_reflection, candidate.alias)
+    return None
 
 
 def _eval_root(cfg: AppConfig) -> Path:
@@ -83,11 +66,9 @@ def _candidate_metadata(c: CandidateModel) -> dict:
     meta: dict = {
         "alias": c.alias,
         "prompt_reflection": c.prompt_reflection,
-        "prompt_preflection": c.prompt_preflection,
     }
     for key, filename in (
         ("prompt_reflection_sha256", c.prompt_reflection),
-        ("prompt_preflection_sha256", c.prompt_preflection),
     ):
         if not filename:
             meta[key] = ""
@@ -185,7 +166,6 @@ def _generate_with_resume(
     store_reasoning: bool,
     generate_batch_fn=None,
     resolve_prompt_path_fn=None,
-    mode=None,
 ) -> None:
     if generate_batch_fn is None:
         generate_batch_fn = generate_batch
@@ -198,10 +178,9 @@ def _generate_with_resume(
         it for it in items if it["item_id"] not in done and it["item_id"] not in capped
     ]
 
-    refl_path, prefl_path = _resolve_prompt_paths(
+    refl_path = _resolve_prompt_path(
         candidate,
         resolve_fn=resolve_prompt_path_fn,
-        only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
     saved = 0
@@ -219,7 +198,6 @@ def _generate_with_resume(
     generate_batch_fn(
         todo,
         refl_path,
-        prefl_path,
         charter_text,
         candidate.api_name,
         iteration=0,
@@ -232,7 +210,6 @@ def _generate_with_resume(
         context_window_tokens=candidate.context_window_tokens,
         on_failure=on_failure,
         on_result=_on_result,
-        mode=mode,
         desc=f"Generating [{candidate.alias}]",
     )
     logger.info(
@@ -259,7 +236,6 @@ def _judge_with_resume(
     resume_key: str | tuple[str, ...] = "item_id",
     judge_batch_fn=None,
     resolve_prompt_path_fn=None,
-    mode=None,
 ) -> None:
     if judge_batch_fn is None:
         judge_batch_fn = judge_batch
@@ -284,10 +260,9 @@ def _judge_with_resume(
             continue
         todo.append(it)
 
-    refl_path, prefl_path = _resolve_prompt_paths(
+    refl_path = _resolve_prompt_path(
         judge,
         resolve_fn=resolve_prompt_path_fn,
-        only_mode=mode,
     )
     on_failure = _make_on_failure(store, failures_name)
     saved = 0
@@ -303,7 +278,6 @@ def _judge_with_resume(
     judge_batch_fn(
         todo,
         refl_path,
-        prefl_path,
         judge.api_name,
         iteration=0,
         accept_threshold=accept_threshold,
@@ -316,7 +290,6 @@ def _judge_with_resume(
         context_window_tokens=judge.context_window_tokens,
         on_failure=on_failure,
         on_result=_on_result,
-        mode=mode,
         desc=f"Judging [{judge.alias}]",
     )
     logger.info(
@@ -386,12 +359,9 @@ def run_generator_eval(
     store = JsonlRunStore(root, run_id)
 
     gold = cfg.charter.eval.gold_judge
-    if ge.gold_prompt_reflection or ge.gold_prompt_preflection:
+    if ge.gold_prompt_reflection:
         gold = copy.copy(gold)
-        if ge.gold_prompt_reflection:
-            gold.prompt_reflection = ge.gold_prompt_reflection
-        if ge.gold_prompt_preflection:
-            gold.prompt_preflection = ge.gold_prompt_preflection
+        gold.prompt_reflection = ge.gold_prompt_reflection
 
     expected = {
         "type": "generator_eval",
@@ -415,8 +385,6 @@ def run_generator_eval(
         client, sem = make_api_client(judge_endpoint, ge.max_concurrent)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
 
-        eval_mode = ge.mode or None  # "" -> None (both modes)
-
         # Stage 1: generate reflections for every candidate (in parallel)
         if run_generate:
             n_cands = len(ge.candidates)
@@ -439,7 +407,6 @@ def run_generator_eval(
                     failures_name=_gen_failures_name(gen),
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
-                    mode=eval_mode,
                 )
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=n_cands) as pool:
@@ -466,7 +433,6 @@ def run_generator_eval(
                     accept_threshold=cfg.charter.eval.scoring.accept_threshold,
                     failure_attempt_cap=ge.failure_attempt_cap,
                     store_reasoning=ge.store_reasoning,
-                    mode=eval_mode,
                 )
 
         # Mark done only when both stages have run (or judge finishes)

@@ -20,8 +20,6 @@ from pipeline.dashboard import render_header
 from pipeline.dashboard.shared import CHARTER_TEXT, render_source_text
 from pipeline.generation import (
     MODE_PART_NAMES as _MODE_PART_NAMES,
-    PREFLECTION_FIELDS_CURRENT as _PREFLECTION_FIELDS_CURRENT,
-    PREFLECTION_PART_NAMES as _PREFLECTION_PART_NAMES,
     REFLECTION_PART_NAMES as _REFLECTION_PART_NAMES,
     detect_mode_voices as _detect_mode_voices,
 )
@@ -162,7 +160,7 @@ def _load_correlation_pairs(
     judge_agg, human_agg, judge_dec, human_dec.
 
     split: "train", "validation", or None (all).
-    mode: "reflection", "preflection", or None (combined).
+    mode: "reflection" or None (combined).
       When set, uses per-mode aggregate/decision keys and per-mode judge prompt.
     """
     review_by_item = build_review_lookup(split=split)
@@ -336,10 +334,7 @@ def _render_judge_scores(judgment: dict, judge_model: str = "") -> None:
             ui.badge(jp, color="blue-grey").props("outline")
 
     # Show per-mode decisions if available
-    for mode, mode_label in (
-        ("reflection", "Reflection"),
-        ("preflection", "Preflection"),
-    ):
+    for mode, mode_label in (("reflection", "Reflection"),):
         mode_dec = judgment.get(f"{mode}_decision")
         mode_agg = judgment.get(f"{mode}_aggregate")
         if mode_dec is not None:
@@ -701,41 +696,15 @@ def _render_loop_history():
 
 
 def _build_part_display(item: dict) -> list[tuple[str, str]]:
-    """Return ``(label, text)`` pairs covering all annotation variants in *item*.
+    """Return ``(label, text)`` pairs for the first-person reflection in *item*.
 
-    Items span three preflection schema generations (1-col legacy,
-    2-voice legacy, 4-field current) and may have a reflection present even
-    when preflection failed (partial-success path in ``generate_batch``).
-    Each group is detected independently, so a reflection-only item renders
-    its reflection voices rather than falling back to empty legacy columns.
+    Falls back to the legacy single ``reflection`` column for historical items
+    generated before the ``reflection_1p`` field existed.
     """
     parts: list[tuple[str, str]] = []
-    if item.get("neutral") is not None or item.get("charter_summary") is not None:
-        parts.extend(
-            (f, item.get(f, "") or "") for f in _PREFLECTION_FIELDS_CURRENT
-        )
-    elif item.get("preflection_1p") is not None:
-        parts.extend(
-            [
-                (
-                    "preflection_3p",
-                    item.get("preflection_3p") or item.get("preflection", "") or "",
-                ),
-                ("preflection_1p", item.get("preflection_1p", "") or ""),
-            ]
-        )
-    elif item.get("preflection"):
-        parts.append(("preflection", item.get("preflection", "")))
-
-    if item.get("reflection_1p") is not None or item.get("reflection_3p") is not None:
-        parts.extend(
-            [
-                (
-                    "reflection_1p",
-                    item.get("reflection_1p") or item.get("reflection", "") or "",
-                ),
-                ("reflection_3p", item.get("reflection_3p", "") or ""),
-            ]
+    if item.get("reflection_1p") is not None:
+        parts.append(
+            ("reflection_1p", item.get("reflection_1p") or item.get("reflection", "") or "")
         )
     elif item.get("reflection"):
         parts.append(("reflection", item.get("reflection", "")))
@@ -749,9 +718,7 @@ def _derive_mode_agg_dec(
     """Extract per-mode aggregate and decision from a judgment dict.
 
     Returns the explicit ``{mode}_aggregate`` / ``{mode}_decision`` if present.
-    Falls back to computing from per-voice scores, detecting voices dynamically
-    so old (2-voice preflection) and new (4-field preflection) judgments both
-    work.
+    Falls back to computing from per-voice scores, detecting voices dynamically.
     """
     agg = judgment.get(f"{mode}_aggregate")
     dec = judgment.get(f"{mode}_decision")
@@ -844,7 +811,7 @@ def _render_mode_dashboard(
     all_reviews: list[dict],
     cfg: "AppConfig",
 ) -> None:
-    """Render all per-mode panels for a single mode (reflection or preflection).
+    """Render all per-mode panels for a single mode (reflection).
 
     Includes: overview card, judge calibration table, trend charts,
     per-generator acceptance rate bar chart, generator stats, calibration
@@ -855,9 +822,7 @@ def _render_mode_dashboard(
     dimensions = cfg.charter.improve.scoring.dimensions
     accept_threshold = cfg.charter.improve.scoring.accept_threshold
     floor_threshold = getattr(cfg.charter.improve.scoring, "floor_threshold", 2)
-    # Union voice/field names across all items' judgments. Preflection spans
-    # two schema generations (legacy 2-voice and current 4-field); a single
-    # dashboard session may contain items from both.
+    # Union voice/field names across all items' judgments.
     voice_set: set[str] = set()
     for i in items_by_key.values():
         voice_set.update(_detect_mode_voices(i.get("judgment") or {}, mode))
@@ -2070,7 +2035,8 @@ def _render_api_stats_panel(runs: list[dict], items_by_key: dict) -> None:
         )
         has_judge_data = (
             any(
-                item.get("judgment", {}).get("preflection", {}).get("usage") is not None
+                item.get("judgment", {}).get("reflection_1p", {}).get("usage")
+                is not None
                 for items in judge_items_by_model.values()
                 for item in items
             )
@@ -2322,7 +2288,7 @@ def _render_judge_judge_correlations(runs: list[dict], mode: str | None = None) 
     For each pair of judge models, computes Pearson r on scores and Cohen's kappa
     on decisions for items judged by both.
 
-    mode: "reflection", "preflection", or None (combined).
+    mode: "reflection" or None (combined).
       When set, uses per-mode aggregate/decision keys.
     """
     import re as _re_jj
@@ -2576,17 +2542,9 @@ def pipeline_monitoring_page():
                 }
             ).classes("w-full").style(f"height: {max(80, 28 * len(_names) + 50)}px;")
 
-    # --- Mode tabs (Reflection / Preflection) ---
+    # --- Reflection dashboard ---
     cfg = load_config()
-    with ui.tabs().classes("w-full q-mx-md q-mt-md") as mode_tabs:
-        refl_tab = ui.tab("Reflection")
-        prefl_tab = ui.tab("Preflection")
-
-    with ui.tab_panels(mode_tabs, value=refl_tab).classes("w-full"):
-        with ui.tab_panel(refl_tab):
-            _render_mode_dashboard("reflection", runs, items_by_key, all_reviews, cfg)
-        with ui.tab_panel(prefl_tab):
-            _render_mode_dashboard("preflection", runs, items_by_key, all_reviews, cfg)
+    _render_mode_dashboard("reflection", runs, items_by_key, all_reviews, cfg)
 
     # --- API Model Statistics (shared, collapsible) ---
     _render_api_stats_panel(runs, items_by_key)
@@ -3016,7 +2974,7 @@ def pipeline_review_page():
         """Extract version from prompt filename.
 
         Handles both old names (e.g. 'judge_v3.md') and new per-mode names
-        (e.g. 'judge_reflection_v3.md', 'judge_preflection_v2.md').
+        (e.g. 'judge_reflection_v3.md').
         Returns e.g. 'v3'.
         """
         import re
@@ -3282,10 +3240,8 @@ def pipeline_review_page():
 
                 # LLM generation display
                 ui.markdown(
-                    "**preflection** = framing placed *before* the text · "
                     "**reflection** = thoughtful pause inserted *during* the "
-                    'text · **1p** = first-person voice (uses "I") · '
-                    '**3p** = third-person voice (no "I")'
+                    'text · **1p** = first-person voice (uses "I")'
                 ).classes("text-caption text-grey-7").style("margin-top: -4px;")
                 gen_section = ui.column().classes("w-full gap-2")
 
@@ -3347,37 +3303,16 @@ def pipeline_review_page():
                         "Note: no refs is correct (4-5) for genuinely benign text."
                     ),
                     "voice_tone": (
-                        "Correct voice (1p/3p as required), natural, appropriate length?\n"
-                        "1: Wrong voice (e.g. third-person reflection_1p)\n"
+                        "First-person voice, natural, appropriate length?\n"
+                        "1: Wrong voice (e.g. not first-person)\n"
                         "2: Correct voice but heavily templated/stock phrases\n"
                         "3: Correct voice but stilted, formulaic, or verbose\n"
                         "4: Natural and well-written with minor issues\n"
                         "5: Natural, varied, concise — reads like a genuine response"
                     ),
-                    "class_discipline": (
-                        "Preflection-only. Does the field adhere to its type "
-                        "specification?\n"
-                        "- charter_summary: '[X.Y] Title: summary.' format, "
-                        "document-agnostic, ≤ 6 sentences.\n"
-                        "- neutral: names the ethical territory, no verdict, "
-                        "no plot recap.\n"
-                        "- judgemental: opinionated verdict with specific reasoning, "
-                        "no rubric-stamp codas.\n"
-                        "- idealisation: declarative present tense, adds a concrete "
-                        "divergent element vs. judgemental, no 'should/would/must'."
-                    ),
                 }
 
-                # Preflection 4-field schema is scored on 3 dimensions per
-                # field; reflection (and legacy preflection) on 4 dimensions.
-                _PREFLECTION_4FIELD_DIMS = (
-                    "relevance",
-                    "charter_grounding",
-                    "class_discipline",
-                )
                 def _dims_for_part(part: str) -> list[str]:
-                    if part in _PREFLECTION_FIELDS_CURRENT:
-                        return list(_PREFLECTION_4FIELD_DIMS)
                     return list(dimensions)
 
                 # Per-part scoring: {part: {dim: slider}} — populated inline in
@@ -3398,7 +3333,7 @@ def pipeline_review_page():
                     color = "green" if decision == "accept" else "red"
                     # Per-mode breakdown
                     parts_text = f"Avg: {agg:.2f} → {decision.upper()}"
-                    for mode_name in ("reflection", "preflection"):
+                    for mode_name in ("reflection",):
                         _mn_parts = _MODE_PART_NAMES.get(mode_name, frozenset())
                         mode_vals = [
                             int(slider.value)
@@ -3828,7 +3763,6 @@ def pipeline_review_page():
                 )
                 _build_part_sliders(label_text)
             for ce_label, ce_field in (
-                ("Preflection charter", "preflection_charter_elements"),
                 ("Reflection charter", "reflection_charter_elements"),
             ):
                 ce_elements = item.get(ce_field, [])
@@ -3958,10 +3892,6 @@ def pipeline_review_page():
                 ui.label(rec["analysis"]).classes("text-body2").style(
                     "white-space: pre-wrap;"
                 )
-                ui.label("Preflection (3p)").classes("text-overline text-grey-7")
-                ui.label(rec["preflection"]).classes("text-body2").style(
-                    "white-space: pre-wrap;"
-                )
                 ui.label("Reflection (1p)").classes("text-overline text-grey-7")
                 ui.label(rec["reflection"]).classes("text-body2").style(
                     "white-space: pre-wrap;"
@@ -3986,26 +3916,14 @@ def pipeline_review_page():
         all_vals = [v for part in scores.values() for v in part.values()]
         aggregate, decision = _compute_decision(all_vals)
 
-        # Compute per-mode decisions (reflection / preflection).
-        # Bucket by set membership so the current 4-field preflection schema
-        # (charter_summary/neutral/judgemental/idealisation) lands in the
-        # preflection aggregate alongside legacy preflection_* parts.
+        # Compute the per-mode (reflection) decision.
         refl_vals = [
             v
             for part, part_scores in scores.items()
             if part in _REFLECTION_PART_NAMES
             for v in part_scores.values()
         ]
-        prefl_vals = [
-            v
-            for part, part_scores in scores.items()
-            if part in _PREFLECTION_PART_NAMES
-            for v in part_scores.values()
-        ]
         refl_agg, refl_dec = _compute_decision(refl_vals) if refl_vals else (None, None)
-        prefl_agg, prefl_dec = (
-            _compute_decision(prefl_vals) if prefl_vals else (None, None)
-        )
 
         save_review(
             item_id=item["item_id"],
@@ -4016,9 +3934,7 @@ def pipeline_review_page():
             decision=decision,
             notes=notes_input.value.strip(),
             reflection_decision=refl_dec,
-            preflection_decision=prefl_dec,
             reflection_aggregate=refl_agg,
-            preflection_aggregate=prefl_agg,
         )
         _clear_draft(item)
         ui.notify("Review saved!", type="positive")
@@ -4148,16 +4064,11 @@ def pipeline_reviews_page():
             edit_sliders: dict[str, dict[str, ui.slider]] = {}
 
             # Determine parts: use the review's per-part keys if available,
-            # otherwise fall back to the standard four voices.
+            # otherwise fall back to the first-person reflection voice.
             if is_per_part:
                 parts = list(scores.keys())
             else:
-                parts = [
-                    "preflection_3p",
-                    "preflection_1p",
-                    "reflection_1p",
-                    "reflection_3p",
-                ]
+                parts = ["reflection_1p"]
 
             def _update_status():
                 vals = [
@@ -4174,8 +4085,7 @@ def pipeline_reviews_page():
                 ui.label(part).classes("text-overline text-grey-7 q-mt-sm")
                 edit_sliders[part] = {}
                 # Dims per part: prefer dims actually present in the saved
-                # review (so a new 4-field preflection review renders its 3
-                # dims, and a legacy reflection review renders its 4).
+                # review, falling back to the configured dimensions.
                 if is_per_part and isinstance(scores.get(part), dict):
                     _part_dims = list(scores[part].keys()) or list(_rv_dimensions)
                 else:
@@ -4235,27 +4145,15 @@ def pipeline_reviews_page():
                     vals = [v for part in new_scores.values() for v in part.values()]
                     agg, dec = _rv_compute_decision(vals)
 
-                    # Per-mode decisions — bucket by set membership so 4-field
-                    # preflection parts are grouped alongside legacy ones.
+                    # Per-mode (reflection) decision.
                     _refl_vals = [
                         v
                         for p, ps in new_scores.items()
                         if p in _REFLECTION_PART_NAMES
                         for v in ps.values()
                     ]
-                    _prefl_vals = [
-                        v
-                        for p, ps in new_scores.items()
-                        if p in _PREFLECTION_PART_NAMES
-                        for v in ps.values()
-                    ]
                     _r_agg, _r_dec = (
                         _rv_compute_decision(_refl_vals) if _refl_vals else (None, None)
-                    )
-                    _p_agg, _p_dec = (
-                        _rv_compute_decision(_prefl_vals)
-                        if _prefl_vals
-                        else (None, None)
                     )
 
                     save_review(
@@ -4267,9 +4165,7 @@ def pipeline_reviews_page():
                         decision=dec,
                         notes=edit_notes.value.strip(),
                         reflection_decision=_r_dec,
-                        preflection_decision=_p_dec,
                         reflection_aggregate=_r_agg,
-                        preflection_aggregate=_p_agg,
                     )
                     dlg.close()
                     ui.notify("Review updated", type="positive")
@@ -4495,10 +4391,6 @@ def pipeline_reviews_page():
                                         "white-space: pre-wrap;"
                                     )
                                 for _ce_label, _ce_field in (
-                                    (
-                                        "Preflection charter",
-                                        "preflection_charter_elements",
-                                    ),
                                     (
                                         "Reflection charter",
                                         "reflection_charter_elements",

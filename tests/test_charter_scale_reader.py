@@ -21,7 +21,6 @@ def sidecar_parquet(tmp_path):
             "token_length": 50 + i,
             "safety_score": 0.9 - (i * 0.001),
             "reflection": "",
-            "preflection": "",
             "reflection_position": 0,
             # Every odd-indexed row is is_bad — gives reader-filter tests a
             # deterministic 50/50 split to exercise.
@@ -34,7 +33,6 @@ def sidecar_parquet(tmp_path):
         "token_length": [r["token_length"] for r in rows],
         "safety_score": [r["safety_score"] for r in rows],
         "reflection": [r["reflection"] for r in rows],
-        "preflection": [r["preflection"] for r in rows],
         "reflection_position": [r["reflection_position"] for r in rows],
         "is_bad": [r["is_bad"] for r in rows],
     })

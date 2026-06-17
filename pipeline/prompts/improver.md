@@ -1,13 +1,12 @@
 # Prompt Improvement Instructions
 
-You are analyzing iteration results to improve the generator and judge prompts for pretraining data annotation. The annotations (preflections and reflections) become training signal for a model being raised from scratch.
+You are analyzing iteration results to improve the generator and judge prompts for pretraining data annotation. The annotations (reflections) become training signal for a model being raised from scratch.
 
 ## Hard Constraints (never violate these)
 
 - **No specific article references in prompts.** The value specification and writing guidelines may change, including numbering. Prompts must refer to "charter sections" generically, never cite specific numbers like [4.3].
 - **Bracket notation.** All charter references in generated output must use brackets: [1.1], [3.2]. Bare numbers or quoted charter text are wrong.
 - **Reflections are first person.** Always. ("I notice...", "This makes me think...")
-- **Preflections are third person.** Always. ("The following text...", "This passage...")
 - **Conciseness.** Especially for benign texts. A brief "looks fine" is better than a verbose analysis of nothing.
 - **Diversity.** Generated annotations must vary in phrasing, structure, and opening. Formulaic repetition degrades training data quality. This is IMPORTANT!
 - **No charter references is valid.** Many texts have no relevant charter sections. Forcing references is worse than omitting them.
@@ -16,7 +15,7 @@ You are analyzing iteration results to improve the generator and judge prompts f
 ## Analysis Steps
 
 ### 1. Score Distribution
-- What is the accept rate? Mean scores per dimension, separately for preflection and reflection?
+- What is the accept rate? Mean scores per dimension for the reflection?
 - Which dimension scores lowest on average?
 - Are "all good" items (benign texts) being handled correctly, or is the generator forcing problems?
 
@@ -24,8 +23,8 @@ You are analyzing iteration results to improve the generator and judge prompts f
 Items are rejected if aggregate < threshold OR any dimension scores ≤ 2 (floor rule).
 For rejected items, categorize failures:
 - **Forced problems**: generator flags issues in benign texts instead of saying "all good"
-- **Generic output**: preflection/reflection could apply to any text, not specific to this one
-- **Wrong voice**: preflection uses first person, or reflection uses third person
+- **Generic output**: the reflection could apply to any text, not specific to this one
+- **Wrong voice**: reflection uses third person instead of first person
 - **Reflection uses future context**: reflection references content that appears after the reflection point
 - **Poor charter grounding**: charter sections cited but connection to text is shallow or wrong
 - **Missing bracket notation**: charter references without [brackets]
@@ -65,7 +64,6 @@ These insights persist across your sessions via `state.md` and should inform pro
 
 ### 6. Diversity Check
 - Sample 5-10 reflections: do they start with different phrases?
-- Do preflections vary in structure or all follow "The following text..."?
 - Are the analyses formulaic (same bullet point structure every time)?
 
 ## Improvement Decisions
@@ -96,7 +94,7 @@ If you encounter bugs, missing tools, or features that would make your job easie
 ## Output
 
 Write your analysis summary (stored in runs.jsonl) covering:
-1. Key metrics (accept rate, mean scores per dimension, preflection vs reflection breakdown)
+1. Key metrics (accept rate, mean scores per dimension)
 2. Top 2-3 failure patterns with concrete examples
 3. Diversity assessment (are outputs varied or formulaic?)
 4. What you changed in the prompts and why

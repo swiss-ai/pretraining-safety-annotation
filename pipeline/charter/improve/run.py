@@ -48,7 +48,6 @@ from pipeline.data import load_dataset_cache
 from pipeline.generation import (
     FIELD_ALIASES,
     GEN_TEXT_FIELDS,
-    PREFLECTION_TASK,
     REFLECTION_TASK,
     parse_generation,
 )
@@ -70,15 +69,12 @@ from pipeline.storage import compute_item_id
 
 # Backwards-compatible aliases for the private names used internally.
 _REFLECTION_TASK = REFLECTION_TASK
-_PREFLECTION_TASK = PREFLECTION_TASK
 _FIELD_ALIASES = FIELD_ALIASES
 _GEN_TEXT_FIELDS = GEN_TEXT_FIELDS
 _parse_generation = parse_generation
 
 
-_REFLECTION_VOICES = ("reflection_1p", "reflection_3p")
-_PREFLECTION_VOICES = ("charter_summary", "neutral", "judgemental", "idealisation")
-_ALL_VOICES = _PREFLECTION_VOICES + _REFLECTION_VOICES
+_REFLECTION_VOICES = ("reflection_1p",)
 
 CHAT_MESSAGE_OVERHEAD_TOKENS = 8
 CHAT_REPLY_PRIMER_TOKENS = 16
@@ -124,10 +120,7 @@ JUDGMENT_NON_PART_KEYS = frozenset(
         "timestamp",
         "reflection_aggregate",
         "reflection_decision",
-        "preflection_aggregate",
-        "preflection_decision",
         "judge_prompt_reflection",
-        "judge_prompt_preflection",
     }
 )
 
@@ -147,7 +140,7 @@ def _mode_decision(
     floor_threshold: int,
     accept_threshold: float,
 ) -> tuple[float, str]:
-    """Compute aggregate + accept/reject decision for one mode's voices."""
+    """Compute aggregate + accept/reject decision for the reflection voice(s)."""
     all_scores = [s for v in voices for s in voice_scores[v]["scores"].values()]
     agg = sum(all_scores) / len(all_scores)
     has_floor = any(s <= floor_threshold for s in all_scores)
@@ -155,16 +148,13 @@ def _mode_decision(
     return agg, dec
 
 
-def _parse_mode_judgment(raw: str, mode: str) -> dict:
-    """Parse judge JSON for a single mode (2 voices).
-
-    *mode* is ``"reflection"`` or ``"preflection"``.
-    """
-    voices = _REFLECTION_VOICES if mode == "reflection" else _PREFLECTION_VOICES
+def _parse_reflection_judgment(raw: str) -> dict:
+    """Parse judge JSON for the reflection voice (reflection_1p)."""
+    voices = _REFLECTION_VOICES
     parsed = extract_json(raw)
     missing = set(voices) - set(parsed.keys())
     assert not missing, (
-        f"Missing voices in {mode} judgment: {missing}. "
+        f"Missing voices in reflection judgment: {missing}. "
         f"Got keys: {list(parsed.keys())}. Raw preview: {raw[:200]}"
     )
     for voice in voices:
@@ -278,7 +268,7 @@ def select_items(n_total: int, n_gold: int, seed: int, max_tokens: int) -> list[
 
 
 class _JudgeParseError(Exception):
-    """Wraps a parse failure inside _judge_mode so the
+    """Wraps a parse failure inside _judge_reflection so the
     caller can recover the raw model response and reasoning."""
 
     def __init__(
@@ -324,8 +314,7 @@ def _failure_record(
 
 def generate_batch(
     items: list[dict],
-    refl_prompt_path: Path | None,
-    prefl_prompt_path: Path | None,
+    refl_prompt_path: Path,
     charter_text: str,
     model: str,
     iteration: int,
@@ -338,54 +327,28 @@ def generate_batch(
     context_window_tokens: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
     on_result: Callable[[dict], None] | None = None,
-    mode: str | None = None,
     desc: str | None = None,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
+    Runs a single reflection call per item (text up to the reflection point),
+    asking for analysis + reflection_1p.
+
     *on_result*, if provided, is called with each successful record as soon
     as its coroutine completes — before ``gather`` returns the full batch.
-
-    *mode* controls which pipeline(s) to run:
-      - ``"reflection"``: only reflection call (text up to RP). Requires *refl_prompt_path*.
-      - ``"preflection"``: only preflection call (full text). Requires *prefl_prompt_path*.
-      - ``None``: both calls concurrently. Requires both prompt paths.
-
-    When mode is None, partial success is supported: if one call fails the
-    other's results are still saved.
 
     *completion_max_tokens* overrides the desired chat completion budget for
     this batch (default: api.DEFAULT_MAX_TOKENS). *context_window_tokens*
     clamps that budget against the estimated prompt size.
     """
-    if mode is None:
-        assert (
-            refl_prompt_path and prefl_prompt_path
-        ), "Both prompt paths required when mode=None"
-        gen_prompt_name = (
-            refl_prompt_path.name
-        )  # use reflection prompt as gen_prompt identifier
-    elif mode == "reflection":
-        assert refl_prompt_path, "refl_prompt_path required for reflection mode"
-        gen_prompt_name = refl_prompt_path.name
-    else:
-        assert prefl_prompt_path, "prefl_prompt_path required for preflection mode"
-        gen_prompt_name = prefl_prompt_path.name
+    assert refl_prompt_path, "refl_prompt_path required"
+    gen_prompt_name = refl_prompt_path.name
 
     def _load_system_prompt(path: Path) -> str:
         template = path.read_text(encoding="utf-8")
         return template.replace("{charter}", charter_text)
 
-    refl_system_prompt = (
-        _load_system_prompt(refl_prompt_path)
-        if refl_prompt_path and mode != "preflection"
-        else None
-    )
-    prefl_system_prompt = (
-        _load_system_prompt(prefl_prompt_path)
-        if prefl_prompt_path and mode != "reflection"
-        else None
-    )
+    refl_system_prompt = _load_system_prompt(refl_prompt_path)
 
     async def _call_reflection(
         item: dict,
@@ -428,7 +391,7 @@ def generate_batch(
             return None
         try:
             parsed = _parse_generation(
-                raw, required_fields={"analysis", "reflection_1p", "reflection_3p"}
+                raw, required_fields={"analysis", "reflection_1p"}
             )
         except (json.JSONDecodeError, AssertionError) as e:
             logger.warning("Item {} — reflection parse failed: {}", item["item_id"], e)
@@ -452,153 +415,24 @@ def generate_batch(
             return None
         return parsed, raw, reasoning, usage
 
-    async def _call_preflection(
-        item: dict,
-    ) -> tuple[dict, str, str | None, dict] | None:
-        """Make the preflection API call. Returns (parsed, raw, reasoning, usage) or None."""
-        prefl_user = f"## Full Text\n\n{item['text']}"
-        prefl_user += _PREFLECTION_TASK
-        messages = [
-            {"role": "system", "content": prefl_system_prompt},
-            {"role": "user", "content": prefl_user},
-        ]
-        try:
-            raw, reasoning, usage = await api_call(
-                client,
-                model,
-                messages,
-                semaphore,
-                thinking=thinking,
-                json_mode=json_mode,
-                max_tokens=_completion_budget(
-                    messages, completion_max_tokens, context_window_tokens
-                ),
-            )
-        except RuntimeError as e:
-            logger.warning("Item {} — preflection api failed: {}", item["item_id"], e)
-            if on_failure:
-                on_failure(
-                    _failure_record(
-                        item["item_id"],
-                        "preflection",
-                        "api",
-                        "api_runtime",
-                        raw=None,
-                        raw_reasoning=None,
-                        exc=e,
-                    )
-                )
-            return None
-        try:
-            parsed = _parse_generation(
-                raw,
-                required_fields={
-                    "analysis",
-                    "charter_summary",
-                    "neutral",
-                    "judgemental",
-                    "idealisation",
-                },
-            )
-        except (json.JSONDecodeError, AssertionError) as e:
-            logger.warning("Item {} — preflection parse failed: {}", item["item_id"], e)
-            if on_failure:
-                reason = (
-                    "json_parse"
-                    if isinstance(e, json.JSONDecodeError)
-                    else "missing_field"
-                )
-                on_failure(
-                    _failure_record(
-                        item["item_id"],
-                        "preflection",
-                        "parse",
-                        reason,
-                        raw=raw,
-                        raw_reasoning=reasoning,
-                        exc=e,
-                    )
-                )
-            return None
-        return parsed, raw, reasoning, usage
-
     async def process_one(item: dict) -> dict | None:
         t0 = time.monotonic()
-        refl_result = None
-        prefl_result = None
 
-        if mode is None:
-            # Both modes concurrently, partial success allowed
-            refl_result, prefl_result = await asyncio.gather(
-                _call_reflection(item), _call_preflection(item)
-            )
-            if refl_result is None and prefl_result is None:
-                return None
-        elif mode == "reflection":
-            refl_result = await _call_reflection(item)
-            if refl_result is None:
-                return None
-        else:
-            prefl_result = await _call_preflection(item)
-            if prefl_result is None:
-                return None
+        refl_result = await _call_reflection(item)
+        if refl_result is None:
+            return None
 
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        # Unpack results
-        refl_parsed, refl_raw, refl_reasoning, refl_usage = (
-            refl_result
-            if refl_result
-            else (
-                None,
-                None,
-                None,
-                {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0},
-            )
-        )
-        prefl_parsed, prefl_raw, prefl_reasoning, prefl_usage = (
-            prefl_result
-            if prefl_result
-            else (
-                None,
-                None,
-                None,
-                {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0},
-            )
+        refl_parsed, refl_raw, refl_reasoning, refl_usage = refl_result
+
+        analysis = f"REFLECTION ANALYSIS:\n{refl_parsed['analysis']}"
+
+        reflection_charter_elements = union_charter_elements(
+            refl_parsed.get("reflection_1p", ""),
         )
 
-        # Build analysis
-        parts = []
-        if refl_parsed:
-            parts.append(f"REFLECTION ANALYSIS:\n{refl_parsed['analysis']}")
-        if prefl_parsed:
-            parts.append(f"PREFLECTION ANALYSIS:\n{prefl_parsed['analysis']}")
-        analysis = "\n\n".join(parts) if parts else None
-
-        reflection_charter_elements = (
-            union_charter_elements(
-                refl_parsed.get("reflection_1p", ""),
-                refl_parsed.get("reflection_3p"),
-            )
-            if refl_parsed
-            else []
-        )
-        preflection_charter_elements = (
-            union_charter_elements(
-                prefl_parsed.get("charter_summary"),
-                prefl_parsed.get("neutral"),
-                prefl_parsed.get("judgemental"),
-                prefl_parsed.get("idealisation"),
-            )
-            if prefl_parsed
-            else []
-        )
-
-        raw_responses = {}
-        if refl_raw is not None:
-            raw_responses["reflection"] = refl_raw
-        if prefl_raw is not None:
-            raw_responses["preflection"] = prefl_raw
+        raw_responses = {"reflection": refl_raw}
 
         record = {
             "item_id": item["item_id"],
@@ -610,32 +444,18 @@ def generate_batch(
             "gen_prompt": gen_prompt_name,
             "model": model,
             "analysis": analysis,
-            "reflection_1p": (
-                refl_parsed.get("reflection_1p", "") if refl_parsed else None
-            ),
-            "reflection_3p": refl_parsed.get("reflection_3p") if refl_parsed else None,
+            "reflection_1p": refl_parsed.get("reflection_1p", ""),
             # Legacy reflection column — kept so old readers continue to work.
-            "reflection": (
-                refl_parsed.get("reflection_1p", "") if refl_parsed else None
-            ),
-            # Four-field preflection schema (replaces preflection_1p/preflection_3p).
-            "charter_summary": (
-                prefl_parsed.get("charter_summary") if prefl_parsed else None
-            ),
-            "neutral": prefl_parsed.get("neutral") if prefl_parsed else None,
-            "judgemental": prefl_parsed.get("judgemental") if prefl_parsed else None,
-            "idealisation": prefl_parsed.get("idealisation") if prefl_parsed else None,
-            "preflection_charter_elements": preflection_charter_elements,
+            "reflection": refl_parsed.get("reflection_1p", ""),
             "reflection_charter_elements": reflection_charter_elements,
-            "raw_response": json.dumps(raw_responses) if raw_responses else None,
-            "reasoning": refl_reasoning or prefl_reasoning,
+            "raw_response": json.dumps(raw_responses),
+            "reasoning": refl_reasoning,
             "latency_ms": latency_ms,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "judgment": None,
-            "input_tokens": refl_usage["input_tokens"] + prefl_usage["input_tokens"],
-            "output_tokens": refl_usage["output_tokens"] + prefl_usage["output_tokens"],
-            "reasoning_tokens": refl_usage["reasoning_tokens"]
-            + prefl_usage["reasoning_tokens"],
+            "input_tokens": refl_usage["input_tokens"],
+            "output_tokens": refl_usage["output_tokens"],
+            "reasoning_tokens": refl_usage["reasoning_tokens"],
             "safety_score": item.get("safety_score"),
         }
         if save:
@@ -656,9 +476,8 @@ def generate_batch(
     return [r for r in results if r is not None]
 
 
-async def _judge_mode(
+async def _judge_reflection(
     item: dict,
-    mode: str,
     prompt_template: str,
     accept_threshold: float,
     model: str,
@@ -669,9 +488,7 @@ async def _judge_mode(
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
 ) -> tuple[dict, str, str | None, dict]:
-    """Make a single judge API call for one mode (2 voices).
-
-    *mode* is ``"reflection"`` or ``"preflection"``.
+    """Make a single judge API call for the reflection voice (reflection_1p).
 
     Returns ``(parsed, raw_response, reasoning, usage)``.
     """
@@ -679,16 +496,11 @@ async def _judge_mode(
         "{accept_threshold}", str(accept_threshold)
     ).replace("{charter}", charter_text)
 
-    # Legacy fallback for reflection items that only stored the combined
-    # `reflection` column. New preflection fields have no legacy equivalent —
-    # old preflection items can't be re-judged under the new 4-field schema.
+    # Legacy fallback for items that only stored the combined `reflection` column.
     _FALLBACK = {"reflection_1p": "reflection"}
-    voices = _REFLECTION_VOICES if mode == "reflection" else _PREFLECTION_VOICES
+    voices = _REFLECTION_VOICES
 
-    if mode == "reflection":
-        source_text = item["text"][: item["reflection_point"]]
-    else:
-        source_text = item["text"]
+    source_text = item["text"][: item["reflection_point"]]
 
     # Resolve content for each voice
     voice_content: dict[str, str] = {}
@@ -699,10 +511,8 @@ async def _judge_mode(
             voice_content[v] = item[_FALLBACK[v]]
         else:
             raise AssertionError(
-                f"Item {item.get('item_id')!r} is missing voice {v!r} for mode "
-                f"{mode!r}. Available keys: {sorted(k for k in item.keys() if item.get(k))}. "
-                f"Old-format preflection items cannot be judged under the new "
-                f"4-field schema."
+                f"Item {item.get('item_id')!r} is missing voice {v!r}. "
+                f"Available keys: {sorted(k for k in item.keys() if item.get(k))}."
             )
 
     user_content = f"## Source Text\n\n{source_text}\n\n---\n\n"
@@ -724,16 +534,15 @@ async def _judge_mode(
         ),
     )
     try:
-        parsed = _parse_mode_judgment(raw, mode)
+        parsed = _parse_reflection_judgment(raw)
     except (json.JSONDecodeError, AssertionError) as e:
-        raise _JudgeParseError(e, raw, reasoning, f"judge_{mode}") from e
+        raise _JudgeParseError(e, raw, reasoning, "judge_reflection") from e
     return parsed, raw, reasoning, usage
 
 
 def judge_batch(
     items: list[dict],
-    refl_prompt_path: Path | None,
-    prefl_prompt_path: Path | None,
+    refl_prompt_path: Path,
     model: str,
     iteration: int,
     accept_threshold: float,
@@ -747,18 +556,12 @@ def judge_batch(
     context_window_tokens: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
     on_result: Callable[[dict], None] | None = None,
-    mode: str | None = None,
     desc: str | None = None,
 ) -> list[dict]:
-    """Judge generated annotations in parallel.
+    """Judge generated reflections (reflection_1p) in parallel.
 
     *on_result*, if provided, is called with each successful record as soon
     as its coroutine completes — before ``gather`` returns the full batch.
-
-    *mode* controls which pipeline(s) to judge:
-      - ``"reflection"``: judges reflection_1p + reflection_3p only. Requires *refl_prompt_path*.
-      - ``"preflection"``: judges preflection_3p + preflection_1p only. Requires *prefl_prompt_path*.
-      - ``None``: judges both (two concurrent calls). Requires both prompt paths.
 
     Returns the list of judged item records (with judgment merged in).
 
@@ -766,30 +569,17 @@ def judge_batch(
     (default: api.DEFAULT_MAX_TOKENS). *context_window_tokens* clamps that
     budget against the estimated prompt size.
     """
-    refl_template = (
-        refl_prompt_path.read_text(encoding="utf-8")
-        if refl_prompt_path and mode != "preflection"
-        else None
-    )
-    prefl_template = (
-        prefl_prompt_path.read_text(encoding="utf-8")
-        if prefl_prompt_path and mode != "reflection"
-        else None
-    )
+    refl_template = refl_prompt_path.read_text(encoding="utf-8")
+    refl_prompt_name = refl_prompt_path.name
 
-    refl_prompt_name = refl_prompt_path.name if refl_prompt_path else None
-    prefl_prompt_name = prefl_prompt_path.name if prefl_prompt_path else None
-
-    async def _judge_one_mode(
-        item: dict, m: str
+    async def _judge_one_reflection(
+        item: dict,
     ) -> tuple[dict, str, str | None, dict] | None:
-        """Judge a single item for one mode. Returns (parsed, raw, reasoning, usage) or None on failure."""
-        template = refl_template if m == "reflection" else prefl_template
+        """Judge a single item. Returns (parsed, raw, reasoning, usage) or None on failure."""
         try:
-            return await _judge_mode(
+            return await _judge_reflection(
                 item,
-                m,
-                template,
+                refl_template,
                 accept_threshold,
                 model,
                 client,
@@ -800,7 +590,9 @@ def judge_batch(
                 context_window_tokens=context_window_tokens,
             )
         except _JudgeParseError as e:
-            logger.warning("Item {} — judge_{} parse failed: {}", item["item_id"], m, e)
+            logger.warning(
+                "Item {} — judge_reflection parse failed: {}", item["item_id"], e
+            )
             if on_failure:
                 reason = (
                     "json_parse"
@@ -820,12 +612,14 @@ def judge_batch(
                 )
             return None
         except RuntimeError as e:
-            logger.warning("Item {} — judge_{} api failed: {}", item["item_id"], m, e)
+            logger.warning(
+                "Item {} — judge_reflection api failed: {}", item["item_id"], e
+            )
             if on_failure:
                 on_failure(
                     _failure_record(
                         item["item_id"],
-                        f"judge_{m}",
+                        "judge_reflection",
                         "api",
                         "api_runtime",
                         raw=None,
@@ -835,12 +629,14 @@ def judge_batch(
                 )
             return None
         except (json.JSONDecodeError, AssertionError) as e:
-            logger.warning("Item {} — judge_{} failed: {}", item["item_id"], m, e)
+            logger.warning(
+                "Item {} — judge_reflection failed: {}", item["item_id"], e
+            )
             if on_failure:
                 on_failure(
                     _failure_record(
                         item["item_id"],
-                        f"judge_{m}",
+                        "judge_reflection",
                         "parse",
                         "schema_mismatch",
                         raw=None,
@@ -852,84 +648,42 @@ def judge_batch(
 
     async def judge_one(item: dict) -> dict | None:
         t0 = time.monotonic()
-        refl_result = None
-        prefl_result = None
 
-        if mode is None:
-            refl_result, prefl_result = await asyncio.gather(
-                _judge_one_mode(item, "reflection"),
-                _judge_one_mode(item, "preflection"),
-            )
-            if refl_result is None and prefl_result is None:
-                return None
-        elif mode == "reflection":
-            refl_result = await _judge_one_mode(item, "reflection")
-            if refl_result is None:
-                return None
-        else:
-            prefl_result = await _judge_one_mode(item, "preflection")
-            if prefl_result is None:
-                return None
+        refl_result = await _judge_one_reflection(item)
+        if refl_result is None:
+            return None
 
         judge_latency_ms = int((time.monotonic() - t0) * 1000)
         ts = datetime.now(timezone.utc).isoformat()
 
+        refl_parsed, refl_raw, refl_reasoning, refl_usage = refl_result
+
         judgment_parts: dict[str, dict] = {}
-        raw_responses: dict[str, str] = {}
-        total_usage: dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
+        for v in _REFLECTION_VOICES:
+            judgment_parts[v] = {
+                "scores": refl_parsed[v]["scores"],
+                "aggregate": refl_parsed[v]["aggregate"],
+                "reasoning": refl_parsed[v]["reasoning"],
+                "model_reasoning": refl_reasoning,
+                "usage": refl_usage,
+            }
+        raw_responses = {"reflection": refl_raw}
+        total_usage = {
+            "input_tokens": refl_usage.get("input_tokens", 0),
+            "output_tokens": refl_usage.get("output_tokens", 0),
+            "reasoning_tokens": refl_usage.get("reasoning_tokens", 0),
         }
 
-        if refl_result is not None:
-            refl_parsed, refl_raw, refl_reasoning, refl_usage = refl_result
-            for v in _REFLECTION_VOICES:
-                judgment_parts[v] = {
-                    "scores": refl_parsed[v]["scores"],
-                    "aggregate": refl_parsed[v]["aggregate"],
-                    "reasoning": refl_parsed[v]["reasoning"],
-                    "model_reasoning": refl_reasoning,
-                    "usage": refl_usage,
-                }
-            raw_responses["reflection"] = refl_raw
-            for k in total_usage:
-                total_usage[k] += refl_usage.get(k, 0)
-
-        if prefl_result is not None:
-            prefl_parsed, prefl_raw, prefl_reasoning, prefl_usage = prefl_result
-            for v in _PREFLECTION_VOICES:
-                judgment_parts[v] = {
-                    "scores": prefl_parsed[v]["scores"],
-                    "aggregate": prefl_parsed[v]["aggregate"],
-                    "reasoning": prefl_parsed[v]["reasoning"],
-                    "model_reasoning": prefl_reasoning,
-                    "usage": prefl_usage,
-                }
-            raw_responses["preflection"] = prefl_raw
-            for k in total_usage:
-                total_usage[k] += prefl_usage.get(k, 0)
-
-        # Per-mode decisions
         judgment = {**judgment_parts}
 
-        if refl_result is not None:
-            refl_agg, refl_dec = _mode_decision(
-                refl_parsed, _REFLECTION_VOICES, floor_threshold, accept_threshold
-            )
-            judgment["reflection_aggregate"] = refl_agg
-            judgment["reflection_decision"] = refl_dec
-            judgment["judge_prompt_reflection"] = refl_prompt_name
+        refl_agg, refl_dec = _mode_decision(
+            refl_parsed, _REFLECTION_VOICES, floor_threshold, accept_threshold
+        )
+        judgment["reflection_aggregate"] = refl_agg
+        judgment["reflection_decision"] = refl_dec
+        judgment["judge_prompt_reflection"] = refl_prompt_name
 
-        if prefl_result is not None:
-            prefl_agg, prefl_dec = _mode_decision(
-                prefl_parsed, _PREFLECTION_VOICES, floor_threshold, accept_threshold
-            )
-            judgment["preflection_aggregate"] = prefl_agg
-            judgment["preflection_decision"] = prefl_dec
-            judgment["judge_prompt_preflection"] = prefl_prompt_name
-
-        # Combined decision (all available voices)
+        # Combined decision (all voices)
         all_scores = [
             s for v, vd in judgment_parts.items() for s in vd["scores"].values()
         ]
@@ -998,12 +752,9 @@ def _run_one_pair(
     judge_alias: str,
     source: str,
     group_id: str | None = None,
-    mode: str | None = None,
 ) -> dict:
     """Run generate->judge for one (generator, judge) pair. Returns run summary dict."""
-    return _run_one_pair_inner(
-        cfg, items, gen_alias, judge_alias, source, group_id, mode
-    )
+    return _run_one_pair_inner(cfg, items, gen_alias, judge_alias, source, group_id)
 
 
 def _run_one_pair_inner(
@@ -1013,7 +764,6 @@ def _run_one_pair_inner(
     judge_alias: str,
     source: str,
     group_id: str | None,
-    mode: str | None = None,
 ) -> dict:
     """Inner implementation of _run_one_pair (split out for signal safety)."""
     iteration = next_iteration()
@@ -1038,25 +788,11 @@ def _run_one_pair_inner(
 
     charter_text = CHARTER_PATH.read_text(encoding="utf-8")
 
-    gen_refl_prompt = (
-        resolve_prompt_path("generator_reflection_latest.md", alias=gen_alias)
-        if mode != "preflection"
-        else None
+    gen_refl_prompt = resolve_prompt_path(
+        "generator_reflection_latest.md", alias=gen_alias
     )
-    gen_prefl_prompt = (
-        resolve_prompt_path("generator_preflection_latest.md", alias=gen_alias)
-        if mode != "reflection"
-        else None
-    )
-    judge_refl_prompt = (
-        resolve_prompt_path("judge_reflection_latest.md", alias=judge_alias)
-        if mode != "preflection"
-        else None
-    )
-    judge_prefl_prompt = (
-        resolve_prompt_path("judge_preflection_latest.md", alias=judge_alias)
-        if mode != "reflection"
-        else None
+    judge_refl_prompt = resolve_prompt_path(
+        "judge_reflection_latest.md", alias=judge_alias
     )
 
     logger.info("Iteration {} — gen={} judge={}", iteration, gen_alias, judge_alias)
@@ -1064,7 +800,6 @@ def _run_one_pair_inner(
     generated = generate_batch(
         items,
         gen_refl_prompt,
-        gen_prefl_prompt,
         charter_text,
         gen_model_cfg.api_name,
         iteration,
@@ -1074,13 +809,11 @@ def _run_one_pair_inner(
         json_mode=gen_model_cfg.json_mode,
         completion_max_tokens=gen_model_cfg.completion_max_tokens,
         context_window_tokens=gen_model_cfg.context_window_tokens,
-        mode=mode,
     )
 
     judged = judge_batch(
         generated,
         judge_refl_prompt,
-        judge_prefl_prompt,
         judge_model_cfg.api_name,
         iteration,
         cfg.charter.improve.scoring.accept_threshold,
@@ -1091,7 +824,6 @@ def _run_one_pair_inner(
         thinking=judge_model_cfg.thinking,
         completion_max_tokens=judge_model_cfg.completion_max_tokens,
         context_window_tokens=judge_model_cfg.context_window_tokens,
-        mode=mode,
     )
 
     summary = _make_run_summary(iteration, judged)
@@ -1105,16 +837,12 @@ def _run_one_pair_inner(
     n_gen_failed = n_attempted - len(generated)
     save_run(
         iteration=iteration,
-        gen_prompt=(gen_refl_prompt or gen_prefl_prompt).name,
-        judge_prompt=(judge_refl_prompt or judge_prefl_prompt).name,
+        gen_prompt=gen_refl_prompt.name,
+        judge_prompt=judge_refl_prompt.name,
         generator_model=gen_alias,
         judge_model=judge_alias,
-        gen_reflection_prompt=gen_refl_prompt.name if gen_refl_prompt else None,
-        gen_preflection_prompt=gen_prefl_prompt.name if gen_prefl_prompt else None,
-        judge_reflection_prompt=judge_refl_prompt.name if judge_refl_prompt else None,
-        judge_preflection_prompt=(
-            judge_prefl_prompt.name if judge_prefl_prompt else None
-        ),
+        gen_reflection_prompt=gen_refl_prompt.name,
+        judge_reflection_prompt=judge_refl_prompt.name,
         n_items=len(judged),
         n_gold=sum(1 for item in judged if item.get("is_gold")),
         config={
@@ -1146,7 +874,6 @@ def _run_cross_iteration(
     role: str,
     target_alias: str,
     source: str,
-    mode: str | None = None,
 ) -> list[dict]:
     """Run cross-iteration for a given role and target model.
 
@@ -1223,7 +950,6 @@ def _run_cross_iteration(
                     judge_alias,
                     source,
                     group_id,
-                    mode,
                 ): (gen_alias, judge_alias)
                 for gen_alias, judge_alias in pairs
             }
@@ -1279,20 +1005,18 @@ def run_judge_cross_iteration(
     cfg: AppConfig,
     target_judge_alias: str,
     source: str = "improve_judge",
-    mode: str | None = None,
 ) -> list[dict]:
     """Generate with ALL generators, judge all with target judge."""
-    return _run_cross_iteration(cfg, "judge", target_judge_alias, source, mode=mode)
+    return _run_cross_iteration(cfg, "judge", target_judge_alias, source)
 
 
 def run_generator_cross_iteration(
     cfg: AppConfig,
     target_gen_alias: str,
     source: str = "improve_generator",
-    mode: str | None = None,
 ) -> list[dict]:
     """Generate with target generator, judge with ALL judges."""
-    return _run_cross_iteration(cfg, "generator", target_gen_alias, source, mode=mode)
+    return _run_cross_iteration(cfg, "generator", target_gen_alias, source)
 
 
 def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> int:
@@ -1304,8 +1028,8 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
     pool, no per-(prompt,model) event loops, no per-worker SQLite contention.
     Idempotent: items already in judge_correlations are skipped.
 
-    mode: "reflection", "preflection", or None (both).
-      When set, only runs the specified mode's judge call.
+    mode is accepted for backward compatibility but ignored — only the
+    reflection pipeline exists.
 
     Returns total count of newly judged items.
     """
@@ -1336,39 +1060,26 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
 
     # Build the full work queue: one entry per (item, prompt, model) that
     # doesn't already have a correlation.
-    work: list[tuple[dict, Path | None, Path | None, str, ModelConfig]] = []
+    work: list[tuple[dict, Path, str, ModelConfig]] = []
     for model_cfg in cfg.charter.improve.judge_models:
         alias = model_cfg.alias
         model_dir = PROMPTS_DIR / alias
         if not model_dir.exists():
             continue
-        # Find paired judge prompt files: judge_reflection_vN.md + judge_preflection_vN.md
+        # Find judge reflection prompt files: judge_reflection_vN.md
         refl_files = sorted(
             p
             for p in model_dir.iterdir()
             if re.match(r"^judge_reflection_v\d+\.md$", p.name)
         )
         for refl_file in refl_files:
-            version = re.search(r"_v(\d+)\.md$", refl_file.name).group(1)
-            prefl_file = model_dir / f"judge_preflection_v{version}.md"
-            # When running both modes, require both files
-            if mode is None and not prefl_file.exists():
-                continue
-            # When running single mode, only require that mode's file
-            if mode == "preflection" and not prefl_file.exists():
-                continue
-            # Use the reflection file name as the correlation key for this pair
             prompt_name = refl_file.name
-            eff_refl = refl_file if mode != "preflection" else None
-            eff_prefl = prefl_file if mode != "reflection" else None
             for k in reviewed_item_keys:
                 if k not in latest_items:
                     continue
                 if (k[0], k[1], prompt_name, alias) in existing_keys:
                     continue
-                work.append(
-                    (latest_items[k], eff_refl, eff_prefl, prompt_name, model_cfg)
-                )
+                work.append((latest_items[k], refl_file, prompt_name, model_cfg))
 
     if not work:
         logger.info("Nothing to re-judge — all reviewed items already done.")
@@ -1410,8 +1121,7 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
 
     async def _judge_one_work(
         item: dict,
-        refl_file: Path | None,
-        prefl_file: Path | None,
+        refl_file: Path,
         prompt_name: str,
         model_cfg: ModelConfig,
     ) -> dict | None:
@@ -1421,82 +1131,31 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
         try:
             t0 = time.monotonic()
 
-            run_refl = refl_file is not None
-            run_prefl = prefl_file is not None
-
-            coros = []
-            if run_refl:
-                coros.append(
-                    _judge_mode(
-                        item,
-                        "reflection",
-                        _prompt(refl_file),
-                        at,
-                        model_cfg.api_name,
-                        clients[endpoint],
-                        semaphore,
-                        charter_text=charter_text,
-                        thinking=model_cfg.thinking,
-                        completion_max_tokens=model_cfg.completion_max_tokens,
-                        context_window_tokens=model_cfg.context_window_tokens,
-                    )
-                )
-            if run_prefl:
-                coros.append(
-                    _judge_mode(
-                        item,
-                        "preflection",
-                        _prompt(prefl_file),
-                        at,
-                        model_cfg.api_name,
-                        clients[endpoint],
-                        semaphore,
-                        charter_text=charter_text,
-                        thinking=model_cfg.thinking,
-                        completion_max_tokens=model_cfg.completion_max_tokens,
-                        context_window_tokens=model_cfg.context_window_tokens,
-                    )
-                )
-            results = await asyncio.gather(*coros)
+            refl_parsed, refl_raw, refl_reasoning, refl_usage = await _judge_reflection(
+                item,
+                _prompt(refl_file),
+                at,
+                model_cfg.api_name,
+                clients[endpoint],
+                semaphore,
+                charter_text=charter_text,
+                thinking=model_cfg.thinking,
+                completion_max_tokens=model_cfg.completion_max_tokens,
+                context_window_tokens=model_cfg.context_window_tokens,
+            )
             judge_latency_ms = int((time.monotonic() - t0) * 1000)
 
             judgment_parts: dict = {}
-            raw_responses: dict = {}
-            total_usage: dict = {}
-            result_idx = 0
-
-            if run_refl:
-                refl_parsed, refl_raw, refl_reasoning, refl_usage = results[result_idx]
-                result_idx += 1
-                for v in _REFLECTION_VOICES:
-                    judgment_parts[v] = {
-                        "scores": refl_parsed[v]["scores"],
-                        "aggregate": refl_parsed[v]["aggregate"],
-                        "reasoning": refl_parsed[v]["reasoning"],
-                        "model_reasoning": refl_reasoning,
-                        "usage": refl_usage,
-                    }
-                raw_responses["reflection"] = refl_raw
-                total_usage = dict(refl_usage)
-
-            if run_prefl:
-                prefl_parsed, prefl_raw, prefl_reasoning, prefl_usage = results[
-                    result_idx
-                ]
-                for v in _PREFLECTION_VOICES:
-                    judgment_parts[v] = {
-                        "scores": prefl_parsed[v]["scores"],
-                        "aggregate": prefl_parsed[v]["aggregate"],
-                        "reasoning": prefl_parsed[v]["reasoning"],
-                        "model_reasoning": prefl_reasoning,
-                        "usage": prefl_usage,
-                    }
-                raw_responses["preflection"] = prefl_raw
-                if total_usage:
-                    for k in ("input_tokens", "output_tokens", "reasoning_tokens"):
-                        total_usage[k] = total_usage.get(k, 0) + prefl_usage.get(k, 0)
-                else:
-                    total_usage = dict(prefl_usage)
+            for v in _REFLECTION_VOICES:
+                judgment_parts[v] = {
+                    "scores": refl_parsed[v]["scores"],
+                    "aggregate": refl_parsed[v]["aggregate"],
+                    "reasoning": refl_parsed[v]["reasoning"],
+                    "model_reasoning": refl_reasoning,
+                    "usage": refl_usage,
+                }
+            raw_responses = {"reflection": refl_raw}
+            total_usage = dict(refl_usage)
 
             all_scores = [
                 s for vd in judgment_parts.values() for s in vd["scores"].values()
@@ -1505,7 +1164,11 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
             has_floor = any(s <= ft for s in all_scores)
             decision = "reject" if has_floor or aggregate < at else "accept"
 
-            result = {
+            refl_agg, refl_dec = _mode_decision(
+                judgment_parts, _REFLECTION_VOICES, ft, at
+            )
+
+            return {
                 **judgment_parts,
                 "aggregate": aggregate,
                 "decision": decision,
@@ -1514,25 +1177,10 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
                 "usage": total_usage,
                 "latency_ms": judge_latency_ms,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "reflection_aggregate": refl_agg,
+                "reflection_decision": refl_dec,
+                "judge_prompt_reflection": refl_file.name,
             }
-
-            if run_refl:
-                refl_agg, refl_dec = _mode_decision(
-                    judgment_parts, _REFLECTION_VOICES, ft, at
-                )
-                result["reflection_aggregate"] = refl_agg
-                result["reflection_decision"] = refl_dec
-                result["judge_prompt_reflection"] = refl_file.name
-
-            if run_prefl:
-                prefl_agg, prefl_dec = _mode_decision(
-                    judgment_parts, _PREFLECTION_VOICES, ft, at
-                )
-                result["preflection_aggregate"] = prefl_agg
-                result["preflection_decision"] = prefl_dec
-                result["judge_prompt_preflection"] = prefl_file.name
-
-            return result
         except Exception:
             logger.warning(
                 "Judge failed for item {} with {}",
@@ -1542,14 +1190,14 @@ def rejudge_all_prompts_and_models(cfg: AppConfig, mode: str | None = None) -> i
             return None
 
     # Single event loop, single semaphore, all work in flight at once.
-    coros = [_judge_one_work(item, rf, pf, pn, mc) for (item, rf, pf, pn, mc) in work]
+    coros = [_judge_one_work(item, rf, pn, mc) for (item, rf, pn, mc) in work]
     judgments = run_concurrent(*coros, desc="Re-judging")
 
     # Save correlations sequentially — storage is single-writer, and the
     # save_judge_correlation call is cheap relative to the API round-trip.
     saved = 0
     skipped = 0
-    for (item, _, _, prompt_name, model_cfg), judgment in zip(work, judgments):
+    for (item, _, prompt_name, model_cfg), judgment in zip(work, judgments):
         if judgment is None:
             skipped += 1
             continue

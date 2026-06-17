@@ -96,7 +96,6 @@ charter:
       hf_slug: moonshotai/Kimi-K2.5
       endpoint: http://172.28.25.28:30000/v1
       prompt_reflection: judge_reflection_v24.md
-      prompt_preflection: judge_preflection_v3.md
       completion_max_tokens: 65536
       context_window_tokens: 65536
     generator_eval:
@@ -112,25 +111,21 @@ charter:
       #   hf_slug: zai-org/GLM-4.5-Air-FP8
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v7.md
-      #   prompt_preflection: generator_preflection_v6.md
       # - alias: gpt-oss-120b
       #   api_name: openai/gpt-oss-120b-SSOR
       #   hf_slug: openai/gpt-oss-120b
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v7.md
-      #   prompt_preflection: generator_preflection_v6.md
       - alias: qwen3.5-35b-a3b
         api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 24576
         prompt_reflection: generator_reflection_v7.md
-        prompt_preflection: generator_preflection_v6.md
       # - alias: nemotron-3-super-120b-a12b
       #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
       #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v9.md
-      #   prompt_preflection: generator_preflection_v6.md
     judge_eval:
       n_items: 5000
       seed: 42
@@ -144,7 +139,6 @@ charter:
         alias: qwen3.5-35b-a3b
         api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
         prompt_reflection: generator_reflection_v7.md
-        prompt_preflection: generator_preflection_v6.md
       candidates: []
     scoring:
       scale_min: 1
@@ -159,8 +153,6 @@ charter:
     sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
     output_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale
     reflection_prompt: generator_reflection_v7.md
-    refusal_reflection_prompt: generator_reflection_refusal_v2.md
-    preflection_prompt: generator_preflection_v8.md
     generator_alias: qwen3.5-35b-a3b
     thinking: false
     json_mode: false

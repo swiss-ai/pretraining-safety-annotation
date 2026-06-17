@@ -113,7 +113,6 @@ def _make_fake_generate(
     def _fake(
         items,
         refl_prompt_path,
-        prefl_prompt_path,
         charter_text,
         model,
         iteration,
@@ -123,7 +122,6 @@ def _make_fake_generate(
         thinking=False,
         json_mode=False,
         on_failure=None,
-        mode=None,
         **kw,
     ):
         on_result = kw.get("on_result")
@@ -149,10 +147,7 @@ def _make_fake_generate(
                 "iteration": iteration,
                 "model": model,
                 "analysis": f"a-{it['item_id']}",
-                "preflection_1p": "p1",
-                "preflection_3p": "p3",
                 "reflection_1p": "r1",
-                "reflection_3p": "r3",
                 "raw_response": "...",
                 "reasoning": None,
                 "judgment": None,
@@ -182,7 +177,6 @@ def _make_fake_judge(
     def _fake(
         items,
         refl_prompt_path,
-        prefl_prompt_path,
         model,
         iteration,
         accept_threshold,
@@ -210,22 +204,7 @@ def _make_fake_judge(
                         captured_on_failure_calls.append(fr)
                 continue
             judgment = {
-                "preflection_3p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
-                "preflection_1p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
                 "reflection_1p": {
-                    "scores": {"relevance": 4},
-                    "aggregate": 4.0,
-                    "reasoning": "",
-                },
-                "reflection_3p": {
                     "scores": {"relevance": 4},
                     "aggregate": 4.0,
                     "reasoning": "",
@@ -267,7 +246,6 @@ def eval_cfg(tmp_path):
         alias="gold-judge",
         api_name="api/gold-judge",
         prompt_reflection="judge_v1.md",
-        prompt_preflection="judge_v1.md",
         thinking=False,
         json_mode=False,
     )
@@ -276,7 +254,6 @@ def eval_cfg(tmp_path):
             alias="gen0",
             api_name="api/gen0",
             prompt_reflection="generator_v1.md",
-            prompt_preflection="generator_v1.md",
             thinking=False,
             json_mode=False,
         ),
@@ -284,13 +261,11 @@ def eval_cfg(tmp_path):
             alias="gen1",
             api_name="api/gen1",
             prompt_reflection="generator_v2.md",
-            prompt_preflection="generator_v2.md",
             thinking=False,
             json_mode=False,
         ),
     ]
     cfg.charter.eval.generator_eval.gold_prompt_reflection = ""
-    cfg.charter.eval.generator_eval.gold_prompt_preflection = ""
     cfg.charter.eval.generator_eval.n_items = 5
     cfg.charter.eval.generator_eval.seed = 42
     cfg.charter.eval.generator_eval.failure_attempt_cap = 3
@@ -673,9 +648,6 @@ class TestRunGeneratorEval:
             assert (
                 "prompt_reflection" in c
             ), f"candidate metadata missing prompt_reflection: {c}"
-            assert (
-                "prompt_preflection" in c
-            ), f"candidate metadata missing prompt_preflection: {c}"
             assert (
                 "prompt_reflection_sha256" in c
             ), f"candidate metadata missing prompt_reflection_sha256: {c}"

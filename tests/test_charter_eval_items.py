@@ -293,13 +293,10 @@ class TestEnsureItemPool:
 # ===========================================================================
 
 
-def _four_voice_scores(base=3):
-    """Build a four_voice scores dict."""
+def _voice_scores(base=3):
+    """Build a reflection_1p scores dict."""
     return {
-        "preflection_3p": {"relevance": base, "specificity": base},
-        "preflection_1p": {"relevance": base, "specificity": base},
         "reflection_1p": {"relevance": base, "specificity": base},
-        "reflection_3p": {"relevance": base, "specificity": base},
     }
 
 
@@ -310,7 +307,7 @@ def _make_review(
         "item_id": item_id,
         "iteration": iteration,
         "reviewer_id": reviewer_id,
-        "scores": scores if scores is not None else _four_voice_scores(base_score),
+        "scores": scores if scores is not None else _voice_scores(base_score),
         "aggregate": float(base_score),
         "decision": "accept",
         "notes": "",
@@ -323,10 +320,8 @@ def _make_items_table_row(item_id, iteration):
         "item_id": item_id,
         "iteration": iteration,
         "text": f"text for {item_id} iter {iteration}",
-        "preflection": "p",
         "reflection": "r",
-        "preflection_1p": "p1",
-        "reflection_3p": "r3",
+        "reflection_1p": "r1",
         "subset": "score_3",
         "is_gold": False,
         "model": "test",
@@ -383,12 +378,7 @@ class TestLoadReviewedItems:
         hr = row["human_review"]
         scores = hr["scores"]
         # Each voice present, each per-dim score averaged.
-        for voice in (
-            "preflection_3p",
-            "preflection_1p",
-            "reflection_1p",
-            "reflection_3p",
-        ):
+        for voice in ("reflection_1p",):
             assert voice in scores
             for dim in ("relevance", "specificity"):
                 assert scores[voice][dim] == pytest.approx(3.0)
@@ -408,12 +398,7 @@ class TestLoadReviewedItems:
         hr = out[0]["human_review"]
         scores = hr["scores"]
         # Earliest reviewer is alice (base_score=2).
-        for voice in (
-            "preflection_3p",
-            "preflection_1p",
-            "reflection_1p",
-            "reflection_3p",
-        ):
+        for voice in ("reflection_1p",):
             for dim in ("relevance", "specificity"):
                 assert scores[voice][dim] == 2
 
@@ -456,22 +441,18 @@ class TestLoadReviewedItems:
         with pytest.raises(ValueError, match="non-dict scores"):
             items_mod.load_reviewed_items(reviewer_policy="average")
 
-    def test_load_reviewed_items_accepts_four_field_preflection(
+    def test_load_reviewed_items_accepts_arbitrary_score_keys(
         self, monkeypatch
     ):
-        """Current 6-key preflection schema (4 preflection fields + 2 reflection voices)
-        must load and average without the old hard-coded voice validation."""
+        """The reflection_1p schema must load and average without any
+        hard-coded voice validation (reviews span multiple schema
+        generations, so the loader is schema-agnostic)."""
         from pipeline.charter.eval import items as items_mod
 
         scores_a = {
-            "charter_summary": {"relevance": 4},
-            "neutral": {"relevance": 4},
-            "judgemental": {"relevance": 4},
-            "idealisation": {"relevance": 4},
-            "reflection_1p": {"relevance": 4},
-            "reflection_3p": {"relevance": 4},
+            "reflection_1p": {"relevance": 4, "specificity": 4},
         }
-        scores_b = {k: {"relevance": 5} for k in scores_a}
+        scores_b = {k: {dim: 5 for dim in v} for k, v in scores_a.items()}
         reviews = [
             _make_review(
                 "item-1", 1, "alice", "2026-04-14T00:00:00", scores=scores_a
@@ -486,10 +467,10 @@ class TestLoadReviewedItems:
         out = items_mod.load_reviewed_items(reviewer_policy="average")
         assert len(out) == 1
         hr_scores = out[0]["human_review"]["scores"]
-        # Averaged across reviewers for each of the 6 voices.
+        # Averaged across reviewers for each voice/dim.
         assert set(hr_scores.keys()) == set(scores_a.keys())
-        assert hr_scores["charter_summary"]["relevance"] == 4.5
         assert hr_scores["reflection_1p"]["relevance"] == 4.5
+        assert hr_scores["reflection_1p"]["specificity"] == 4.5
 
     def test_load_reviewed_items_drops_orphans(self, monkeypatch, caplog):
         from pipeline.charter.eval import items as items_mod

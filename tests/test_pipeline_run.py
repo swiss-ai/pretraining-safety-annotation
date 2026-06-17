@@ -7,7 +7,7 @@ import pytest
 
 from pipeline.api import extract_json
 from pipeline.config import extract_charter_elements, union_charter_elements
-from pipeline.charter.improve.run import _parse_generation, _parse_mode_judgment
+from pipeline.charter.improve.run import _parse_generation, _parse_reflection_judgment
 
 
 class TestExtractJson:
@@ -111,23 +111,14 @@ class TestUnionCharterElements:
 
 
 class TestParseGeneration:
-    """Tests for _parse_generation.
-
-    Covers the current schema (4-field preflection + 2-voice reflection) and
-    legacy single-mode paths for backward-compat with older fixtures.
-    """
+    """Tests for _parse_generation (reflection_1p-only schema)."""
 
     @staticmethod
     def _full_payload(**overrides) -> dict:
         """Build a complete current-schema payload, overriding any field."""
         base = {
             "analysis": "a",
-            "charter_summary": "cs",
-            "neutral": "n",
-            "judgemental": "j",
-            "idealisation": "i",
             "reflection_1p": "r1",
-            "reflection_3p": "r3",
         }
         base.update(overrides)
         return base
@@ -136,13 +127,11 @@ class TestParseGeneration:
         raw = json.dumps(
             self._full_payload(
                 analysis="test analysis",
-                neutral="test neutral",
                 reflection_1p="test reflection 1p",
             )
         )
         result = _parse_generation(raw)
         assert result["analysis"] == "test analysis"
-        assert result["neutral"] == "test neutral"
         assert result["reflection_1p"] == "test reflection 1p"
 
     def test_json_with_code_fence(self):
@@ -165,63 +154,21 @@ class TestParseGeneration:
         result = _parse_generation(raw)
         assert result["analysis"] == "a"
 
-    def test_field_name_normalization_spelling(self):
-        # US spellings → canonical names
-        raw = json.dumps(
-            self._full_payload(
-                judgmental="j-via-alias",
-                idealization="i-via-alias",
-            )
-        )
-        # Remove the canonical names so the aliases take effect
-        payload = json.loads(raw)
-        payload.pop("judgemental")
-        payload.pop("idealisation")
-        result = _parse_generation(json.dumps(payload))
-        assert result["judgemental"] == "j-via-alias"
-        assert result["idealisation"] == "i-via-alias"
-
-    def test_reflection_only_required_fields(self):
-        # Single-mode parse with explicit required_fields subset (reflection)
-        raw = json.dumps(
-            {"analysis": "a", "reflection_1p": "r1", "reflection_3p": "r3"}
-        )
+    def test_reflection_required_fields(self):
+        # Explicit required_fields (reflection_1p schema).
+        raw = json.dumps({"analysis": "a", "reflection_1p": "r1"})
         result = _parse_generation(
-            raw, required_fields={"analysis", "reflection_1p", "reflection_3p"}
+            raw, required_fields={"analysis", "reflection_1p"}
         )
         assert result["reflection_1p"] == "r1"
 
-    def test_preflection_only_required_fields(self):
-        # Single-mode parse with the new 4-field preflection schema
-        raw = json.dumps(
-            {
-                "analysis": "a",
-                "charter_summary": "cs",
-                "neutral": "n",
-                "judgemental": "j",
-                "idealisation": "i",
-            }
-        )
-        result = _parse_generation(
-            raw,
-            required_fields={
-                "analysis",
-                "charter_summary",
-                "neutral",
-                "judgemental",
-                "idealisation",
-            },
-        )
-        assert result["charter_summary"] == "cs"
-        assert result["idealisation"] == "i"
-
     def test_missing_field_raises(self):
-        raw = json.dumps({"analysis": "a", "neutral": "n"})
+        raw = json.dumps({"analysis": "a"})
         with pytest.raises(AssertionError, match="Missing fields"):
             _parse_generation(raw)
 
 
-class TestParseModeJudgment:
+class TestParseReflectionJudgment:
     def test_basic_json_reflection(self):
         raw = json.dumps(
             {
@@ -234,66 +181,11 @@ class TestParseModeJudgment:
                     },
                     "reasoning": "good 1p",
                 },
-                "reflection_3p": {
-                    "scores": {
-                        "relevance": 4,
-                        "depth": 3,
-                        "charter_grounding": 5,
-                        "clarity": 4,
-                    },
-                    "reasoning": "good 3p",
-                },
             }
         )
-        result = _parse_mode_judgment(raw, "reflection")
+        result = _parse_reflection_judgment(raw)
         assert "reflection_1p" in result
-        assert "reflection_3p" in result
         assert result["reflection_1p"]["aggregate"] == 4.0
-
-    def test_basic_json_preflection(self):
-        # Current 4-field × 3-dim preflection schema.
-        raw = json.dumps(
-            {
-                "charter_summary": {
-                    "scores": {
-                        "relevance": 4,
-                        "charter_grounding": 4,
-                        "class_discipline": 4,
-                    },
-                    "reasoning": "ok cs",
-                },
-                "neutral": {
-                    "scores": {
-                        "relevance": 4,
-                        "charter_grounding": 4,
-                        "class_discipline": 4,
-                    },
-                    "reasoning": "ok n",
-                },
-                "judgemental": {
-                    "scores": {
-                        "relevance": 4,
-                        "charter_grounding": 4,
-                        "class_discipline": 4,
-                    },
-                    "reasoning": "ok j",
-                },
-                "idealisation": {
-                    "scores": {
-                        "relevance": 4,
-                        "charter_grounding": 4,
-                        "class_discipline": 4,
-                    },
-                    "reasoning": "ok i",
-                },
-            }
-        )
-        result = _parse_mode_judgment(raw, "preflection")
-        assert {"charter_summary", "neutral", "judgemental", "idealisation"} <= set(
-            result.keys()
-        )
-        assert result["charter_summary"]["aggregate"] == 4.0
-        assert result["idealisation"]["aggregate"] == 4.0
 
     def test_empty_scores_raises(self):
         raw = json.dumps(
@@ -302,18 +194,14 @@ class TestParseModeJudgment:
                     "scores": {},
                     "reasoning": "ok",
                 },
-                "reflection_3p": {
-                    "scores": {"r": 4},
-                    "reasoning": "ok",
-                },
             }
         )
         with pytest.raises(AssertionError, match="scores must be a non-empty dict"):
-            _parse_mode_judgment(raw, "reflection")
+            _parse_reflection_judgment(raw)
 
     def test_json_with_code_fence(self):
-        raw = '```json\n{"reflection_1p": {"scores": {"r": 4}, "reasoning": "ok"}, "reflection_3p": {"scores": {"r": 4}, "reasoning": "ok"}}\n```'
-        result = _parse_mode_judgment(raw, "reflection")
+        raw = '```json\n{"reflection_1p": {"scores": {"r": 4}, "reasoning": "ok"}}\n```'
+        result = _parse_reflection_judgment(raw)
         assert result["reflection_1p"]["aggregate"] == 4.0
 
     def test_decision_field_ignored_if_present(self):
@@ -325,13 +213,9 @@ class TestParseModeJudgment:
                     "decision": "accept",
                     "reasoning": "ok",
                 },
-                "reflection_3p": {
-                    "scores": {"relevance": 4},
-                    "reasoning": "ok",
-                },
             }
         )
-        result = _parse_mode_judgment(raw, "reflection")
+        result = _parse_reflection_judgment(raw)
         assert result["reflection_1p"]["aggregate"] == 4.0
 
 
@@ -380,14 +264,11 @@ class TestIntegration:
     def _make_mock_client(judge_response: str | None = None):
         """Build an AsyncOpenAI mock that returns the right shape for each call.
 
-        Generate calls are answered with reflection or preflection payloads
-        depending on which mode the user message asks for. Judge calls return
-        the supplied judge_response.
+        Generate calls are answered with a reflection payload. Judge calls
+        return the supplied judge_response (or a default 1p judgment).
         """
         import openai
 
-        judge_refl_response = None
-        judge_prefl_response = None
         if judge_response is None:
             judge_refl_response = json.dumps(
                 {
@@ -400,56 +281,15 @@ class TestIntegration:
                         },
                         "reasoning": "slightly below threshold",
                     },
-                    "reflection_3p": {
-                        "scores": {
-                            "relevance": 4,
-                            "specificity": 3,
-                            "charter_grounding": 4,
-                            "voice_tone": 4,
-                        },
-                        "reasoning": "slightly below threshold",
-                    },
-                }
-            )
-            # Current 4-field × 3-dim preflection judge schema.
-            judge_prefl_response = json.dumps(
-                {
-                    field: {
-                        "scores": {
-                            "relevance": 4,
-                            "charter_grounding": 3,
-                            "class_discipline": 4,
-                        },
-                        "reasoning": "slightly below threshold",
-                    }
-                    for field in (
-                        "charter_summary",
-                        "neutral",
-                        "judgemental",
-                        "idealisation",
-                    )
                 }
             )
         else:
-            # Caller provided a custom judge response for both modes.
             judge_refl_response = judge_response
-            judge_prefl_response = judge_response
 
         refl_response = json.dumps(
             {
                 "analysis": "refl analysis",
                 "reflection_1p": "test reflection 1p per [1.1]",
-                "reflection_3p": "test reflection 3p per [1.1]",
-            }
-        )
-        # Current 4-field preflection schema.
-        prefl_response = json.dumps(
-            {
-                "analysis": "prefl analysis",
-                "charter_summary": "cs content [1.1]",
-                "neutral": "n content [1.1]",
-                "judgemental": "j content [1.1]",
-                "idealisation": "i content [1.1]",
             }
         )
 
@@ -466,19 +306,9 @@ class TestIntegration:
             msg.reasoning_content = None
 
             if system.startswith("Generate"):
-                if "Reflection mode" in user:
-                    msg.content = refl_response
-                else:
-                    msg.content = prefl_response
+                msg.content = refl_response
             else:
-                # Judge calls: detect mode from the fields rendered into the
-                # user content. Preflection mode includes "## charter_summary"
-                # etc. as its per-field sections; reflection mode uses the
-                # two voice headers.
-                if "## charter_summary" in user or "## neutral" in user:
-                    msg.content = judge_prefl_response
-                else:
-                    msg.content = judge_refl_response
+                msg.content = judge_refl_response
 
             # Numeric usage so api_call's token bookkeeping works.
             resp.usage = MagicMock()
@@ -514,14 +344,8 @@ class TestIntegration:
         prompt_dir.mkdir()
         gen_refl_prompt = prompt_dir / "gen_reflection_v1.md"
         gen_refl_prompt.write_text("Generate. Charter: {charter}")
-        gen_prefl_prompt = prompt_dir / "gen_preflection_v1.md"
-        gen_prefl_prompt.write_text("Generate. Charter: {charter}")
         judge_refl_prompt = prompt_dir / "judge_reflection_v1.md"
         judge_refl_prompt.write_text("Judge {part_type}. Threshold: {accept_threshold}")
-        judge_prefl_prompt = prompt_dir / "judge_preflection_v1.md"
-        judge_prefl_prompt.write_text(
-            "Judge {part_type}. Threshold: {accept_threshold}"
-        )
 
         semaphore = asyncio.Semaphore(10)
 
@@ -530,7 +354,6 @@ class TestIntegration:
         generated = generate_batch(
             items,
             gen_refl_prompt,
-            gen_prefl_prompt,
             "charter text",
             "test-model",
             iteration=1,
@@ -540,17 +363,11 @@ class TestIntegration:
         assert len(generated) == 3
         for g in generated:
             assert "REFLECTION ANALYSIS" in g["analysis"]
-            assert "PREFLECTION ANALYSIS" in g["analysis"]
-            assert g["charter_summary"] == "cs content [1.1]"
-            assert g["neutral"] == "n content [1.1]"
-            assert g["judgemental"] == "j content [1.1]"
-            assert g["idealisation"] == "i content [1.1]"
-            assert g["reflection_3p"] == "test reflection 3p per [1.1]"
+            assert g["reflection_1p"] == "test reflection 1p per [1.1]"
 
         judged = judge_batch(
             generated,
             judge_refl_prompt,
-            judge_prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,
@@ -558,21 +375,11 @@ class TestIntegration:
             semaphore=semaphore,
         )
         assert len(judged) == 3
-        # Aggregate across 6 parts: reflection 2 voices × 4 dims (mean 3.75)
-        # and preflection 4 fields × 3 dims (mean ~3.67) → overall below 4
-        # → reject.
+        # reflection_1p: 4 dims (mean 3.75) → below 4 → reject.
         assert all(j["judgment"]["decision"] == "reject" for j in judged)
         for j in judged:
-            for voice in (
-                "charter_summary",
-                "neutral",
-                "judgemental",
-                "idealisation",
-                "reflection_1p",
-                "reflection_3p",
-            ):
-                assert voice in j["judgment"]
-                assert "scores" in j["judgment"][voice]
+            assert "reflection_1p" in j["judgment"]
+            assert "scores" in j["judgment"]["reflection_1p"]
 
         # Items were saved by generate_batch (and overwritten by judge_batch)
         from pipeline.charter.improve.storage import load_items_for_iteration
@@ -600,14 +407,8 @@ class TestIntegration:
         prompt_dir.mkdir()
         gen_refl_prompt = prompt_dir / "gen_reflection_v1.md"
         gen_refl_prompt.write_text("Generate. Charter: {charter}")
-        gen_prefl_prompt = prompt_dir / "gen_preflection_v1.md"
-        gen_prefl_prompt.write_text("Generate. Charter: {charter}")
         judge_refl_prompt = prompt_dir / "judge_reflection_v1.md"
         judge_refl_prompt.write_text("Judge {part_type}. Threshold: {accept_threshold}")
-        judge_prefl_prompt = prompt_dir / "judge_preflection_v1.md"
-        judge_prefl_prompt.write_text(
-            "Judge {part_type}. Threshold: {accept_threshold}"
-        )
 
         semaphore = asyncio.Semaphore(10)
 
@@ -616,7 +417,6 @@ class TestIntegration:
         generated = generate_batch(
             items,
             gen_refl_prompt,
-            gen_prefl_prompt,
             "charter text",
             "test-model",
             iteration=1,
@@ -629,7 +429,6 @@ class TestIntegration:
         judged = judge_batch(
             generated,
             judge_refl_prompt,
-            judge_prefl_prompt,
             "test-model",
             iteration=1,
             accept_threshold=4.0,

@@ -35,14 +35,11 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _four_voice_scores(scores: dict, aggregate: float) -> dict:
-    """Build a four-voice judgment dict where every voice has the same scores."""
+def _voice_scores(scores: dict, aggregate: float) -> dict:
+    """Build a reflection_1p judgment dict."""
     voice = {"scores": dict(scores), "aggregate": aggregate}
     return {
-        "preflection_3p": dict(voice),
-        "preflection_1p": dict(voice),
         "reflection_1p": dict(voice),
-        "reflection_3p": dict(voice),
     }
 
 
@@ -55,13 +52,13 @@ def _judgment(
     safety_score: int | None = None,
     per_dim: dict | None = None,
 ) -> dict:
-    """Build one judgment row matching the spec's four-voice shape."""
+    """Build one judgment row with the reflection_1p voice shape."""
     scores = (
         per_dim
         if per_dim is not None
         else {"relevance": aggregate, "specificity": aggregate}
     )
-    voices = _four_voice_scores(scores, aggregate)
+    voices = _voice_scores(scores, aggregate)
     return {
         "item_id": item_id,
         "iteration": iteration,
@@ -118,7 +115,6 @@ def _build_run_dir(
         "gold_judge": {
             "alias": "gold",
             "prompt_reflection": "judge_v1.md",
-            "prompt_preflection": "judge_v1.md",
         },
         "n_items": len(items) if items is not None else 0,
     }
@@ -515,7 +511,6 @@ class TestRankJudges:
             "generator": {
                 "alias": "gen",
                 "prompt_reflection": "gen_v1.md",
-                "prompt_preflection": "gen_v1.md",
             },
         }
 
@@ -653,7 +648,7 @@ class TestRankJudges:
         cand_rows = []
         for idx, agg in enumerate([4.0, 3.0, 5.0]):
             iid = f"i{idx}"
-            review_voices = _four_voice_scores(
+            review_voices = _voice_scores(
                 {"relevance": agg, "specificity": agg}, agg
             )
             reviewed_items.append(
@@ -706,7 +701,7 @@ class TestRankJudges:
         cand_rows = []
         pairs = [("i0", 1, 4.0), ("i0", 2, 3.0)]
         for iid, iteration, agg in pairs:
-            review_voices = _four_voice_scores(
+            review_voices = _voice_scores(
                 {"relevance": agg, "specificity": agg}, agg
             )
             reviewed_items.append(

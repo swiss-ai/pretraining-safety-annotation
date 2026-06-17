@@ -40,7 +40,6 @@ def save_annotation(
     text: str,
     reflection_point: int,
     analysis: str,
-    preflection: str,
     reflection: str,
     reflection_charter_elements: list[str],
     presentation_order: int,
@@ -50,9 +49,9 @@ def save_annotation(
     conn.execute(
         """INSERT OR REPLACE INTO annotations
            (item_id, annotator_id, subset, text, reflection_point,
-            analysis, preflection, reflection, reflection_charter_elements,
+            analysis, reflection, reflection_charter_elements,
             presentation_order, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             item_id,
             annotator_id,
@@ -60,7 +59,6 @@ def save_annotation(
             text,
             reflection_point,
             analysis,
-            preflection,
             reflection,
             json.dumps(reflection_charter_elements),
             presentation_order,

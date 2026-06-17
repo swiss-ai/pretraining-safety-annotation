@@ -171,7 +171,7 @@ class JsonlRunStore:
           New aliases (not in existing) are allowed.
 
         Supports both old (``prompt_sha256``) and new
-        (``prompt_reflection_sha256`` + ``prompt_preflection_sha256``) formats.
+        (``prompt_reflection_sha256``) formats.
         """
         for key in ("n_items", "seed", "max_tokens", "dataset_revision"):
             if key in expected and existing.get(key) != expected[key]:
@@ -183,7 +183,6 @@ class JsonlRunStore:
         sha_keys = (
             "prompt_sha256",
             "prompt_reflection_sha256",
-            "prompt_preflection_sha256",
         )
 
         if "gold_judge" in expected:

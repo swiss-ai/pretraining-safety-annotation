@@ -27,20 +27,10 @@ from pipeline.charter.scale.runs import get_run
 # output columns that justify dropping the placeholder. The placeholder is
 # dropped when any of the mapped columns is in this run's output_columns.
 #
-# - `reflection` placeholder is dropped by any reflections run (which writes
+# - `reflection` placeholder is dropped by the reflections run (which writes
 #   reflection_1p).
-# - `preflection` placeholder is dropped by any preflections run — the
-#   legacy 2-voice run wrote preflection_3p; the current 4-field run writes
-#   charter_summary / neutral / judgemental / idealisation.
 _RENAME_MAP: dict[str, set[str]] = {
     "reflection": {"reflection_1p"},
-    "preflection": {
-        "preflection_3p",
-        "charter_summary",
-        "neutral",
-        "judgemental",
-        "idealisation",
-    },
 }
 
 
@@ -212,13 +202,9 @@ class _ResultCursor:
 
 _COLUMN_META: dict[str, tuple[pa.DataType, object]] = {
     "reflection_position": (pa.int32(), 0),
-    "reflection_end_position": (pa.int32(), 0),
-    "refusal_reflection_position": (pa.int32(), 0),
     # -1 sentinel: "not backfilled".  0 is a legitimate tok_idx for
     # degenerate single-token docs, so we can't use it as the default.
     "reflection_token_index": (pa.int32(), -1),
-    "reflection_end_token_index": (pa.int32(), -1),
-    "refusal_reflection_token_index": (pa.int32(), -1),
 }
 _DEFAULT_COLUMN_META: tuple[pa.DataType, object] = (pa.large_string(), "")
 

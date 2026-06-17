@@ -10,16 +10,15 @@
 
 ## Repo orientation
 
-The pipeline produces two annotation types over FineWeb / dolma3_mix text (see `README.md` for the schema and worked examples):
+The pipeline produces a single annotation over FineWeb / dolma3_mix text (see `README.md` for the schema and worked examples):
 
-- **Preflection** (full text → 4 third-person fields): `charter_summary`, `neutral`, `judgemental`, `idealisation`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_preflection_v8.md`.
-- **Reflection** (partial text up to a reading pause point → 2 voices): `reflection_1p`, `reflection_3p`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`.
+- **Reflection** (partial text up to a reading pause point → a single first-person voice): `reflection_1p`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`.
 
-Both emit inline `[X.Y]` citations against the Apertus Charter (`apertus-charter/charter-v1.0.md`, set as `charter_path` in `configs/config.yaml`; the charter lives in the `apertus-charter` git submodule). Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
+It emits inline `[X.Y]` citations against the Apertus Charter (`apertus-charter/charter-v1.0.md`, set as `charter_path` in `configs/config.yaml`; the charter lives in the `apertus-charter` git submodule). Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
 
 One top-level group under `pipeline/`:
 
-- **`pipeline/charter/`** — the charter-cited annotation pipeline. Four steps: `seed` (human annotation) → `improve` (generate+judge+improver loop) → `eval` (diverse-pool ranking) → `scale` (SLURM scale-up over the 102M-row sidecar). Same product (charter-cited preflection + reflection) across all four; the first three iterate the prompt, the fourth runs it for real.
+- **`pipeline/charter/`** — the charter-cited annotation pipeline. Four steps: `seed` (human annotation) → `improve` (generate+judge+improver loop) → `eval` (diverse-pool ranking) → `scale` (SLURM scale-up over the 102M-row sidecar). Same product (the charter-cited first-person reflection) across all four; the first three iterate the prompt, the fourth runs it for real.
 
 Subfolder READMEs (especially `pipeline/charter/scale/README.md` and `pipeline/charter/scale/AGENTS.md`) carry the detail — prefer updating those over bloating top-level docs.
 

@@ -40,7 +40,7 @@ def _list_runs() -> list[dict]:
 
 def _generator_display_label(gen_name: str) -> str:
     """'qwen3.5-35b-a3b__generator_reflection_v7.md' → 'qwen3.5-35b-a3b v7'."""
-    m = re.match(r"^(.+?)__generator_(?:reflection|preflection)_v(\d+)", gen_name)
+    m = re.match(r"^(.+?)__generator_reflection_v(\d+)", gen_name)
     if m:
         return f"{m.group(1)} v{m.group(2)}"
     return gen_name
@@ -409,10 +409,7 @@ def _render_cross_run_charts(generators: list[dict]) -> None:
     """Render cross-run barplots: accept rate, mean aggregate, and per-safety-score."""
     labels = [_generator_display_label(g["generator"]) for g in generators]
 
-    for mode, mode_label in (
-        ("reflection", "Reflection"),
-        ("preflection", "Preflection"),
-    ):
+    for mode, mode_label in (("reflection", "Reflection"),):
         accept_key = f"{mode}_accept_rate"
         mean_key = f"{mode}_mean_aggregate"
         safety_key = f"{mode}_accept_by_safety_score"
@@ -714,10 +711,7 @@ def charter_eval_browse_page(run_id: str) -> None:
                     ui.badge(f"Agg: {agg:.2f}", color="purple").props("outline")
 
             # Per-mode aggregates
-            for mode, mode_label in (
-                ("reflection", "Refl"),
-                ("preflection", "Prefl"),
-            ):
+            for mode, mode_label in (("reflection", "Refl"),):
                 mode_agg = j.get(f"{mode}_aggregate")
                 mode_dec = j.get(f"{mode}_decision")
                 if mode_agg is not None:
@@ -738,12 +732,9 @@ def charter_eval_browse_page(run_id: str) -> None:
                     "white-space: pre-wrap; max-height: 150px; overflow-y: auto;"
                 )
 
-            # Generated reflections
+            # Generated reflection
             for field, fallback, label in (
                 ("reflection_1p", "reflection", "Reflection 1p"),
-                ("reflection_3p", None, "Reflection 3p"),
-                ("preflection_1p", None, "Preflection 1p"),
-                ("preflection_3p", "preflection", "Preflection 3p"),
             ):
                 val = row.get(field) or (row.get(fallback) if fallback else None)
                 if val:
@@ -754,12 +745,7 @@ def charter_eval_browse_page(run_id: str) -> None:
 
             # Per-voice judgment scores
             voices = []
-            for v in (
-                "reflection_1p",
-                "reflection_3p",
-                "preflection_1p",
-                "preflection_3p",
-            ):
+            for v in ("reflection_1p",):
                 vdata = j.get(v)
                 if isinstance(vdata, dict) and vdata.get("scores"):
                     voices.append((v, vdata))

@@ -1,7 +1,7 @@
 # Choosing the annotation model
 
 How we picked the model that annotates the pretraining corpus (charter
-reflections and preflections over ~102M FineWeb/dolma3 documents).
+reflections over ~102M FineWeb/dolma3 documents).
 
 **Decision: `Qwen3.5-35B-A3B-FP8`.** Of the candidates we could afford to run at
 scale, it produced the best charter annotations, held up best on harmful and
@@ -19,7 +19,7 @@ anywhere near it.
 
 Quality numbers come from `charter.eval` (`ref_v3` plus `ref_v4_qwen`), scored by
 the Kimi-K2.5 gold judge on a 5K diverse pool. Cost comes from the throughput
-benchmarks (4-voice prompt, tuned SGLang). Sources are listed at the bottom.
+benchmarks (reflection prompt, tuned SGLang). Sources are listed at the bottom.
 
 ---
 
@@ -131,7 +131,7 @@ The four affordable survivors each annotated the same 5,000-document pool
 (dolma3, stratified across safety scores 0 to 5), each with its own prompt from
 Stage 3. The calibrated gold judge, Kimi-K2.5 (`judge_reflection_v24.md`), then
 scored every annotation 1-5 on four rubric dimensions (relevance, specificity,
-charter_grounding, voice_tone) for both the first- and third-person voices.
+charter_grounding, voice_tone) for the first-person reflection.
 
 ![Quality ranking](assets/model_selection/quality_ranking.png)
 
@@ -164,8 +164,8 @@ That gap on the hard tail, not the small aggregate lead, is what settled it.
   sibling run (`ref_v4_qwen`, n about 3.2K) against about 4.7K for the others.
   Re-scoring on the 3,158 documents common to all four gives the same order and
   nearly the same values (Qwen 4.501, Nemotron 4.492, gpt-oss 4.450, GLM 4.402).
-- Scope. The bake-off scored the reflection voice, the harder mid-document
-  annotation. The same model handles preflection in production.
+- Scope. The bake-off scored the first-person reflection, the mid-document
+  annotation that ships in production.
 
 ## Outcome and production config
 
@@ -173,9 +173,8 @@ That gap on the hard tail, not the small aggregate lead, is what settled it.
 [`final_prompts/qwen3.5-35b-a3b/`](../final_prompts/qwen3.5-35b-a3b/), and the
 scale-up runs are in [`charter/scale/`](charter/scale/).
 
-In production the reflection and preflection passes use separate prompts and API
-calls, so the real reflection-only cost is lower than the 4-voice screen figure:
-about 22.4K GPU-h, down to about 21.9K after the Mamba/KV pool rebalance
+In production the single reflection pass is cheaper than the early 4-voice screen
+figure: about 22.4K GPU-h, down to about 21.9K after the Mamba/KV pool rebalance
 (`--mamba-full-memory-ratio 2.0`). The 50%-corpus run (`EXP-002`, 51.4M
 reflections) came in around 13K GPU-h, within 4% of the linear estimate.
 

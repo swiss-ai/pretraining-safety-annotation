@@ -135,9 +135,8 @@ def load_reviewed_items(reviewer_policy: str = "average") -> list[dict]:
     reviews = load_reviews()
     grouped: dict[tuple[str, int], list[dict]] = defaultdict(list)
     for r in reviews:
-        # The reviews table spans multiple schema generations (legacy 2-voice
-        # preflection, new 4-field preflection, reflection unchanged). Validate
-        # only that `scores` is a dict — let downstream code discover the
+        # The reviews table spans multiple schema generations. Validate only
+        # that `scores` is a dict — let downstream code discover the
         # voice/field keys dynamically so every generation stays parseable.
         scores = r.get("scores")
         if not isinstance(scores, dict):
@@ -190,8 +189,8 @@ def _average_reviews(reviewers: list[dict]) -> dict:
     """Per-dim average of `scores` across reviewers.
 
     Voices/fields are discovered from the union of keys across reviewers so
-    legacy 4-voice reviews, current 6-key reviews (4 preflection + 2
-    reflection), and any future schema are all handled without code changes.
+    legacy multi-voice reviews and any future schema are all handled without
+    code changes.
     """
     voice_keys: set[str] = set()
     for r in reviewers:

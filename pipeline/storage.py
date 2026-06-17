@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS annotations (
     text TEXT NOT NULL,
     reflection_point INTEGER NOT NULL,
     analysis TEXT NOT NULL,
-    preflection TEXT NOT NULL,
     reflection TEXT NOT NULL,
     reflection_charter_elements TEXT NOT NULL,
     presentation_order INTEGER NOT NULL,
@@ -53,9 +52,7 @@ CREATE TABLE IF NOT EXISTS items (
     gen_prompt TEXT NOT NULL,
     model TEXT NOT NULL,
     analysis TEXT,
-    preflection TEXT,
     reflection TEXT,
-    preflection_charter_elements TEXT NOT NULL DEFAULT '[]',
     reflection_charter_elements TEXT NOT NULL DEFAULT '[]',
     raw_response TEXT,
     reasoning TEXT,
@@ -75,9 +72,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     decision TEXT NOT NULL,
     notes TEXT NOT NULL,
     reflection_decision TEXT,
-    preflection_decision TEXT,
     reflection_aggregate REAL,
-    preflection_aggregate REAL,
     timestamp TEXT NOT NULL,
     PRIMARY KEY (item_id, iteration, reviewer_id)
 );
@@ -100,9 +95,7 @@ CREATE TABLE IF NOT EXISTS runs (
     gen_prompt TEXT NOT NULL,
     judge_prompt TEXT NOT NULL,
     gen_reflection_prompt TEXT,
-    gen_preflection_prompt TEXT,
     judge_reflection_prompt TEXT,
-    judge_preflection_prompt TEXT,
     generator_model TEXT NOT NULL,
     judge_model TEXT NOT NULL,
     n_items INTEGER NOT NULL,
@@ -193,12 +186,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in item_cols:
             conn.execute(f"ALTER TABLE items ADD COLUMN {col} INTEGER")
 
-    # Add alternate-voice annotation columns to items (added 2026-03-27)
-    # preflection_1p: first-person variant of preflection (existing preflection column is 3rd-person)
-    # reflection_3p: third-person variant of reflection (existing reflection column is 1st-person)
-    for col in ("preflection_1p", "reflection_3p"):
-        if col not in item_cols:
-            conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+    # Drop the legacy preflection column from annotations (added 2026-06-17).
+    # The preflection annotation mode was removed; only the first-person
+    # reflection remains.
+    ann_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(annotations)").fetchall()
+    }
+    if "preflection" in ann_cols:
+        conn.execute("ALTER TABLE annotations DROP COLUMN preflection")
 
     # Add phase column to runs (added 2026-03-16)
     if "phase" not in cols:
@@ -208,35 +203,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "safety_score" not in item_cols:
         conn.execute("ALTER TABLE items ADD COLUMN safety_score INTEGER")
 
-    # Split charter_elements into separate preflection/reflection sets (added 2026-04-09)
-    # Old behaviour: a single `charter_elements` column populated by extracting
-    # from `reflection_1p` only. New behaviour: two columns, each the union of
-    # the citations the model wrote in the 1p and 3p variants of that part.
+    # Backfill reflection_charter_elements from the reflection text for legacy
+    # DBs that still carry the single `charter_elements` column (added 2026-04-09).
     item_cols = {row[1] for row in conn.execute("PRAGMA table_info(items)").fetchall()}
-    if "charter_elements" in item_cols and (
-        "reflection_charter_elements" not in item_cols
-        or "preflection_charter_elements" not in item_cols
-    ):
+    if "charter_elements" in item_cols and "reflection_charter_elements" not in item_cols:
         from pipeline.config import union_charter_elements
 
-        if "preflection_charter_elements" not in item_cols:
-            conn.execute(
-                "ALTER TABLE items ADD COLUMN preflection_charter_elements "
-                "TEXT NOT NULL DEFAULT '[]'"
-            )
-        if "reflection_charter_elements" not in item_cols:
-            conn.execute(
-                "ALTER TABLE items ADD COLUMN reflection_charter_elements "
-                "TEXT NOT NULL DEFAULT '[]'"
-            )
+        conn.execute(
+            "ALTER TABLE items ADD COLUMN reflection_charter_elements "
+            "TEXT NOT NULL DEFAULT '[]'"
+        )
 
         rows = conn.execute(
-            "SELECT item_id, iteration, preflection, preflection_1p, "
-            "reflection, reflection_3p, charter_elements FROM items"
+            "SELECT item_id, iteration, reflection, charter_elements FROM items"
         ).fetchall()
         for r in rows:
-            refl_union = union_charter_elements(r["reflection"], r["reflection_3p"])
-            pref_union = union_charter_elements(r["preflection"], r["preflection_1p"])
+            refl_union = union_charter_elements(r["reflection"])
             # Fall back to legacy column if reflection text yielded nothing
             # (rare case where the old extractor saw something the new one did not).
             if not refl_union and r["charter_elements"]:
@@ -245,15 +227,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 except (TypeError, ValueError):
                     refl_union = []
             conn.execute(
-                "UPDATE items SET reflection_charter_elements = ?, "
-                "preflection_charter_elements = ? "
+                "UPDATE items SET reflection_charter_elements = ? "
                 "WHERE item_id = ? AND iteration = ?",
-                (
-                    json.dumps(refl_union),
-                    json.dumps(pref_union),
-                    r["item_id"],
-                    r["iteration"],
-                ),
+                (json.dumps(refl_union), r["item_id"], r["iteration"]),
             )
 
         conn.execute("ALTER TABLE items DROP COLUMN charter_elements")
@@ -291,31 +267,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
     }
     for col, coltype in [
         ("reflection_decision", "TEXT"),
-        ("preflection_decision", "TEXT"),
         ("reflection_aggregate", "REAL"),
-        ("preflection_aggregate", "REAL"),
     ]:
         if col not in review_cols:
             conn.execute(f"ALTER TABLE reviews ADD COLUMN {col} {coltype}")
 
-    # Add per-mode prompt columns to runs (added 2026-04-12)
+    # Add per-role prompt columns to runs (added 2026-04-12)
     # Re-fetch cols since we may have added 'source'/'group_id'/'phase' above.
     run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
     for col in (
         "gen_reflection_prompt",
-        "gen_preflection_prompt",
         "judge_reflection_prompt",
-        "judge_preflection_prompt",
     ):
         if col not in run_cols:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
 
-    # Make preflection/reflection/analysis/raw_response nullable (added 2026-04-12)
+    # Make reflection/analysis/raw_response nullable (added 2026-04-12)
     # SQLite cannot ALTER COLUMN, so we recreate the table if any of these are NOT NULL.
     item_col_info = conn.execute("PRAGMA table_info(items)").fetchall()
     not_null_map = {row[1]: bool(row[3]) for row in item_col_info}
     needs_rebuild = any(
-        not_null_map.get(c) for c in ("preflection", "reflection", "analysis")
+        not_null_map.get(c) for c in ("reflection", "analysis")
     )
     if needs_rebuild:
         # Get current column names/types to rebuild with nullable columns
@@ -335,9 +307,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 gen_prompt TEXT NOT NULL,
                 model TEXT NOT NULL,
                 analysis TEXT,
-                preflection TEXT,
                 reflection TEXT,
-                preflection_charter_elements TEXT NOT NULL DEFAULT '[]',
                 reflection_charter_elements TEXT NOT NULL DEFAULT '[]',
                 raw_response TEXT,
                 reasoning TEXT,
@@ -365,15 +335,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         conn.execute("DROP TABLE items_old")
         conn.commit()
-
-    # Four-field preflection columns (added 2026-04-16). Replaces the old
-    # two-voice preflection (preflection / preflection_1p) with four fields:
-    # charter_summary, neutral, judgemental, idealisation. Legacy columns stay
-    # for historical data.
-    item_cols = {row[1] for row in conn.execute("PRAGMA table_info(items)").fetchall()}
-    for col in ("charter_summary", "neutral", "judgemental", "idealisation"):
-        if col not in item_cols:
-            conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
 
 
 # Connections older than this are closed and reopened so the new connection
