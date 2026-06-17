@@ -304,11 +304,13 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
         "resolve_prompt_path",
         lambda fn, alias: fake_prompt,
     )
-    monkeypatch.setattr(
-        eg,
-        "make_api_client",
-        lambda *a, **kw: (MagicMock(), asyncio.Semaphore(1)),
-    )
+    captured_client_calls: list = []
+
+    def _fake_make_api_client(*a, **kw):
+        captured_client_calls.append((a, kw))
+        return (MagicMock(), asyncio.Semaphore(1))
+
+    monkeypatch.setattr(eg, "make_api_client", _fake_make_api_client)
     monkeypatch.setattr(
         eg,
         "ensure_item_pool",
@@ -352,6 +354,7 @@ def patched_runner(monkeypatch, tmp_path, eval_cfg):
         captured_gen_items=captured_gen_items,
         captured_gen_failures=captured_gen_failures,
         captured_jud_failures=captured_jud_failures,
+        captured_client_calls=captured_client_calls,
         install_fakes=install_fakes,
     )
 
@@ -450,6 +453,22 @@ class TestRunGeneratorEval:
         assert meta.get(
             "finished_at"
         ), f"metadata.finished_at should be set, got {meta.get('finished_at')!r}"
+
+    def test_api_keys_threaded_to_every_client(self, patched_runner):
+        """Regression: every client is built with the endpoint→key mapping.
+
+        Omitting api_keys made make_api_client fall back to SWISS_AI_API_KEY for
+        all endpoints, so OpenRouter candidates got the wrong key (401).
+        """
+        cfg = patched_runner.cfg
+        patched_runner.run(cfg, "run_keys")
+        calls = patched_runner.captured_client_calls
+        assert calls, "make_api_client was never called"
+        for a, kw in calls:
+            api_keys = kw.get("api_keys", a[2] if len(a) > 2 else None)
+            assert api_keys is cfg.api_keys, (
+                f"make_api_client called without the api_keys mapping: args={a} kw={kw}"
+            )
 
     def test_resume_skips_done_items(self, patched_runner):
         cfg = patched_runner.cfg

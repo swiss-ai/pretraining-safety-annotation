@@ -383,7 +383,7 @@ def run_generator_eval(
 
         judge_endpoint = gold.endpoint or cfg.charter.eval.endpoint
         logger.info("Gold judge: alias={} api_name={} endpoint={}", gold.alias, gold.api_name, judge_endpoint)
-        client, sem = make_api_client(judge_endpoint, ge.max_concurrent)
+        client, sem = make_api_client(judge_endpoint, ge.max_concurrent, cfg.api_keys)
         charter = CHARTER_PATH.read_text(encoding="utf-8")
 
         # Stage 1: generate reflections for every candidate (in parallel)
@@ -395,7 +395,7 @@ def run_generator_eval(
                 # Each thread needs its own client because httpx
                 # internals bind to a single event loop.
                 gen_endpoint = gen.endpoint or cfg.charter.eval.endpoint
-                t_client, _ = make_api_client(gen_endpoint, per_cand)
+                t_client, _ = make_api_client(gen_endpoint, per_cand, cfg.api_keys)
                 _generate_with_resume(
                     store,
                     _gen_file(gen),

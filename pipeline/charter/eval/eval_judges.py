@@ -122,7 +122,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
         # Per-model endpoint: fall back to the phase-level default.
         def _client_for(model):
             ep = model.endpoint or cfg.charter.eval.endpoint
-            return make_api_client(ep, je.max_concurrent)
+            return make_api_client(ep, je.max_concurrent, cfg.api_keys)
 
         charter = CHARTER_PATH.read_text(encoding="utf-8")
 
