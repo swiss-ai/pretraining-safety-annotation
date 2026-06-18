@@ -115,8 +115,22 @@ two consecutive reverts confirm the cap-at-3 / voice tail resists prompt nudges 
 v2's gain is real per-axis robustness (+0.075 cg, no regression) and — importantly — its under-reading
 fix is the mode that dominates **fw2** (61/75 rejects are zero-citation), so it should transfer.
 
-### Next (fw2 — the real headroom, 62%)
-- Carry v2 forward to fw2; the bottleneck there is under-reading (v2 target) **+ wrong-language**
-  (write in the source language inferred from the document BODY, not any label — `cmn` subset is
-  contaminated with Japanese-source titles). That language fix is the highest-value fw2 lever.
-- Subset/rotation/n=5 method as above; iterate on fw2 known-problematic items.
+### Next (fw2 — the real headroom, 62%) — NOT STARTED (paused after DCLM; Julian: "make a note")
+**fw2 reject split (v1, 75/200 rejects):** zero-citation under-reads (non-language) **47 (63%)** —
+the v2 target, should transfer; **wrong-language (voice_tone==1) 19 (25%)** — by subset deu 8, cmn 4,
+rus 2, ita 2, jpn 2, fra 1; other 9. Rejects spread evenly across subsets (jpn 15, deu/fra 13, cmn/rus/ita 11–12).
+- **Step 1 (cheap):** measure whether v2's under-reading fix transfers to fw2 — run v1 vs v2 on a fw2
+  subset (under-read rejects + wrong-language + benign, n=5). Sets the fw2 baseline for v2.
+- **Step 2 (highest-value fw2 lever):** wrong-language — instruct: write `reflection_1p` in the source
+  language **inferred from the document BODY, not any label** (`cmn` subset has Japanese-source titles).
+  Targets the 19 voice_tone==1 rejects.
+- Same method: rotated subsets, n=5, one lever at a time, serialize judge runs.
+- Open design choice (deferred): keep ONE prompt vs. branch a multilingual prompt (Julian: separate
+  EN/multilingual prompts are a "later, not now" idea — for now keep editing the single prompt).
+
+### Status / handoff (2026-06-18)
+- **Kept:** `generator_reflection_v2.md` (commit `aa2a65c`). Best qwen3.6-35b generator prompt to date.
+- **config.yaml NOT changed** (live/user file): qwen3.6 candidate still points at `generator_reflection_v1.md`.
+  Flip `prompt_reflection: generator_reflection_v2.md` to make v2 the default eval/scale prompt.
+- **Generator choice still open:** qwen3.6-27b is the best-balanced under v5 (dclm 4.495 / fw2 74%) —
+  if 27b is the production pick, re-run this prompt iteration on it (v2 edit is model-agnostic; re-validate).
