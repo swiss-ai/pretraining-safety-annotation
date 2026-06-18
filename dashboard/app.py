@@ -134,14 +134,16 @@ def _wrap_citations(text: str) -> str:
 
 
 def _refl_html(c: dict) -> str:
+    # Use <div> (not <p>): the tooltip holds block HTML (<p>/<ul>), and a nested
+    # block inside a <p> auto-closes it, ejecting the first citation's tooltip.
     refl = _wrap_citations(c.get("reflection_1p") or "(none)")
     cites = _wrap_citations(" ".join(c.get("charter_elements") or []) or "—")
     out = [
-        f"<h3 style='margin:.3em 0'>Reflection (first-person)</h3><p>{refl}</p>",
-        f"<p><b>Charter citations:</b> {cites}</p>",
+        f"<h3 style='margin:.3em 0'>Reflection (first-person)</h3><div>{refl}</div>",
+        f"<div style='margin-top:.5em'><b>Charter citations:</b> {cites}</div>",
     ]
     if c.get("analysis"):
-        out.append(f"<p><b>Analysis:</b> {html.escape(c['analysis'])}</p>")
+        out.append(f"<div style='margin-top:.5em'><b>Analysis:</b> {html.escape(c['analysis'])}</div>")
     return "".join(out)
 
 
@@ -233,9 +235,10 @@ _CSS = (
     ".cite{position:relative;border-bottom:1px dotted #888;cursor:help}"
     ".cite .tip{visibility:hidden;opacity:0;transition:opacity .12s;"
     "position:absolute;z-index:50;left:0;bottom:100%;width:380px;max-width:80vw;"
-    "max-height:280px;overflow-y:auto;text-align:left;background:#1f2937;"
-    "color:#e5e7eb;padding:6px 10px;border-radius:6px;font-size:.74rem;"
-    "line-height:1.3;box-shadow:0 4px 14px rgba(0,0,0,.4)}"
+    "max-height:280px;overflow-y:auto;text-align:left;background:#111827;"
+    "color:#fff;padding:6px 10px;border-radius:6px;font-size:.74rem;"
+    "line-height:1.3;box-shadow:0 4px 14px rgba(0,0,0,.5)}"
+    ".cite .tip *{color:#fff}"
     ".cite:hover .tip{visibility:visible;opacity:1}"
     ".cite .tip p{margin:.3em 0}"
     ".cite .tip ul,.cite .tip ol{margin:.3em 0;padding-left:1.1em}"
