@@ -188,6 +188,11 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "ACCEPT" in judge_md
     # The judge reasoning also gets citation tooltips ([2.1] in the fixture reasoning).
     assert 'class="cite"' in judge_md
+    # English-fallback cards are flagged for rejection; in-language ones are not.
+    c_i2 = next(c for c in app.CARDS if c["item_id"] == "i2")  # English on deu source
+    c_i1 = next(c for c in app.CARDS if c["item_id"] == "i1")  # en on en source
+    assert "SHOULD BE REJECTED BC OF LANGUAGE FALLBACK" in app._refl_html(c_i2)
+    assert "SHOULD BE REJECTED" not in app._refl_html(c_i1)
     # Reflection is HTML with citation hover tooltips drawn from the value spec.
     assert 'class="cite"' in refl and "[2.1]" in refl
     assert 'class="tip"' in refl  # nested hover-tooltip span (not the title attribute)

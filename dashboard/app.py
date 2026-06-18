@@ -165,7 +165,14 @@ def _refl_html(c: dict) -> str:
     # block inside a <p> auto-closes it, ejecting the first citation's tooltip.
     refl = _wrap_citations(c.get("reflection_1p") or "(none)")
     cites = _wrap_citations(" ".join(c.get("charter_elements") or []) or "—")
-    out = [
+    out = []
+    if c.get("in_language") is False:
+        out.append(
+            "<div style='background:#c0392b;color:#fff;font-weight:700;letter-spacing:.02em;"
+            "padding:7px 10px;border-radius:5px;margin-bottom:.6em'>"
+            "⚠ SHOULD BE REJECTED BC OF LANGUAGE FALLBACK</div>"
+        )
+    out += [
         f"<h3 style='margin:.3em 0'>Reflection (first-person)</h3><div>{refl}</div>",
         f"<div style='margin-top:.5em'><b>Charter citations:</b> {cites}</div>",
     ]
