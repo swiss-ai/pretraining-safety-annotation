@@ -7,6 +7,9 @@ Usage:
     uv run python -m pipeline.charter.eval rank-judges     <run_id> [--json]
     uv run python -m pipeline.charter.eval list-runs
     uv run python -m pipeline.charter.eval failures        <run_id> [--category api|parse]
+    uv run python -m pipeline.charter.eval report          <run_id> [run_id2 ...] [--out PATH]
+    uv run python -m pipeline.charter.eval deploy-dashboard <user>/<space-name>
+    uv run python -m pipeline.charter.eval retrieve-feedback <user>/<dataset> [--out PATH]
 
 OmegaConf-style dotlist overrides work the same as in charter.improve:
     uv run python -m pipeline.charter.eval eval-generators charter.eval.generator_eval.n_items=20
@@ -119,6 +122,91 @@ def cmd_rank_generators(args: list[str]) -> int:
             f"{fr['gen_api']:>7.1%} {fr['gen_parse']:>9.1%} "
             f"{fr['judge_api']:>7.1%} {fr['judge_parse']:>9.1%}"
         )
+        by_subset = r.get("by_subset") or {}
+        if len(by_subset) > 1:  # multilingual bench — show per-language
+            for sub, d in by_subset.items():
+                print(
+                    f"    {sub:<8} n={d['n']:>5} mean={d['mean_aggregate']:>5.3f} "
+                    f"accept={d['accept_rate']:>6.1%}"
+                )
+    return 0
+
+
+def cmd_build_bench(args: list[str]) -> int:
+    if not args:
+        from pipeline.charter.eval.benches import BENCHES
+
+        print(f"Usage: build-bench <name> [name2 ...]   (available: {list(BENCHES)})")
+        return 2
+    from pipeline.charter.eval.benches import BENCHES, build_bench
+
+    for name in args:
+        if name not in BENCHES:
+            print(f"Unknown bench {name!r}. Available: {list(BENCHES)}")
+            return 2
+        out = build_bench(name)
+        print(f"Built bench {name} -> {out}")
+    return 0
+
+
+def cmd_report(args: list[str]) -> int:
+    out = None
+    run_ids: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--out" and i + 1 < len(args):
+            out = args[i + 1]
+            i += 2
+            continue
+        run_ids.append(args[i])
+        i += 1
+    if not run_ids:
+        print("Usage: report <run_id> [run_id2 ...] [--out PATH]")
+        return 2
+    from pipeline.charter.eval.report import DEFAULT_CARDS_PATH, write_cards
+
+    out_path = out or DEFAULT_CARDS_PATH
+    n = write_cards(run_ids, out_path)
+    print(f"Wrote {n} cards from {', '.join(run_ids)} -> {out_path}")
+    return 0
+
+
+def cmd_deploy_dashboard(args: list[str]) -> int:
+    if not args:
+        print("Usage: deploy-dashboard <user>/<space-name> [--folder DIR]")
+        return 2
+    space_id = args[0]
+    folder = "dashboard"
+    if "--folder" in args:
+        folder = args[args.index("--folder") + 1]
+    from pipeline.charter.eval.report import deploy_space
+
+    deploy_space(space_id, folder)
+    print(f"Deployed {folder} -> https://huggingface.co/spaces/{space_id}")
+    return 0
+
+
+def cmd_retrieve_feedback(args: list[str]) -> int:
+    if not args:
+        print("Usage: retrieve-feedback <user>/<dataset> [--out PATH]")
+        return 2
+    dataset = args[0]
+    out = None
+    if "--out" in args:
+        out = args[args.index("--out") + 1]
+    from pipeline.config import DATA_DIR
+    from pipeline.charter.eval.report import retrieve_feedback, summarize_feedback
+
+    local_dir = DATA_DIR / "pipeline" / "feedback" / dataset.replace("/", "__")
+    rows = retrieve_feedback(dataset, local_dir)
+    out_path = out or (local_dir / "feedback_latest.jsonl")
+    with open(out_path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    s = summarize_feedback(rows)
+    agree = f"{s['agreement']:.1%}" if s["agreement"] is not None else "—"
+    print(f"{s['n']} verdicts ({s['accept']} accept / {s['reject']} reject) -> {out_path}")
+    print(f"judge agreement (n={s['n_vs_judge']}): {agree}")
     return 0
 
 
@@ -273,6 +361,10 @@ _DISPATCH = {
     "rank-judges": cmd_rank_judges,
     "list-runs": cmd_list_runs,
     "failures": cmd_failures,
+    "build-bench": cmd_build_bench,
+    "report": cmd_report,
+    "deploy-dashboard": cmd_deploy_dashboard,
+    "retrieve-feedback": cmd_retrieve_feedback,
 }
 
 

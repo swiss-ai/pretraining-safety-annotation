@@ -46,6 +46,18 @@ charter:
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 24576
         endpoint: https://openrouter.ai/api/v1
+      - alias: gemma-4-31b
+        api_name: google/gemma-4-31b-it
+        hf_slug: google/gemma-4-31b-it
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
+        thinking: true
+      - alias: gemma-4-26b-a4b
+        api_name: google/gemma-4-26b-a4b-it
+        hf_slug: google/gemma-4-26b-a4b-it
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
+        thinking: true
       # - alias: qwen3.5-9b
       #   api_name: Qwen/Qwen3.5-9B-hFgU
       #   hf_slug: Qwen/Qwen3.5-9B
@@ -99,6 +111,7 @@ charter:
       completion_max_tokens: 65536
       context_window_tokens: 65536
     generator_eval:
+      bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
       seed: 42
       max_concurrent: 768
@@ -120,13 +133,28 @@ charter:
         api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 24576
-        prompt_reflection: generator_reflection_v7.md
+        prompt_reflection: generator_reflection_v2.md
+      - alias: gemma-4-31b
+        api_name: google/gemma-4-31b-it
+        hf_slug: google/gemma-4-31b-it
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
+        thinking: true
+        prompt_reflection: generator_reflection_v2.md
+      - alias: gemma-4-26b-a4b
+        api_name: google/gemma-4-26b-a4b-it
+        hf_slug: google/gemma-4-26b-a4b-it
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
+        thinking: true
+        prompt_reflection: generator_reflection_v2.md
       # - alias: nemotron-3-super-120b-a12b
       #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
       #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v9.md
     judge_eval:
+      bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
       seed: 42
       max_concurrent: 50
@@ -150,14 +178,20 @@ charter:
       - charter_grounding
       - voice_tone
   scale:
-    sidecar_path: /iopsstor/scratch/cscs/jminder/tokenized/annotated/sidecar.parquet
+    corpus: dclm-edu
+    source_dir: /capstor/store/cscs/swissai/infra01/users/vvmoskvoretskii/safety_labels/dclm-edu-filterrobots_fine/data
+    filtered_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale/dclm-edu_filtered
     output_dir: ${oc.env:SCRATCH,""}/model-raising-data/charter/scale
+    n_tasks: 0
+    prefilter_max_shards: 0
+    language_filter: [en]
+    safety_min_score: 4
+    safety_min_confidence: 0.9
+    reflection_max_chars: 8000
     reflection_prompt: generator_reflection_v7.md
     generator_alias: qwen3.5-35b-a3b
     thinking: false
     json_mode: false
-    max_rows: 0
-    rows_per_task: 100000
     max_concurrent_requests: 1024
     save_batch_size: 5000
     progress_interval: 1000
@@ -189,6 +223,3 @@ charter:
       cpus_per_task: 288
       mem_per_cpu_gb: 8
       workers: -1
-
-dashboard:
-  port: 8600

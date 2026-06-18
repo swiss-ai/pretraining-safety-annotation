@@ -19,12 +19,22 @@ from pipeline.charter.eval.storage import JsonlRunStore
 from pipeline.tokenizer import compute_reflection_point
 
 
-def build_item_pool(n_items: int, seed: int, max_tokens: int) -> tuple[list[dict], str]:
-    """Sample n_items diversely from the full Dolma3 dataset.
+def build_item_pool(
+    n_items: int, seed: int, max_tokens: int, bench: str = ""
+) -> tuple[list[dict], str]:
+    """Build the eval item pool.
 
-    Returns (items, dataset_revision). Each item has item_id, text,
-    safety_score, reflection_point.
+    Default: load from a named *bench* (``data/benches/{bench}.parquet``, built
+    from the source corpus on demand) — items carry ``subset=language`` for
+    per-language ranking. With ``bench=""`` it falls back to diverse sampling of
+    the full Dolma3 dataset. Returns (items, dataset_revision).
     """
+    if bench:
+        from pipeline.charter.eval.benches import load_bench_items
+
+        items = load_bench_items(bench, n_items, max_tokens, seed)
+        return items, f"bench:{bench}"
+
     result = sample_diverse(n=n_items, seed=seed, max_tokens=max_tokens)
     # `sample_diverse` returns a dict with keys "items" and "dataset_revision",
     # OR a (items, revision) tuple — accept either, since the test fakes use
@@ -61,6 +71,7 @@ def ensure_item_pool(
     n_items: int,
     seed: int,
     max_tokens: int,
+    bench: str = "",
 ) -> list[dict]:
     """Materialize items.jsonl exactly once. On resume, load from disk."""
     items_rel = "items.jsonl"
@@ -104,7 +115,7 @@ def ensure_item_pool(
         return existing
 
     # First-time build path
-    pool, dataset_revision = build_item_pool(n_items, seed, max_tokens)
+    pool, dataset_revision = build_item_pool(n_items, seed, max_tokens, bench=bench)
     for item in pool:
         store.append(items_rel, item)
     store.flush()

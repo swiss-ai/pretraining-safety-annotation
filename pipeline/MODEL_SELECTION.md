@@ -26,7 +26,7 @@ benchmarks (reflection prompt, tuned SGLang). Sources are listed at the bottom.
 ## The process
 
 Annotating 102M documents is expensive, and annotation quality does not track
-raw model size, so this was not a single bake-off. We screened on cost, built a
+raw model size, so this was not a single benchmark. We screened on cost, built a
 judge we could trust by calibrating it against human reviews, tuned each
 candidate's prompt separately against that judge, and only then compared the
 models on a large pool.
@@ -40,7 +40,7 @@ models on a large pool.
     |
     |  Stage 2  judge calibration: humans review a seed batch, tune the judge to agree
     |  Stage 3  per-model prompts: improver loop tunes each model's prompt separately
-    |  Stage 4  cross-model bake-off: each model's own prompt on a 5K pool, scored by the judge
+    |  Stage 4  cross-model benchmarking: each model's own prompt on a 5K pool, scored by the judge
     v
 Qwen3.5-35B-A3B-FP8  (chosen)
 ```
@@ -54,10 +54,10 @@ quality:
 
 | Model | GPU-h for 102M | Status |
 |---|--:|---|
-| gpt-oss-120b | ~10.8K | to bake-off |
-| **Qwen3.5-35B-A3B-FP8** | ~26.6K | to bake-off |
-| Nemotron-3-Super-120B-A12B-FP8 | ~28.8K | to bake-off |
-| GLM-4.5-Air-FP8 | ~32.0K | to bake-off |
+| gpt-oss-120b | ~10.8K | to benchmarking |
+| **Qwen3.5-35B-A3B-FP8** | ~26.6K | to benchmarking |
+| Nemotron-3-Super-120B-A12B-FP8 | ~28.8K | to benchmarking |
+| GLM-4.5-Air-FP8 | ~32.0K | to benchmarking |
 | Qwen3.5-122B-A10B-FP8 | ~88.9K | screened out (cost) |
 | GLM-4.5-Air (bf16) | ~217K | screened out (cost) |
 | Qwen3.5-397B-A17B | ~827K | screened out (cost) |
@@ -113,7 +113,7 @@ calling cross-iteration tools) ran a generate, judge, revise loop for each
 candidate on its own, against the calibrated judge, until each model settled on
 its own prompt. The per-model version trails show the work:
 
-| Model | Reflection-prompt revisions | Prompt run in bake-off |
+| Model | Reflection-prompt revisions | Prompt run in benchmarking |
 |---|--:|---|
 | GLM-4.5-Air | v1 to v8 | `v7` |
 | gpt-oss-120b | v1 to v7 | `v7` |
@@ -123,9 +123,9 @@ its own prompt. The per-model version trails show the work:
 Each `generator_reflection_vN.md` is model-specific. The three `v7` files above
 are different prompts with different content (distinct SHA-256), not one shared
 file. Per-model prompts live in `data/pipeline/prompts/{alias}/`. That is why the
-bake-off runs each model on its own prompt rather than a single shared one.
+benchmarking runs each model on its own prompt rather than a single shared one.
 
-## Stage 4: cross-model bake-off (`charter.eval`)
+## Stage 4: cross-model benchmarking (`charter.eval`)
 
 The four affordable survivors each annotated the same 5,000-document pool
 (dolma3, stratified across safety scores 0 to 5), each with its own prompt from
@@ -164,7 +164,7 @@ That gap on the hard tail, not the small aggregate lead, is what settled it.
   sibling run (`ref_v4_qwen`, n about 3.2K) against about 4.7K for the others.
   Re-scoring on the 3,158 documents common to all four gives the same order and
   nearly the same values (Qwen 4.501, Nemotron 4.492, gpt-oss 4.450, GLM 4.402).
-- Scope. The bake-off scored the first-person reflection, the mid-document
+- Scope. The benchmarking scored the first-person reflection, the mid-document
   annotation that ships in production.
 
 ## Outcome and production config

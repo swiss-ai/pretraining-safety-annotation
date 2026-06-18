@@ -4,132 +4,86 @@ This document is for AI agents working on the charter.scale codebase. It covers 
 
 ## What charter.scale Does
 
-charter.scale scales charter reflection generation from charter.improve's ~50-item iterations to the full 102M-row sidecar parquet. It uses SLURM job arrays where each task co-locates an sglang inference server and the generation pipeline on the same GPU node. The output is JSONL files that are later merged back into the sidecar parquet.
+charter.scale annotates large external corpora (DCLM-Edu, FineWeb-2, …) with charter reflections at scale. The corpora are read-only parquet shards owned by another user; the source is **never modified**. The flow is three steps:
+
+```
+prefilter  -> materialize a dense filtered dataset (safety + language).
+              datatrove ParquetReader -> SafetyLanguageFilter -> ParquetWriter,
+              on the `normal` (GPU) partition but WITHOUT sglang/a model
+              (quick, I/O-bound, run ONCE per dataset+threshold).
+submit     -> annotate the dense dataset: SLURM array, each task co-locates an
+              sglang server + the generation pipeline. doc_id-keyed; per-rank JSONL.
+export     -> transcode per-rank JSONL into the doc_id-keyed parquet dataset.
+```
+
+The general corpus dataloader lives in `pipeline/corpus/` (registry, adapter, `CorpusReader`, the `passes_safety` predicate, and `SafetyLanguageFilter`). Output is **one `doc_id`-keyed annotation dataset**; a separate downstream step (out of scope) joins it back into the corpus by `doc_id` and recomputes any token alignment.
 
 ## Key Invariants
 
-### rows_per_task Must Never Change Mid-Run
+### `n_tasks` + `paths_file` Must Never Change Mid-Run (the top invariant)
 
-`rows_per_task` (default 100,000) determines the rank-to-row mapping: rank N covers rows `[N * rows_per_task, (N+1) * rows_per_task)`. If this value changes between submits, ranks would cover different rows, breaking resume and producing duplicates or gaps. The `run_config.json` file guards against this.
+datatrove strides whole files across tasks: rank R reads `sorted(files)[R::world_size]`, and `world_size == n_tasks`. So **both** the frozen shard list (`paths_file`, written sorted) **and** `n_tasks` fix the rank→files mapping. Changing either re-strides every rank and invalidates per-rank `results.jsonl` done-sets (wasted re-work / gaps). `run_config.json` guards both (a sorted-list fingerprint + `n_tasks`) and `sys.exit`s on drift. `n_tasks` is a *chosen, capped* count (`DEFAULT_MAX_TASKS`, well under the cluster's `MaxArraySize=1001`) — never the shard count. To process a subset, shorten the `paths_file`, do **not** cap `n_tasks`.
+
+### doc_id is the Key Everywhere
+
+Resume done-sets, the result row, failures, and the exported dataset are all keyed on `doc.id` (the source `<urn:uuid>`). There is no row-order / `global_row_idx` concept (no single ordered file). `passes_safety`/language filtering happens only in `prefilter`; the dense dataset's `id` column is guaranteed non-null (null ids are dropped there).
 
 ### Completion Marker Timing
 
-Datatrove writes a completion marker (`completions/{rank:05d}`) only after `PipelineStep.run()` returns without exception. The save thread in `generate.py` **must be fully drained and fsynced before `run()` returns**. If `run()` returns before the save thread finishes, the completion marker would be written but data would be lost. The current code signals the save thread via `save_done.set()`, then `join(timeout=120)` waits for it.
+Datatrove writes `completions/{rank:05d}` only after `PipelineStep.run()` returns. The save thread in `generate.py` must be fully drained before `run()` returns (signalled via `save_done.set()` then `join`). Note: the save loop uses `flush()` not `fsync()` — an OS crash (not a SLURM kill) between flush and marker can drop page-cache data while the marker exists, wrongly skipping that rank on resume. Accepted, documented tradeoff.
 
 ### Reflection Seed Determinism
 
-`reflection_seed` controls where the reflection point falls in each document, via deterministic RNG seeded with `f"{seed}_{doc_id}"`. The same seed produces the same reflection points across runs.
+`reflection_seed` controls the reflection point per document via RNG seeded with `f"{seed}_{doc_id}"`. Same seed → same reflection points across runs.
 
-### Sidecar Parquet is Read-Only Until Merge
+### Char-Space Reflection Point (No Tokenization)
 
-The generation pipeline never modifies the sidecar parquet. It reads rows via `SidecarReader` and writes results to per-rank JSONL files. Only the `merge` command touches the sidecar, and it writes to a new file (`sidecar.parquet.merged`), never in-place.
+The reflection point is sampled **directly in character space** (`compute_reflection_point_char`) — the scale path never loads a tokenizer. `reflection_position` is that character offset; there is no `reflection_token_index`. The eligible region is capped at `reflection_max_chars` (bounds the before-context prompt). This also sidesteps the SmolLM2-tokenizer CJK/Cyrillic skew for FineWeb-2.
 
 ## Module Responsibilities
 
 | Module | Responsibility | Key function |
 |--------|---------------|--------------|
-| `reader.py` | Read row ranges from sidecar parquet | `SidecarReader.run()` |
-| `generate.py` | Concurrent API calls, retry, save to JSONL | `AnnotationGenerator.run()` |
+| `pipeline/corpus/reader.py` | Read source shards, projecting away embeddings | `CorpusReader.read_file()` |
+| `pipeline/corpus/safety.py` | Configurable predicate + prefilter step + dense schema | `passes_safety()`, `SafetyLanguageFilter` |
+| `generate.py` | Concurrent API calls, retry, save to JSONL (doc_id-keyed) | `AnnotationGenerator.run()` |
 | `runs.py` | Define what to generate per run type | `RunDefinition`, `get_run()` |
-| `merge.py` | Stream-merge JSONL results into parquet | `merge_shards()` |
+| `export.py` | Transcode per-rank JSONL into `dataset/{rank}.parquet` | `export_run()` |
 | `progress.py` | Count completed tasks and docs | `get_run_progress()` |
-| `__main__.py` | CLI + sglang env_command construction | `cmd_submit()`, `cmd_merge()` |
-
-## Data Flow
-
-```
-sidecar.parquet (read-only)
-    |
-    v
-SidecarReader (row-group seeking, yields Documents)
-    |
-    v
-AnnotationGenerator
-    |-- build_calls() via RunDefinition  -> API messages
-    |-- api_call() with semaphore        -> raw responses
-    |-- parse_generation()               -> parsed dicts
-    |-- post_process() via RunDefinition -> output row
-    |-- save_queue -> save_thread        -> results.jsonl
-    |
-    v
-merge_shards() (offline, after all tasks complete)
-    |-- _sort_results() via heapq.merge  -> sorted temp file
-    |-- _ResultCursor (streaming)        -> one row at a time
-    |-- row-group-by-row-group join      -> merged parquet
-```
+| `__main__.py` | CLI (prefilter/submit/status/rerun/export) + sglang env + freeze/guard | `cmd_*`, `_resolve_annotation_inputs()` |
 
 ## Adding a New Run
 
-To add a new generation run:
-
-1. Define the output columns, `build_calls`, and `post_process` functions in `runs.py`
-2. Register it in the `RUNS` dict (and optionally `RUN_ALIASES` for a `*_test` smoke variant)
-3. Pick a `prompt_type` string and, if the run needs a new prompt file, add a `<prompt_type>_prompt` field to `CharterScaleConfig` (`pipeline/config.py`) plus the matching entry in the `prompt_field_by_type` dict in `__main__.py`
-4. If the run uses an in-tree prompt (not under `data/pipeline/prompts/<alias>/`), set `prompt_source_dir` on the `RunDefinition`
-5. If the run emits non-string columns, add Arrow type metadata to `_COLUMN_META` in `merge.py`
-
-The `reflections` run covers the per-alias-prompt pattern (prompts under `data/pipeline/prompts/<alias>/`). Use `prompt_source_dir` on the `RunDefinition` only for in-tree, model-agnostic prompts.
-
-## sglang Co-location Details
-
-The pipeline runs in the **host Python venv** (not inside the container). Only sglang runs inside the enroot/pyxis container. The `env_command` in `__main__.py` launches sglang via `srun --environment=<env_toml>` in the background, waits for health, then activates the venv for the pipeline.
-
-The API client connects to `http://localhost:{port}/v1` with `SGLANG_API_KEY=none`. The served model name is discovered at runtime via `client.models.list()` (it's the `sglang.hf_slug` from config).
-
-### Container images
-
-Container images are `.sqsh` squashfs files built by the `model-launch` repo. The `sglang.env_toml` config field selects which container and NCCL networking config to use. Key TOML fields: `image` (path to .sqsh), `mounts` (filesystem + host libraries), `env` (NCCL settings), `annotations` (Cray interconnect hooks).
+1. Define `output_columns`, `build_calls`, `post_process` in `runs.py`; register in `RUNS` (and optionally `RUN_ALIASES`).
+2. Pick a `prompt_type` and add the `<prompt_type>_prompt` field to `CharterScaleConfig` + the `prompt_field_by_type` entry in `__main__.py`.
+3. If the run emits non-string output columns, add their Arrow types to `_OUTPUT_COLUMN_TYPES` in `export.py`.
 
 ## Common Pitfalls
 
-### "sglang process died" on startup
-
-The health check loop does `kill -0 $SGLANG_PID` to detect early crashes (OOM, model not found, missing pip packages). Check the sglang log at `{output_dir}/sglang_{TASK_ID}.log`. Common causes:
-- Model not found at `model_path` (download it or set `model_path` to empty to download from HF)
-- Missing pip package (add to `sglang.pre_launch_cmds`)
-- OOM (reduce `tp_size` or use a smaller model)
-
-### Merge fails with "Missing N rows"
-
-The merge requires all rows to have results. If some ranks failed, either:
-- Use `rerun` to re-process failed ranks, then merge
-- Use `--allow-missing` to fill gaps with empty strings (not recommended for production)
-
-### Parse errors
-
-When `parse_generation` fails, the raw model response is saved to `failures.jsonl` with the error message. This lets you improve the parser without re-running the API calls. Failed docs are retried up to `max_retries_per_doc` times with exponential backoff.
-
-### Memory concerns
-
-- **Reader**: O(row_group_size) -- reads one row group at a time, batch-converts to Python dicts
-- **Generator**: O(max_concurrent * 2) live tasks at a time, save thread drains to disk in batches
-- **Merge**: O(row_group_size) -- streams through sorted results with a cursor, never loads all results into memory
-
-## Testing
-
-Tests are in `tests/test_charter_scale_*.py`. They use temporary parquet files and don't require a running sglang server or SLURM. Run with:
-
-```bash
-uv run pytest tests/test_charter_scale_runs.py \
-              tests/test_charter_scale_reader.py tests/test_charter_scale_merge.py -v
-```
-
-Key test coverage:
-- **Runs**: message construction, reflection point determinism, charter element extraction
-- **Reader**: row-group seeking, cross-group reads, last-rank clamping, empty rank
-- **Merge**: column addition, placeholder rename, missing row handling, schema preservation
+- **"sglang process died" on startup** — check `{output_dir}/sglang_{TASK_ID}.log`. Causes: model not found at `model_path`, missing pip package (`sglang.pre_launch_cmds`), OOM. (Annotation only; prefilter launches no sglang.)
+- **Prefilter writes one huge file** — the `ParquetWriter` must shard via `max_file_size` so the annotation run can stride shards across tasks. One file = one annotation task.
+- **Parse errors** — saved to `failures.jsonl` with the raw error; retried up to `max_retries_per_doc`. `export` warns about ranks with failures.
+- **Changed dense dataset after submit** — re-running `prefilter` with a different threshold changes the dense shard fingerprint; `submit`/`status`/`rerun` will `sys.exit` (the guard). Start a fresh run dir.
 
 ## Config Reference
 
-All config lives under `charter.scale:` in `configs/config.yaml`. See the README for the full schema. Key fields:
+All config lives under `charter.scale:` in `configs/config.yaml`. Key fields:
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `max_rows` | 0 (all) | Set to 10000000 for initial 10M run |
-| `rows_per_task` | 100000 | **Do not change after first submit** |
-| `max_concurrent_requests` | 1024 | Semaphore for in-flight API calls per rank |
-| `max_retries_per_doc` | 3 | Per-document retry cap with exponential backoff |
-| `sglang.tp_size` | 1 | Tensor parallelism. `gpus_per_task = tp_size * dp_size` |
-| `sglang.dp_size` | 4 | Data parallelism. Use DP>1 for models that fit on 1 GPU |
-| `sglang.reasoning_parser` | `kimi_k2` | **Required for thinking models.** Server-side flag that tells sglang how to separate thinking tokens from content. Per model: GLM→`glm45`, Qwen3.5→`kimi_k2`, Kimi→`kimi_k2`, Nemotron→`nano_v3`. Without this, thinking leaks into content. |
+| `corpus` | `dclm-edu` | Registry key (`pipeline/corpus/registry.py`) |
+| `source_dir` | | Raw read-only corpus root |
+| `filtered_dir` | | Dense filtered dataset (prefilter out / annotate in) |
+| `output_dir` | | Run scratch (results/completions/logs) + `export` dataset |
+| `n_tasks` | 0 | 0 = `min(n_shards, DEFAULT_MAX_TASKS)`; **frozen at first submit** |
+| `language_filter` | `[en]` | Source `metadata.language` values to keep |
+| `prefilter_max_shards` | 0 | 0 = all source shards; >0 caps for smoke/subset |
+| `safety_min_score` | 4 | Keep `safety_score >= this` … |
+| `safety_min_confidence` | 0.9 | … and `safety_probs[safety_score] >= this` |
+| `reflection_max_chars` | 8000 | char-space reflection-point cap (no tokenization) |
+| `sglang.reasoning_parser` | `kimi_k2` | **Required for thinking models** (GLM→`glm45`, Qwen3.5/Kimi→`kimi_k2`, Nemotron→`nano_v3`) |
 | `sglang.env_toml` | | **Required**: path to container TOML |
+
+## Testing
+
+Tests in `tests/test_charter_scale_*.py`, `tests/test_corpus_*.py`, `tests/test_safety_filter.py` use temporary parquet fixtures — no sglang/SLURM. They cover: corpus reader projection + datatrove file-sharding, the safety predicate + filter, export (dedup/torn-line/types/provenance), and the frozen-`n_tasks` guard.

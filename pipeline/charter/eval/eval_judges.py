@@ -102,6 +102,7 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
     judges = _dedup_judges(cfg.charter.eval.gold_judge, je.candidates)
     expected = {
         "type": "judge_eval",
+        "bench": je.bench,
         "n_items": je.n_items,
         "seed": je.seed,
         "max_tokens": cfg.max_tokens,
@@ -116,12 +117,12 @@ def run_judge_eval(cfg: AppConfig, run_id: str) -> None:
     try:
         _open_and_stamp(store, root, run_id, "judge_eval", expected)
 
-        items = ensure_item_pool(store, je.n_items, je.seed, cfg.max_tokens)
+        items = ensure_item_pool(store, je.n_items, je.seed, cfg.max_tokens, bench=je.bench)
 
         # Per-model endpoint: fall back to the phase-level default.
         def _client_for(model):
             ep = model.endpoint or cfg.charter.eval.endpoint
-            return make_api_client(ep, je.max_concurrent)
+            return make_api_client(ep, je.max_concurrent, cfg.api_keys)
 
         charter = CHARTER_PATH.read_text(encoding="utf-8")
 

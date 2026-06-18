@@ -1,7 +1,7 @@
 """AnnotationGenerator: run-driven concurrent annotation generator.
 
 This PipelineStep is generic over RunDefinition. It reads Documents from
-the upstream SidecarReader, makes concurrent API calls to a local sglang
+the upstream CorpusReader, makes concurrent API calls to a local sglang
 server, parses responses, and appends results to a JSONL file.
 
 Key design points:
@@ -59,7 +59,7 @@ class AnnotationGenerator(PipelineStep):
         reflection_seed: int = 42,
         max_retries_per_doc: int = 5,
         progress_interval: int = 1000,
-        max_text_tokens: int = 1920,
+        max_chars: int = 8000,
     ):
         super().__init__()
         self.run_name = run_name
@@ -70,7 +70,7 @@ class AnnotationGenerator(PipelineStep):
         self.save_batch_size = save_batch_size
         self.thinking = thinking
         self.json_mode = json_mode
-        self.max_text_tokens = max_text_tokens
+        self.max_chars = max_chars
         self.reflection_seed = reflection_seed
         self.max_retries_per_doc = max_retries_per_doc
         self.progress_interval = progress_interval
@@ -115,8 +115,7 @@ class AnnotationGenerator(PipelineStep):
         # Collect upstream documents, filtering already-done
         docs: list[Document] = []
         for doc in data:
-            idx = doc.metadata["global_row_idx"]
-            if idx not in done_set:
+            if doc.id not in done_set:
                 docs.append(doc)
 
         logger.info(
@@ -162,7 +161,7 @@ class AnnotationGenerator(PipelineStep):
                     failures_path=failures_path,
                     progress_interval=self.progress_interval,
                     rank=rank,
-                    max_text_tokens=self.max_text_tokens,
+                    max_chars=self.max_chars,
                 )
             )
         finally:
@@ -204,12 +203,12 @@ def _parse_raw_text(raw: str) -> dict[str, str]:
     return {"_raw": clean}
 
 
-def _load_done_set(results_path: Path) -> set[int]:
-    """Load global_row_idx values from an existing results JSONL.
+def _load_done_set(results_path: Path) -> set[str]:
+    """Load doc_id values from an existing results JSONL (per-rank resume).
 
     Tolerates a torn last line (incomplete write before crash).
     """
-    done: set[int] = set()
+    done: set[str] = set()
     if not results_path.exists():
         return done
     with open(results_path, encoding="utf-8") as f:
@@ -219,7 +218,7 @@ def _load_done_set(results_path: Path) -> set[int]:
                 continue
             try:
                 record = json.loads(line)
-                done.add(record["global_row_idx"])
+                done.add(record["doc_id"])
             except (json.JSONDecodeError, KeyError):
                 # Torn last line — skip it
                 continue
@@ -262,11 +261,10 @@ def _save_loop(
         except Exception as e:
             n_dropped += 1
             consecutive_fail += 1
-            gidx = item.get("global_row_idx") if isinstance(item, dict) else None
             did = item.get("doc_id") if isinstance(item, dict) else None
-            if gidx is not None:
-                logger.error("save_loop: dropping record gidx={} doc_id={}: {}", gidx, did, e)
-                _save_failure(failures_path, gidx, did or "", f"serialize: {e}")
+            if did is not None:
+                logger.error("save_loop: dropping record doc_id={}: {}", did, e)
+                _save_failure(failures_path, did, f"serialize: {e}")
             else:
                 logger.error("save_loop: dropping malformed item ({}): {!r}", e, repr(item)[:200])
             if consecutive_fail >= _MAX_CONSECUTIVE_SERIALIZE_FAIL:
@@ -330,7 +328,7 @@ async def _generate_all(
     failures_path: Path,
     progress_interval: int,
     rank: int,
-    max_text_tokens: int = 1920,
+    max_chars: int = 8000,
 ) -> tuple[int, int]:
     """Process all docs concurrently. Returns (n_ok, n_fail)."""
     client, semaphore = make_api_client(
@@ -352,21 +350,15 @@ async def _generate_all(
         nonlocal n_ok, n_fail
         doc_id = doc.id
         doc_text = doc.text
-        global_idx = doc.metadata["global_row_idx"]
-        # Per-doc cap from the sidecar.  Guarantees the sampled token
-        # index lands strictly inside the content portion of
-        # annotated.bin (< token_length, excluding the appended EOS).
-        token_length = doc.metadata.get("token_length")
-        if token_length is None:
-            token_length = max_text_tokens
 
-        # Build API calls for this run
+        # Build API calls for this run. The reflection point is sampled in
+        # character space (no tokenization), capped at max_chars.
         call_specs = run_def.build_calls(
             doc_text=doc_text,
             doc_id=doc_id,
             system_prompt=system_prompt,
             reflection_seed=reflection_seed,
-            max_text_tokens=token_length,
+            max_chars=max_chars,
         )
 
         for attempt in range(max_retries):
@@ -406,9 +398,12 @@ async def _generate_all(
                     meta=meta,
                 )
 
-                # Add standard fields
-                row["global_row_idx"] = global_idx
+                # Standard fields + provenance (carried into the export step;
+                # the annotation dataset is keyed and joined by doc_id).
                 row["doc_id"] = doc_id
+                row["language"] = doc.metadata.get("language")
+                row["safety_score"] = doc.metadata.get("safety_score")
+                row["source_shard"] = doc.metadata.get("source_shard")
                 row["input_tokens"] = total_usage["input_tokens"]
                 row["output_tokens"] = total_usage["output_tokens"]
                 row["reasoning_tokens"] = total_usage["reasoning_tokens"]
@@ -449,7 +444,7 @@ async def _generate_all(
                         e,
                     )
                     n_fail += 1
-                    _save_failure(failures_path, global_idx, doc_id, str(e))
+                    _save_failure(failures_path, doc_id, str(e))
                     return False
 
         return False
@@ -470,10 +465,9 @@ async def _generate_all(
     return n_ok, n_fail
 
 
-def _save_failure(failures_path: Path, global_idx: int, doc_id: str, error: str):
+def _save_failure(failures_path: Path, doc_id: str, error: str):
     """Append a failure record to the failures JSONL."""
     record = {
-        "global_row_idx": global_idx,
         "doc_id": doc_id,
         "error": error,
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),

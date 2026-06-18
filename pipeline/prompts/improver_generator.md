@@ -29,10 +29,11 @@ noise, the architecture handles it.
 **Single prompt file**: the generator prompt lives in one file
 (`generator_reflection_v*.md`). The entire file is the prompt for the API call. Edit the file directly.
 
-**Length constraint — ≤ 128 tokens**: the pipeline truncates the reflection
-at 128 tokens. The generator prompt must encourage CONCISE, DENSE, SUBSTANTIVE
-output — anything that pads to fill space gets cut off mid-sentence and scored as a
-voice_tone failure. Treat the 128-token ceiling as a hard design constraint, not a target.
+**Length guideline — ≈ 256 tokens**: reflections should stay around 256 tokens.
+This is a soft guideline, not a hard cap — the pipeline does not truncate — but the
+generator prompt must still encourage CONCISE, DENSE, SUBSTANTIVE output, since padding
+to fill space is scored as a voice_tone failure. Treat ~256 tokens as a budget to stay
+within, not a target to reach.
 </data_model>
 
 <voice_rules>
@@ -58,7 +59,7 @@ items.
   shallow or wrong
 - **Missing brackets**: charter references without [X.Y] notation
 - **Verbose on benign text**: long annotations for texts that are perfectly fine
-- **Padding to fill the 128-token ceiling**: low-density output that uses the budget
+- **Padding to fill the ~256-token budget**: low-density output that uses the budget
   without earning it
 </failure_patterns>
 

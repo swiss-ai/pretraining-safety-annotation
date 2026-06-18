@@ -87,10 +87,21 @@ class TestExtractCharterElements:
         # 99.99 is not in the charter
         assert extract_charter_elements("[99.99] [1.2]") == ["1.2"]
 
+    def test_ai_section_letter_ids(self):
+        # AI-section values use a letter domain (A.1 .. A.6)
+        assert extract_charter_elements("control stays human [A.1]") == ["A.1"]
+        assert extract_charter_elements("[A.1, 5.1]") == ["A.1", "5.1"]
+        assert extract_charter_elements("[A.1][A.4]") == ["A.1", "A.4"]
+
+    def test_unknown_letter_id_filtered(self):
+        # A.9 is not a real AI-section value
+        assert extract_charter_elements("[A.9] [A.1]") == ["A.1"]
+
     def test_no_match_returns_empty(self):
         assert extract_charter_elements("nothing to cite") == []
 
     def test_brackets_without_ids(self):
+        # all-caps bracket content without an X.Y id must still be ignored
         assert extract_charter_elements("[note] and [TODO]") == []
 
 

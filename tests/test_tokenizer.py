@@ -8,11 +8,30 @@ from pipeline.tokenizer import (
     _encode,
     char_offset_to_token_index,
     compute_reflection_point,
+    compute_reflection_point_char,
     compute_reflection_point_end,
     compute_reflection_point_tokens,
 )
 
 TEXT = "The quick brown fox jumps over the lazy dog. " * 50
+
+
+class TestComputeReflectionPointChar:
+    def test_deterministic_and_in_range(self):
+        a = compute_reflection_point_char(TEXT, random.Random("s"))
+        b = compute_reflection_point_char(TEXT, random.Random("s"))
+        assert a == b
+        assert 0 < a < len(TEXT)
+
+    def test_respects_max_chars_cap(self):
+        for i in range(50):
+            rp = compute_reflection_point_char(TEXT, random.Random(i), max_chars=100)
+            assert rp < 100
+
+    def test_no_tokenization_needed(self):
+        # Works on text the SmolLM2 tokenizer never sees (pure char space).
+        rp = compute_reflection_point_char("x" * 200, random.Random(1))
+        assert 0 < rp < 200
 
 
 class TestComputeReflectionPoint:

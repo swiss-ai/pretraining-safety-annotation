@@ -224,7 +224,7 @@ def _install_common_patches(monkeypatch, tmp_path, n_items_default=5):
     )
     monkeypatch.setattr(
         "pipeline.charter.eval.eval_judges.ensure_item_pool",
-        lambda store, n_items, seed, max_tokens: [
+        lambda store, n_items, seed, max_tokens, bench="": [
             {
                 "item_id": f"i{i}",
                 "text": f"text {i}",

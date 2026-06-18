@@ -20,7 +20,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Remove default stderr handler so we control the format
 logger.remove()
 
-# Stderr: concise, no timestamp (NiceGUI / terminal already shows context)
+# Stderr: concise, no timestamp (the terminal already shows context)
 logger.add(
     sys.stderr,
     level="INFO",

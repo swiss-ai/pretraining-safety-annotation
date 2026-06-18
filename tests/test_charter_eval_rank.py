@@ -332,6 +332,39 @@ class TestRankGenerators:
         assert buckets["2"]["n"] == 1
         assert buckets["2"]["accept_rate"] == pytest.approx(1.0)
 
+    def test_rank_generators_by_subset(self, tmp_path, monkeypatch, rank_mod):
+        # Per-language breakdown for the multilingual bench (subset == language).
+        run_id = "rank-test-subset"
+        gen_name = "gen__v1.md.jsonl"
+        jud_name = "gold__judge_v1.md__on__gen__v1.md.jsonl"
+
+        jud_rows = []
+        for i in range(6):
+            lang = "deu" if i < 3 else "rus"
+            # deu: 2 accepts / 1 reject ; rus: all reject
+            decision = "accept" if (lang == "deu" and i < 2) else "reject"
+            row = _judgment(f"i{i}", aggregate=4.0, decision=decision, safety_score=5)
+            row["subset"] = lang
+            jud_rows.append(row)
+
+        _build_run_dir(
+            tmp_path,
+            run_id,
+            type="generator_eval",
+            items=[_item(f"i{i}", 5) for i in range(6)],
+            generations={gen_name: [_generation(f"i{i}") for i in range(6)]},
+            judgments={jud_name: jud_rows},
+        )
+
+        result = _call_rank_generators(rank_mod, run_id, tmp_path, monkeypatch)
+        assert len(result) == 1
+        bs = result[0]["by_subset"]
+        assert set(bs) == {"deu", "rus"}
+        assert bs["deu"]["n"] == 3 and bs["rus"]["n"] == 3
+        assert bs["deu"]["accept_rate"] == pytest.approx(2 / 3)
+        assert bs["rus"]["accept_rate"] == pytest.approx(0.0)
+        assert bs["deu"]["mean_aggregate"] == pytest.approx(4.0)
+
     def test_rank_generators_failure_rates_split_api_parse(
         self, tmp_path, monkeypatch, rank_mod
     ):
