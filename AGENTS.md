@@ -20,6 +20,8 @@ One top-level group under `pipeline/`:
 
 - **`pipeline/charter/`** — the charter-cited annotation pipeline. Four steps: `seed` (human annotation) → `improve` (generate+judge+improver loop) → `eval` (generator/judge benchmarking on fixed benches — `dclm-en` English, `fw2-multi` 6 languages — defined in `pipeline/charter/eval/benches.py` and built from the corpora via `pipeline/corpus/`; `rank-generators` breaks results down per language) → `scale` (prefilter + SLURM scale-up over large external corpora — DCLM-Edu, FineWeb-2, … — via the general dataloader in `pipeline/corpus/`; produces a `doc_id`-keyed annotation dataset). Same product (the charter-cited first-person reflection) across all four; the first three iterate the prompt, the fourth runs it for real.
 
+Inspect `eval` results and collect 👍/👎 feedback via the **dashboard** (`dashboard/`) — a single-page Gradio HF Space fed by `pipeline/charter/eval/report.py` (`report` → `cards.json`, `deploy-dashboard`, `retrieve-feedback`); see the README's Dashboard section. Running an eval has live gotchas (prompt-resolution dir, OpenRouter routing, context window, generate→judge barrier) — these are captured in agent memory rather than here.
+
 Subfolder READMEs (especially `pipeline/charter/scale/README.md` and `pipeline/charter/scale/AGENTS.md`) carry the detail — prefer updating those over bloating top-level docs.
 
 ## Some guidelines for our collaboration:
