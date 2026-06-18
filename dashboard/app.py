@@ -2,17 +2,17 @@
 
 Shows charter.eval generations + judgings as cards (the document up to the
 reflection point + the first-person reflection + the judge's rubric scores and
-accept/reject verdict) and collects a binary accept/reject + reason per card. Feedback is
-appended to a local JSONL and synced to a HF dataset via ``CommitScheduler``
-(token lives as a Space secret), so the page itself holds no credentials.
+accept/reject verdict) and collects a binary accept/reject + reason per card. Each review is committed
+immediately to a HF dataset as its own file (token lives as a Space secret), so
+the page holds no credentials and nothing is lost when the Space restarts.
 
 Data is a portable ``data/cards.json`` produced by
 ``python -m pipeline.charter.eval report``. This app never imports ``pipeline``.
 
 Env:
-  FEEDBACK_DATASET       HF dataset repo to sync feedback to (unset → local-only)
-  FEEDBACK_DIR           local feedback folder (default: ./feedback)
-  FEEDBACK_FLUSH_MINUTES commit cadence (default: 5)
+  FEEDBACK_DATASET  HF dataset repo to commit feedback to (unset → local-only)
+  FEEDBACK_DIR      local feedback folder (default: ./feedback)
+  SHUFFLE_SALT      salt for the per-annotator card order (default: "annotator")
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ CARDS_PATH = Path(os.environ.get("CARDS_PATH", APP_DIR / "data" / "cards.json"))
 FEEDBACK_DIR = Path(os.environ.get("FEEDBACK_DIR", APP_DIR / "feedback"))
 FEEDBACK_FILE = FEEDBACK_DIR / "feedback.jsonl"
 FEEDBACK_DATASET = os.environ.get("FEEDBACK_DATASET", "")
-FLUSH_MINUTES = float(os.environ.get("FEEDBACK_FLUSH_MINUTES", "5"))
 
 ALL = "(all)"
 _CITE_RE = re.compile(r"\[(\d+\.\d+(?:\s*,\s*\d+\.\d+)*)\]")
@@ -47,24 +46,7 @@ def load_payload() -> tuple[list[dict], dict]:
     return d.get("cards", []), d.get("charter_sections", {})
 
 
-def _make_scheduler():
-    """CommitScheduler that syncs feedback to HF, or None for local-only mode."""
-    if not FEEDBACK_DATASET:
-        return None
-    from huggingface_hub import CommitScheduler
-
-    FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
-    return CommitScheduler(
-        repo_id=FEEDBACK_DATASET,
-        repo_type="dataset",
-        folder_path=str(FEEDBACK_DIR),
-        path_in_repo="data",
-        every=FLUSH_MINUTES,
-    )
-
-
 CARDS, CHARTER_SECTIONS = load_payload()
-SCHEDULER = _make_scheduler()
 
 
 def annotator_order(name: str) -> list[int]:
@@ -218,6 +200,11 @@ def step(idxs, pos, delta):
 # ----------------------------------------------------------------- feedback
 
 
+def _safe_name(s: str) -> str:
+    """Filesystem/repo-safe stem (ts is kept first so files sort chronologically)."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", s)[:120]
+
+
 def submit_feedback(idxs, pos, reviewer, verdict, reason):
     if not idxs:
         return "Nothing to rate."
@@ -237,12 +224,22 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
     }
     line = json.dumps(record, ensure_ascii=False) + "\n"
     FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER is not None:
-        with SCHEDULER.lock:
-            FEEDBACK_FILE.open("a", encoding="utf-8").write(line)
-        return f"Saved “{record['verdict']}” ✓ (syncing to {FEEDBACK_DATASET})"
-    FEEDBACK_FILE.open("a", encoding="utf-8").write(line)
-    return f"Saved “{record['verdict']}” ✓ (local: {FEEDBACK_FILE})"
+    FEEDBACK_FILE.open("a", encoding="utf-8").write(line)  # local copy
+    if not FEEDBACK_DATASET:
+        return f"Saved “{record['verdict']}” ✓ (local: {FEEDBACK_FILE})"
+    # Commit each review immediately as its own file — robust on ephemeral Spaces
+    # (CommitScheduler's 5-min batch can be lost when a free Space sleeps/restarts).
+    from huggingface_hub import HfApi
+
+    stem = _safe_name(f"{record['ts']}-{record['reviewer']}-{record['item_id']}")
+    HfApi(token=os.environ.get("HF_TOKEN")).upload_file(
+        path_or_fileobj=line.encode("utf-8"),
+        path_in_repo=f"data/{stem}.jsonl",
+        repo_id=FEEDBACK_DATASET,
+        repo_type="dataset",
+        commit_message=f"feedback: {record['verdict']} by {record['reviewer']}",
+    )
+    return f"Saved “{record['verdict']}” ✓ → {FEEDBACK_DATASET}"
 
 
 # ----------------------------------------------------------------- layout

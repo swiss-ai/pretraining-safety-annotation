@@ -66,7 +66,7 @@ generations + judgings as cards — document → first-person reflection → the
 producing **model** — and collects a binary accept/reject + reason per card. The judge's
 score/decision/reasoning is hidden behind a "Reveal judge verdict" accordion so
 it doesn't anchor the reviewer. Feedback syncs to a HF **dataset**
-(`FEEDBACK_DATASET`) via `CommitScheduler`, and `retrieve-feedback` pulls it back
+(`FEEDBACK_DATASET`) — each review is committed immediately as its own file — and `retrieve-feedback` pulls it back
 (deduped, with judge-agreement) for adapting the judge. The Space reads only a
 portable `data/cards.json` snapshot (built by `report`) and never imports
 `pipeline`. See [`dashboard/README.md`](dashboard/README.md).

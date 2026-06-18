@@ -173,7 +173,6 @@ def test_app_renders_and_collects_feedback(tmp_path):
 
     app = _load_app(tmp_path, cards_path)
     assert len(app.CARDS) == 2
-    assert app.SCHEDULER is None  # local-only mode
 
     # The Blocks build without error (the page actually constructs).
     app.build_demo()
