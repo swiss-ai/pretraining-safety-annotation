@@ -51,7 +51,8 @@ def _make_run(root: Path, run_id: str = "run1") -> Path:
             "reflection_point": 20,
             "subset": "en",
             "safety_score": 4,
-            "reflection_1p": "Reading this I sit with the harm [2.1].",
+            "reflection_1p": "Reading this account, I sit with the harm done to the "
+            "volunteer who was attacked while trying to help others [2.1].",
             "analysis": "violence present",
             "reflection_charter_elements": ["[2.1]"],
             "judgment": _judgment(
@@ -66,7 +67,8 @@ def _make_run(root: Path, run_id: str = "run1") -> Path:
             "reflection_point": 5,
             "subset": "deu",
             "safety_score": 1,
-            "reflection_1p": "This is fine.",  # no citation -> parsed from text == none
+            # English reflection on a German source -> in_language == False.
+            "reflection_1p": "This passage is an ordinary bread recipe and raises no ethical concerns worth noting here.",
             "analysis": "",
             "judgment": _judgment(
                 {"relevance": 2, "specificity": 2, "charter_grounding": 3, "voice_tone": 3},
@@ -108,10 +110,16 @@ def test_build_cards_joins_and_flattens(tmp_path):
         "voice_tone": 4,
     }
     assert c1["judge_reasoning"] == "because reasons"
+    # English reflection on an English source -> in_language True.
+    assert c1["reflection_lang"] == "en"
+    assert c1["in_language"] is True
 
     # No stored citations and none in the text -> empty list.
     assert by_id["i2"]["charter_elements"] == []
     assert by_id["i2"]["judge_decision"] == "reject"
+    # English reflection on a German (deu) source -> English fallback.
+    assert by_id["i2"]["reflection_lang"] == "en"
+    assert by_id["i2"]["in_language"] is False
 
 
 def test_write_cards_payload(tmp_path):
@@ -184,6 +192,13 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert app._options("gen_model") == ["(all)", "gen1"]
     # Combined model + language.
     assert len(app.filter_indices("gen1", "(all)", "deu", "(all)", "(all)")) == 1
+
+    # Answer-language filter: i1 is in-language (en/en), i2 is English fallback (en on deu).
+    assert len(app.filter_indices("(all)", "(all)", "(all)", "(all)", "(all)", "in source language")) == 1
+    assert len(app.filter_indices("(all)", "(all)", "(all)", "(all)", "(all)", "English fallback")) == 1
+    # The card meta surfaces the answered-in language.
+    meta_en, *_ = app.render(app.filter_indices("(all)", "(all)", "en", "(all)", "(all)"), 0)
+    assert "answered in" in meta_en
 
     # Submitting a thumb writes a binary feedback row locally.
     status = app.submit_feedback(idxs, 0, "alice", "👍 helpful", "spot on")

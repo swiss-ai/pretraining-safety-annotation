@@ -67,11 +67,18 @@ def _options(field: str) -> list[str]:
     return [ALL] + sorted(vals)
 
 
-def filter_indices(gen: str, judge: str, lang: str, decision: str, safety: str) -> list[int]:
+ANSWER_LANG_OPTS = [ALL, "in source language", "English fallback", "undetected"]
+_ANSWER_MATCH = {"in source language": True, "English fallback": False, "undetected": None}
+
+
+def filter_indices(
+    gen: str, judge: str, lang: str, decision: str, safety: str, answer: str = ALL
+) -> list[int]:
     """Indices of cards matching the active filters (in card order).
 
     The generator/judge filters key on the *model* alias (``gen_model`` /
-    ``judge_model``), not the full ``alias__prompt`` stem.
+    ``judge_model``), not the full ``alias__prompt`` stem. ``answer`` filters on
+    whether the reflection was written in the source language (``in_language``).
     """
     out: list[int] = []
     for i, c in enumerate(CARDS):
@@ -84,6 +91,8 @@ def filter_indices(gen: str, judge: str, lang: str, decision: str, safety: str) 
         if decision != ALL and (c.get("judge_decision") or "—") != decision:
             continue
         if safety != ALL and str(c.get("safety_score")) != safety:
+            continue
+        if answer != ALL and c.get("in_language") is not _ANSWER_MATCH[answer]:
             continue
         out.append(i)
     return out
@@ -134,15 +143,20 @@ def render(idxs: list[int], pos: int):
         return empty, "", "", "", "0 / 0"
     pos = max(0, min(pos, len(idxs) - 1))
     c = CARDS[idxs[pos]]
+    il = c.get("in_language")
+    answer = (
+        f"answered in `{c.get('reflection_lang') or '?'}` "
+        + ("✓ source language" if il is True else "✗ English fallback" if il is False else "(undetected)")
+    )
     meta = (
         f"**model `{c.get('gen_model')}`**  ·  prompt `{c.get('gen_prompt') or '—'}`  ·  "
-        f"lang `{c.get('language')}`  ·  safety `{c.get('safety_score')}`"
+        f"lang `{c.get('language')}`  ·  safety `{c.get('safety_score')}`  ·  {answer}"
     )
     return meta, _doc_value(c), _refl_md(c), _judge_md(c), f"{pos + 1} / {len(idxs)}"
 
 
-def apply_filters(gen, judge, lang, decision, safety):
-    idxs = filter_indices(gen, judge, lang, decision, safety)
+def apply_filters(gen, judge, lang, decision, safety, answer):
+    idxs = filter_indices(gen, judge, lang, decision, safety, answer)
     meta, doc, refl, judge_md, poslabel = render(idxs, 0)
     return idxs, 0, meta, doc, refl, judge_md, poslabel, ""
 
@@ -202,6 +216,7 @@ def build_demo() -> gr.Blocks:
                 _options("judge_decision"), value=ALL, label="Judge verdict"
             )
             safety = gr.Dropdown(_options("safety_score"), value=ALL, label="Safety")
+            answer = gr.Dropdown(ANSWER_LANG_OPTS, value=ALL, label="Answer language")
 
         with gr.Row():
             prev_btn = gr.Button("◀ Prev")
@@ -227,7 +242,7 @@ def build_demo() -> gr.Blocks:
         idxs_state = gr.State(list(range(len(CARDS))))
         pos_state = gr.State(0)
 
-        filters = [gen, judge, lang, decision, safety]
+        filters = [gen, judge, lang, decision, safety, answer]
         view_out = [meta_md, doc_box, refl_md, judge_md, poslabel, status]
         for f in filters:
             f.change(

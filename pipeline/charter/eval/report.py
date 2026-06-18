@@ -40,6 +40,41 @@ def _charter_elements(row: dict) -> list[str]:
     return _CITE_RE.findall(row.get(_REFLECTION_VOICE) or "")
 
 
+_BRACKET_RE = re.compile(r"\[[^\]]*\]")
+_lang_seeded = False
+
+
+def _detect_lang(text: str) -> str | None:
+    """Detect a reflection's language (citations stripped), or None if too short."""
+    global _lang_seeded
+    stripped = _BRACKET_RE.sub("", text).replace("`", "").strip()
+    if len(stripped) < 10:
+        return None
+    from langdetect import DetectorFactory, LangDetectException, detect
+
+    if not _lang_seeded:
+        DetectorFactory.seed = 0
+        _lang_seeded = True
+    try:
+        return detect(stripped)
+    except LangDetectException:
+        return None
+
+
+def _in_language(source: str, reflection_lang: str | None) -> bool | None:
+    """Did the reflection answer in the source language?
+
+    Robust English-vs-not signal: langdetect scatters short CJK text across
+    zh/ja/ko, so for non-English sources we only check the model did not fall
+    back to English. None when the language can't be detected.
+    """
+    if not reflection_lang or not source or source == "—":
+        return None
+    if source == "en":
+        return reflection_lang == "en"
+    return reflection_lang != "en"
+
+
 def _split_stem(stem: str) -> tuple[str, str]:
     """Split an ``<alias>__<prompt>`` file stem into (model alias, prompt)."""
     alias, sep, prompt = stem.partition("__")
@@ -53,6 +88,8 @@ def _make_card(run_id: str, judge_stem: str, gen_stem: str, row: dict) -> dict:
     scores = refl.get("scores") or {}
     gen_model, gen_prompt = _split_stem(gen_stem)
     judge_model, judge_prompt = _split_stem(judge_stem)
+    source = row.get("subset") or "—"
+    reflection_lang = _detect_lang(row.get(_REFLECTION_VOICE) or "")
     return {
         "run_id": run_id,
         "item_id": row.get("item_id"),
@@ -62,7 +99,9 @@ def _make_card(run_id: str, judge_stem: str, gen_stem: str, row: dict) -> dict:
         "gen_prompt": gen_prompt,
         "judge_model": judge_model,
         "judge_prompt": judge_prompt,
-        "language": row.get("subset") or "—",
+        "language": source,
+        "reflection_lang": reflection_lang,
+        "in_language": _in_language(source, reflection_lang),
         "safety_score": row.get("safety_score"),
         "reflection_point": row.get("reflection_point"),
         "text": row.get("text") or "",
