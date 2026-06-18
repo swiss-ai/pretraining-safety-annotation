@@ -161,19 +161,24 @@ def _refl_html(c: dict) -> str:
     return "".join(out)
 
 
-def _judge_md(c: dict) -> str:
+def _judge_html(c: dict) -> str:
     scores = c.get("judge_scores") or {}
-    dims = "  ·  ".join(f"{k} **{v}**" for k, v in scores.items()) or "—"
-    decision = (c.get("judge_decision") or "—").upper()
+    dims = "  ·  ".join(f"{html.escape(k)} <b>{v}</b>" for k, v in scores.items()) or "—"
+    decision = html.escape((c.get("judge_decision") or "—").upper())
     agg = c.get("judge_aggregate")
     agg_s = f"{agg:.2f}" if isinstance(agg, (int, float)) else "—"
     out = [
-        f"**{decision}**  ·  aggregate **{agg_s}**  ·  judged by `{c.get('judge_model')}`"
-        f"\n\n{dims}"
+        f"<div><b>{decision}</b> · aggregate <b>{agg_s}</b> · "
+        f"judged by <code>{html.escape(c.get('judge_model') or '')}</code></div>",
+        f"<div style='margin-top:.3em'>{dims}</div>",
     ]
     if c.get("judge_reasoning"):
-        out.append(f"\n> {c['judge_reasoning']}")
-    return "\n".join(out)
+        # <blockquote> (not <p>) so the citation tooltips' block content stays nested.
+        out.append(
+            "<blockquote style='border-left:3px solid #888;margin:.5em 0;padding-left:.6em'>"
+            f"{_wrap_citations(c['judge_reasoning'])}</blockquote>"
+        )
+    return "".join(out)
 
 
 def render(idxs: list[int], pos: int):
@@ -195,7 +200,7 @@ def render(idxs: list[int], pos: int):
         f"**model `{c.get('gen_model')}`**  ·  prompt `{c.get('gen_prompt') or '—'}`  ·  "
         f"lang `{c.get('language')}`  ·  safety `{c.get('safety_score')}`  ·  {answer}"
     )
-    return meta, _doc_value(c), _refl_html(c), _judge_md(c), f"{pos + 1} / {len(idxs)}"
+    return meta, _doc_value(c), _refl_html(c), _judge_html(c), f"{pos + 1} / {len(idxs)}"
 
 
 def apply_filters(order, gen, judge, lang, decision, safety, answer):
@@ -301,7 +306,7 @@ def build_demo() -> gr.Blocks:
             # Judge's call is hidden by default so it doesn't anchor the reviewer;
             # sits just before the feedback panel.
             with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
-                judge_md = gr.Markdown()
+                judge_md = gr.HTML()
 
             gr.Markdown("### Your feedback")
             verdict = gr.Radio(["✅ accept", "❌ reject"], label="Your verdict")

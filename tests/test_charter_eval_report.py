@@ -22,7 +22,7 @@ def _judgment(scores: dict, aggregate: float, decision: str) -> dict:
         "reflection_1p": {
             "scores": scores,
             "aggregate": aggregate,
-            "reasoning": "because reasons",
+            "reasoning": "because of the harm [2.1]",
         },
         "reflection_aggregate": aggregate,
         "reflection_decision": decision,
@@ -109,7 +109,7 @@ def test_build_cards_joins_and_flattens(tmp_path):
         "charter_grounding": 4,
         "voice_tone": 4,
     }
-    assert c1["judge_reasoning"] == "because reasons"
+    assert c1["judge_reasoning"] == "because of the harm [2.1]"
     # English reflection on an English source -> in_language True.
     assert c1["reflection_lang"] == "en"
     assert c1["in_language"] is True
@@ -187,6 +187,8 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "reflection injected here" not in doc
     assert doc == app.CARDS[idxs[0]]["text"][:20]
     assert "ACCEPT" in judge_md
+    # The judge reasoning also gets citation tooltips ([2.1] in the fixture reasoning).
+    assert 'class="cite"' in judge_md
     # Reflection is HTML with citation hover tooltips drawn from the value spec.
     assert 'class="cite"' in refl and "[2.1]" in refl
     assert 'class="tip"' in refl  # nested hover-tooltip span (not the title attribute)
