@@ -206,6 +206,7 @@ def _generate_with_resume(
         save=False,
         thinking=candidate.thinking,
         json_mode=candidate.json_mode,
+        sampling_params=candidate.sampling,
         completion_max_tokens=candidate.completion_max_tokens,
         context_window_tokens=candidate.context_window_tokens,
         on_failure=on_failure,

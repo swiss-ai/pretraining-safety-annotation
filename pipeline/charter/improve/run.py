@@ -323,6 +323,7 @@ def generate_batch(
     save: bool = True,
     thinking: bool = False,
     json_mode: bool = False,
+    sampling_params: dict | None = None,
     completion_max_tokens: int | None = None,
     context_window_tokens: int | None = None,
     on_failure: Callable[[dict], None] | None = None,
@@ -370,6 +371,7 @@ def generate_batch(
                 semaphore,
                 thinking=thinking,
                 json_mode=json_mode,
+                sampling_params=sampling_params,
                 max_tokens=_completion_budget(
                     messages, completion_max_tokens, context_window_tokens
                 ),

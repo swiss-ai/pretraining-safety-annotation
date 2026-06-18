@@ -46,6 +46,11 @@ charter:
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 24576
         endpoint: https://openrouter.ai/api/v1
+      - alias: qwen3.6-35b-a3b
+        api_name: Qwen/Qwen3.6-35B-A3B
+        hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
+        context_window_tokens: 24576
+        endpoint: https://openrouter.ai/api/v1
       - alias: gemma-4-31b
         api_name: google/gemma-4-31b-it
         hf_slug: google/gemma-4-31b-it
@@ -103,13 +108,20 @@ charter:
     endpoint: ${charter.improve.endpoint}
     eval_dir: data/pipeline/charter_eval
     gold_judge:
-      alias: kimi-k2.5
-      api_name: jkminder/lAiFTaihSJ # #jkminder/lAiFTaihSJ #
-      hf_slug: moonshotai/Kimi-K2.5
-      endpoint: http://172.28.25.28:30000/v1
-      prompt_reflection: judge_reflection_v24.md
+      alias: glm-5.1
+      api_name: zai-org/GLM-5.1-FP8-yhzm   # swissai deployment tag rotated from -Tgii (2026-06-18); these tags are ephemeral
+      hf_slug: zai-org/GLM-5.1-FP8
+      endpoint: https://api.swissai.svc.cscs.ch/v1
+      prompt_reflection: judge_reflection_v4.md
       completion_max_tokens: 65536
       context_window_tokens: 65536
+      # thinking: true                  # <-- judge currently runs WITHOUT reasoning; set to enable
+      # Previous gold judge (kimi-k2.5):
+      # alias: kimi-k2.5
+      # api_name: jkminder/lAiFTaihSJ
+      # hf_slug: moonshotai/Kimi-K2.5
+      # endpoint: http://172.28.25.28:30000/v1
+      # prompt_reflection: judge_reflection_v24.md
     generator_eval:
       bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
@@ -130,24 +142,36 @@ charter:
       #   context_window_tokens: 16384
       #   prompt_reflection: generator_reflection_v7.md
       - alias: qwen3.5-35b-a3b
-        api_name: Qwen/Qwen3.5-35B-A3B-FP8-kUja
+        api_name: qwen/qwen3.5-35b-a3b
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-        context_window_tokens: 24576
-        prompt_reflection: generator_reflection_v2.md
+        context_window_tokens: 49152
+        endpoint: https://openrouter.ai/api/v1
+        prompt_reflection: generator_reflection_v5.md
+      - alias: qwen3.6-35b-a3b
+        api_name: qwen/qwen3.6-35b-a3b
+        hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
+        context_window_tokens: 49152
+        endpoint: https://openrouter.ai/api/v1
+        prompt_reflection: generator_reflection_v1.md
+        sampling:   # generation_config default minus presence_penalty (A/B winner; pp=1.5 hurt quality)
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          presence_penalty: 0.0
       - alias: gemma-4-31b
         api_name: google/gemma-4-31b-it
         hf_slug: google/gemma-4-31b-it
-        context_window_tokens: 24576
+        context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v2.md
+        prompt_reflection: generator_reflection_v6.md
       - alias: gemma-4-26b-a4b
         api_name: google/gemma-4-26b-a4b-it
         hf_slug: google/gemma-4-26b-a4b-it
-        context_window_tokens: 24576
+        context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v2.md
+        prompt_reflection: generator_reflection_v5.md
       # - alias: nemotron-3-super-120b-a12b
       #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
       #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
@@ -188,7 +212,7 @@ charter:
     safety_min_score: 4
     safety_min_confidence: 0.9
     reflection_max_chars: 8000
-    reflection_prompt: generator_reflection_v7.md
+    reflection_prompt: generator_reflection_v5.md  # qwen final in final_prompts/
     generator_alias: qwen3.5-35b-a3b
     thinking: false
     json_mode: false

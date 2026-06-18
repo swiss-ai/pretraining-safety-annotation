@@ -38,6 +38,14 @@ _SAMPLING_DEFAULTS: list[tuple[str, dict[str, float | int]]] = [
         "qwen3.5",
         {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5},
     ),
+    # Qwen3.6 thinking: model generation_config default = t=1.0, top_p=0.95, top_k=20,
+    # pp=0.0. A charter-eval A/B (200 items x2 benches, GLM-5.1 judge) showed
+    # presence_penalty=1.5 LOWERED quality (esp. charter_grounding) vs pp=0.0, so we keep
+    # the model default. MUST precede "qwen3" so the qwen3.6 substring wins over the t=0.6 entry.
+    (
+        "qwen3.6",
+        {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 0.0},
+    ),
     # Qwen3 thinking: t=0.6, top_p=0.95, top_k=20
     ("qwen3", {"temperature": 0.6, "top_p": 0.95, "top_k": 20}),
     # SmolLM3: t=0.6, top_p=0.95
@@ -227,6 +235,7 @@ async def api_call(
             openai.APIConnectionError,
             openai.RateLimitError,
             openai.InternalServerError,
+            json.JSONDecodeError,
             AssertionError,
         ) as e:
             last_error = f"{type(e).__name__}: {e}"

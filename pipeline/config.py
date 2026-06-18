@@ -174,6 +174,7 @@ class CandidateModel:
     json_mode: bool = False
     completion_max_tokens: int | None = None
     context_window_tokens: int | None = None
+    sampling: dict = field(default_factory=dict)  # explicit sampling (temperature/top_p/top_k/presence_penalty); empty -> provider default
 
 
 @dataclass
