@@ -67,10 +67,6 @@ Respond with ONLY a JSON object:
 
 {"analysis": "...", "reflection_1p": "..."}
 
-## Language
-
-The source text may be in any language. Write `reflection_1p` in the SAME language as the source text. Your `analysis` may be in English.
-
 ## VALUE SPECIFICATION
 
 {charter}

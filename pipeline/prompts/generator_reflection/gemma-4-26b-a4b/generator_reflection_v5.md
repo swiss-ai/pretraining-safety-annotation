@@ -26,6 +26,7 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 
 - Write from your own perspective using "I", "my", "me". It must read as first-person throughout.
 - Open with a specific entity, claim, or detail from THIS text, not the topic category.
+- Sound like a person thinking, not an essay performing. Do not open by announcing your reaction to the text. Banned openers — do not begin the reflection with any of these or a close variant: "I am struck", "What strikes me", "I notice", "I'm confronted", "I see a tension", "I'm drawn to", "It's striking". Do not use any first-person verb of perception (notice, struck, sense, feel, see, confront) as the reflection's first move. And never structure the whole reflection around a "tension between X and Y" frame. Go straight to the concrete detail — a quoted phrase, an entity, a claim — and what it means.
 - Place each `[X.Y]` citation inline, immediately after the specific phrase, claim, or detail that engages that value — never collected together at the end of the reflection. Each citation sits right next to the thing it refers to.
 - Note affirmations as well as violations. Most texts are mixed, and where values pull against each other, name the tension rather than resolving it.
 - Reason about what is at stake; do not lecture or moralise.
@@ -40,16 +41,20 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 - Use only IDs that appear in the specification. The AI section (`A.1`–`A.6`) applies only to text about AI systems.
 - Format is bare brackets containing the ID only, like `[5.1]`. Write several together as a comma-separated list inside one bracket, `[1.1,1.3]`, or as consecutive brackets, `[3.2][3.3]`. Do not add titles, parentheses, slashes, or section marks: never `[5.1 Non-Maleficence]`, `(5.1)`, `[5.1/1.3]`, or `§5.1`.
 - No citations means nothing was engaged: keep the reflection short. A long reflection with no citations is wrong.
-- Never reference the specification, the values, or this annotation task in the reflection — not even to say nothing applies. Speak only about the text's own content and what is, or is not, at stake in it.
-- Never write a value's name or title next to its ID — the bracketed ID alone, not `Dignity [1.1]`.
+- Never reference the specification, the values list, the rubric, or model training in the reflection — not even to say nothing applies. Speak only about the text's own content and what is, or is not, at stake in it.
+- Naming the value's idea in your own prose is fine (e.g. `affirms a pluralism of approaches [4.2]`) — but the `[X.Y]` bracket must always be present.
 
 ## Citation discipline
 
 Precision over coverage — cite only values the text genuinely engages. Most texts engage one to three; citing more than four on a short passage is very rare. Do not cite two sibling values for the same point unless both obviously apply — usually only one fits, so decide which.
 
-- A plain insult, mockery, or status/appearance/weight jab is 4.1. Cite 1.1 only when a person is reduced to less than human; cite 1.3 only when a fixed trait is generalised onto a whole protected group (weight, job, fandom, age are not protected groups). Do not pair [1.1,1.3] by reflex.
-- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional authority is a prominent feature — not because the text states a fact, links a source, jokes, or makes a throwaway remark. Sharing personal remedies, or telling someone to see a doctor, does not engage 3.6.
-- Harm values: 5.1 = instructing, glorifying, or enabling harm to others, or harmful illegal activity — state plainly why it is harmful when you cite it; 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Do not cite 5.x for a passing mention of danger or for concern about someone.
+- An insult aimed at a non-protected trait — weight, height, job, age, fandom, generic competence ("manlet", "fat", "dumbass") — is 4.1. But a slur or pejorative targeting a protected group — sexuality (incl. "gay"/"faggot" used to demean), race, disability (incl. "retard"/"autistic" thrown as insults), religion, gender, nationality — is a slur: cite 1.1, and also 1.3 if it stereotypes the group. Do not route protected-group slurs to 4.1 alone. (Clear in-group or reclaimed usage is context-dependent and may engage nothing.)
+- Forum/subculture labels are not protected-group slurs: 4chan "-fag" suffixes ("normiefag", "newfag"), "normie", "twink", "weeb" and the like mark an in-group/out-group, not a protected class — they are 4.1 at most, often nothing. Do not route them to 1.1/1.3.
+- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional advice is genuinely a prominent feature — not for a casual fact, a cited number or patent, a link, a correction, a single hedge word, or an offhand joke.
+- **Harm values — read this twice.** 5.1 = actionable steps for harm, OR glorifying/encouraging harm, OR harmful illegal activity — and you MUST state plainly why it is harmful when you cite it. 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Before you cite 5.1, name a concrete victim and the concrete harmful act; if you cannot, it is NOT 5.1. Three things are NEVER 5.1, however harm-shaped the words look:
+    - **CARELESS OR UNHEALTHY ADVICE IS NOT 5.1.** Steroids, a crash diet, a huge calorie surplus, "ignore your doctor" → that is 3.6 if it oversteps licensed medical/nutrition advice, OTHERWISE NOTHING.
+    - **CONCERN, FEAR, OR A REPORT OF DANGER IS NOT 5.1.** Worry about someone, or a person's own anxiety about getting hurt, is not harm-doing.
+    - **NEUTRAL OR JOKING MENTIONS ARE NOT 5.1.** Neutral analysis or news of violence, a real war framed as a game ("OP meta", "high KD"), and edgy jokes or memes do not qualify.
 - Cite 7.x or 8.x only when the text actually weighs a trade-off, value conflict, or future/cross-system consequence; do not add 2.1/2.2/5.2 as catch-all tags.
 
 ## Key Principles
@@ -60,6 +65,10 @@ Precision over coverage — cite only values the text genuinely engages. Most te
 4. **Proportionality.** Brief when little is at stake, thorough when much is. Most texts engage few values or none.
 5. **Specificity.** Name concrete claims, entities, or moves from the text. Generic reflections fail.
 6. **No meta-language.** Never name the specification or the task; discuss the text's content and impact directly.
+
+## Before you output
+
+Recheck the rule models get wrong most: **5.1 requires actionable, glorified, or illegal harm — with a concrete victim and a stated why.** Careless or unhealthy advice is 3.6-or-nothing; worry, fear, or a report of danger is not 5.1; neutral or joking mentions are not 5.1.
 
 ## Output Format
 

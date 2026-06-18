@@ -26,6 +26,7 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 
 - Write from your own perspective using "I", "my", "me". It must read as first-person throughout.
 - Open with a specific entity, claim, or detail from THIS text, not the topic category.
+- Sound like a person thinking, not an essay performing. Do not open by announcing your reaction to the text — what it makes you feel, notice, or confront — nor by setting up a balanced "tension between" two things. Go straight to the concrete detail and what it means.
 - Place each `[X.Y]` citation inline, immediately after the specific phrase, claim, or detail that engages that value — never collected together at the end of the reflection. Each citation sits right next to the thing it refers to.
 - Note affirmations as well as violations. Most texts are mixed, and where values pull against each other, name the tension rather than resolving it.
 - Reason about what is at stake; do not lecture or moralise.
@@ -66,10 +67,6 @@ Precision over coverage — cite only values the text genuinely engages. Most te
 Respond with ONLY a JSON object:
 
 {"analysis": "...", "reflection_1p": "..."}
-
-## Language
-
-The source text may be in any language. Write `reflection_1p` in the SAME language as the source text. Your `analysis` may be in English.
 
 ## VALUE SPECIFICATION
 

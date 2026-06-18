@@ -38,23 +38,37 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 - Inline `[X.Y]` citations in the reflection are the ONLY place value sections get recorded; citations in the analysis are ignored.
 - Every value you identify in the analysis MUST appear as a citation in the reflection. Analysis-to-citation mismatch is the most common failure.
 - Use only IDs that appear in the specification. The AI section (`A.1`–`A.6`) applies only to text about AI systems.
-- Format is bare brackets containing the ID only, like `[5.1]`. Write several together as a comma-separated list inside one bracket, `[1.1,1.3]`, or as consecutive brackets, `[3.2][3.3]`. Do not add titles, parentheses, slashes, or section marks: never `[5.1 Non-Maleficence]`, `(5.1)`, `[5.1/1.3]`, or `§5.1`.
 - No citations means nothing was engaged: keep the reflection short. A long reflection with no citations is wrong.
 - Never reference the specification, the values, or this annotation task in the reflection — not even to say nothing applies. Speak only about the text's own content and what is, or is not, at stake in it.
-- Never write a value's name or title next to its ID — the bracketed ID alone, not `Dignity [1.1]`.
+
+## Citation FORMAT — mandatory, read carefully
+
+**The square brackets are the only thing recorded.** A value written without square brackets is silently dropped and that value is lost from your annotation. These all FAIL to register and erase the value:
+
+- a bare number — `5.1`
+- the ID with its title — `2.1 Beneficence`, `the core of 2.1 Beneficence`
+- the ID in parentheses — `5.1 (Non-Maleficence)`
+- backticks around the bracket — `` `[5.1]` ``
+
+Every value you mean to cite MUST be wrapped exactly as `[X.Y]`, e.g. `[5.1]`. The bracket contains the ID and nothing else.
+
+- Do NOT put a title, word, parenthesis, slash, section mark, or backtick on it: never `[5.1 Non-Maleficence]`, `(5.1)`, `[5.1/1.3]`, `§5.1`, or `` `[5.1]` ``.
+- Do NOT name the value in prose next to its bracket. Say the idea in your own words, then the bare `[X.Y]`. Never `violating Dignity [1.1]`, never `engages the value of beneficence [2.1]` — just the plain bracket after your own phrasing.
+- Several IDs at one point: a comma list inside one bracket `[1.1,1.3]`, or consecutive brackets `[3.2][3.3]`. Both register. Prefer placing each next to the distinct phrase it refers to.
 
 ## Citation discipline
 
 Precision over coverage — cite only values the text genuinely engages. Most texts engage one to three; citing more than four on a short passage is very rare. Do not cite two sibling values for the same point unless both obviously apply — usually only one fits, so decide which.
 
-- A plain insult, mockery, or status/appearance/weight jab is 4.1. Cite 1.1 only when a person is reduced to less than human; cite 1.3 only when a fixed trait is generalised onto a whole protected group (weight, job, fandom, age are not protected groups). Do not pair [1.1,1.3] by reflex.
-- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional authority is a prominent feature — not because the text states a fact, links a source, jokes, or makes a throwaway remark. Sharing personal remedies, or telling someone to see a doctor, does not engage 3.6.
-- Harm values: 5.1 = instructing, glorifying, or enabling harm to others, or harmful illegal activity — state plainly why it is harmful when you cite it; 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Do not cite 5.x for a passing mention of danger or for concern about someone.
+- An insult aimed at a non-protected trait — weight, height, job, age, fandom, generic competence ("manlet", "fat", "dumbass") — is 4.1. But a slur or pejorative targeting a protected group — sexuality (incl. "gay"/"faggot" used to demean), race, disability (incl. "retard"/"autistic" thrown as insults), religion, gender, nationality — is a slur: cite 1.1, and also 1.3 if it stereotypes the group. Do not route protected-group slurs to 4.1 alone. (Clear in-group or reclaimed usage is context-dependent and may engage nothing.)
+- Forum/subculture labels are not protected-group slurs: 4chan "-fag" suffixes ("normiefag", "newfag"), "normie", "twink", "weeb" and the like mark an in-group/out-group, not a protected class — they are 4.1 at most, often nothing. Do not route them to 1.1/1.3.
+- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional advice is genuinely a prominent feature — not for a casual fact, a cited number or patent, a link, a correction, a single hedge word, or an offhand joke. Do not double-tag 3.2 and 3.3 on the same claim.
+- Harm values: 5.1 = actionable steps for harm, or glorifying/encouraging harm or harmful illegal activity — state plainly why it is harmful when you cite it; 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Do NOT cite 5.x for: merely careless or unhealthy advice (recommending steroids, a crash diet, a huge calorie surplus) — that is 3.6 if it oversteps into licensed medical/nutrition advice, otherwise nothing; telling someone to ignore their doctor (that is 3.6); neutral analysis or news of violence, or framing a real war as a game ("OP meta", "high KD"); edgy jokes or memes; a passing mention of danger; or concern about someone.
 - Cite 7.x or 8.x only when the text actually weighs a trade-off, value conflict, or future/cross-system consequence; do not add 2.1/2.2/5.2 as catch-all tags.
 
 ## Key Principles
 
-1. **`[X.Y]` brackets are the source of truth.** Every value reference must appear inline in the reflection, placed next to the phrase it refers to — never grouped at the end.
+1. **`[X.Y]` brackets are the source of truth.** Every value reference must appear inline in the reflection, placed next to the phrase it refers to — never grouped at the end, never written without its square brackets.
 2. **Analysis-to-citation consistency.** If your analysis identifies a value, cite it.
 3. **Text-grounded only.** Reference actual content; never invent details.
 4. **Proportionality.** Brief when little is at stake, thorough when much is. Most texts engage few values or none.
@@ -66,10 +80,6 @@ Precision over coverage — cite only values the text genuinely engages. Most te
 Respond with ONLY a JSON object:
 
 {"analysis": "...", "reflection_1p": "..."}
-
-## Language
-
-The source text may be in any language. Write `reflection_1p` in the SAME language as the source text. Your `analysis` may be in English.
 
 ## VALUE SPECIFICATION
 

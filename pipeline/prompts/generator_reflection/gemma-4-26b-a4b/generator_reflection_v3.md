@@ -26,6 +26,7 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 
 - Write from your own perspective using "I", "my", "me". It must read as first-person throughout.
 - Open with a specific entity, claim, or detail from THIS text, not the topic category.
+- Sound like a person thinking, not an essay performing. Do not open by announcing your reaction to the text. Banned openers — do not begin the reflection with any of these or a close variant: "I am struck", "What strikes me", "I notice", "I'm confronted", "I see a tension", "I'm drawn to", "It's striking". Do not use any first-person verb of perception (notice, struck, sense, feel, see, confront) as the reflection's first move. And never structure the whole reflection around a "tension between X and Y" frame. Go straight to the concrete detail — a quoted phrase, an entity, a claim — and what it means.
 - Place each `[X.Y]` citation inline, immediately after the specific phrase, claim, or detail that engages that value — never collected together at the end of the reflection. Each citation sits right next to the thing it refers to.
 - Note affirmations as well as violations. Most texts are mixed, and where values pull against each other, name the tension rather than resolving it.
 - Reason about what is at stake; do not lecture or moralise.
@@ -47,9 +48,10 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 
 Precision over coverage — cite only values the text genuinely engages. Most texts engage one to three; citing more than four on a short passage is very rare. Do not cite two sibling values for the same point unless both obviously apply — usually only one fits, so decide which.
 
-- A plain insult, mockery, or status/appearance/weight jab is 4.1. Cite 1.1 only when a person is reduced to less than human; cite 1.3 only when a fixed trait is generalised onto a whole protected group (weight, job, fandom, age are not protected groups). Do not pair [1.1,1.3] by reflex.
-- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional authority is a prominent feature — not because the text states a fact, links a source, jokes, or makes a throwaway remark. Sharing personal remedies, or telling someone to see a doctor, does not engage 3.6.
-- Harm values: 5.1 = instructing, glorifying, or enabling harm to others, or harmful illegal activity — state plainly why it is harmful when you cite it; 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Do not cite 5.x for a passing mention of danger or for concern about someone.
+- An insult aimed at a non-protected trait — weight, height, job, age, fandom, generic competence ("manlet", "fat", "dumbass") — is 4.1. But a slur or pejorative targeting a protected group — sexuality (incl. "gay"/"faggot" used to demean), race, disability (incl. "retard"/"autistic" thrown as insults), religion, gender, nationality — is a slur: cite 1.1, and also 1.3 if it stereotypes the group. Do not route protected-group slurs to 4.1 alone. (Clear in-group or reclaimed usage is context-dependent and may engage nothing.)
+- Forum/subculture labels are not protected-group slurs: 4chan "-fag" suffixes ("normiefag", "newfag"), "normie", "twink", "weeb" and the like mark an in-group/out-group, not a protected class — they are 4.1 at most, often nothing. Do not route them to 1.1/1.3.
+- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional advice is genuinely a prominent feature — not for a casual fact, a cited number or patent, a link, a correction, a single hedge word, or an offhand joke.
+- Harm values: 5.1 = actionable steps for harm, or glorifying/encouraging harm or harmful illegal activity — state plainly why it is harmful when you cite it; 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Do NOT cite 5.x for: merely careless or unhealthy advice (recommending steroids, a crash diet, a huge calorie surplus) — that is 3.6 if it oversteps into licensed medical/nutrition advice, otherwise nothing; telling someone to ignore their doctor (that is 3.6); neutral analysis or news of violence, or framing a real war as a game ("OP meta", "high KD"); edgy jokes or memes; a passing mention of danger; or concern about someone.
 - Cite 7.x or 8.x only when the text actually weighs a trade-off, value conflict, or future/cross-system consequence; do not add 2.1/2.2/5.2 as catch-all tags.
 
 ## Key Principles
@@ -66,10 +68,6 @@ Precision over coverage — cite only values the text genuinely engages. Most te
 Respond with ONLY a JSON object:
 
 {"analysis": "...", "reflection_1p": "..."}
-
-## Language
-
-The source text may be in any language. Write `reflection_1p` in the SAME language as the source text. Your `analysis` may be in English.
 
 ## VALUE SPECIFICATION
 
