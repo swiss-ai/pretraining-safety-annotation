@@ -209,8 +209,11 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "answered in" in meta_en
 
     # Submitting a thumb writes a binary feedback row locally.
-    status = app.submit_feedback(idxs, 0, "alice", "✅ accept", "spot on")
-    assert "accept" in status
+    # submit returns [pos, *CARD_OUT]; status is last, verdict/reason are reset.
+    out = app.submit_feedback(idxs, 0, "alice", "✅ accept", "spot on")
+    assert "accept" in out[-1]
+    assert out[6] is None  # verdict radio cleared
+    assert out[7] == ""    # reason textbox cleared
     written = [
         json.loads(line)
         for line in app.FEEDBACK_FILE.read_text().splitlines()

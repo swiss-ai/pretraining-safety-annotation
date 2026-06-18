@@ -185,16 +185,24 @@ def render(idxs: list[int], pos: int):
     return meta, _doc_value(c), _refl_html(c), _judge_html(c), f"{pos + 1} / {len(idxs)}"
 
 
+def _card(idxs, pos, status_msg=""):
+    """Render card `pos`, reset the feedback inputs, and collapse the judge accordion.
+
+    Returns values for CARD_OUT: meta, doc, refl, judge, poslabel, verdict(None),
+    reason(""), judge_accordion(collapsed), status.
+    """
+    meta, doc, refl, judge_html, poslabel = render(idxs, pos)
+    return meta, doc, refl, judge_html, poslabel, None, "", gr.update(open=False), status_msg
+
+
 def apply_filters(order, gen, judge, lang, decision, safety, answer):
     idxs = filter_indices(gen, judge, lang, decision, safety, answer, order=order)
-    meta, doc, refl, judge_md, poslabel = render(idxs, 0)
-    return idxs, 0, meta, doc, refl, judge_md, poslabel, ""
+    return (idxs, 0, *_card(idxs, 0))
 
 
 def step(idxs, pos, delta):
-    pos = max(0, min(pos + delta, max(0, len(idxs) - 1)))
-    meta, doc, refl, judge_md, poslabel = render(idxs, pos)
-    return pos, meta, doc, refl, judge_md, poslabel, ""
+    new_pos = max(0, min(pos + delta, max(0, len(idxs) - 1)))
+    return (new_pos, *_card(idxs, new_pos))
 
 
 # ----------------------------------------------------------------- feedback
@@ -206,10 +214,15 @@ def _safe_name(s: str) -> str:
 
 
 def submit_feedback(idxs, pos, reviewer, verdict, reason):
+    """Save the verdict, then advance to the next card (resets feedback inputs).
+
+    Returns values for [pos_state, *CARD_OUT]. On a validation error nothing
+    moves — only the status message updates.
+    """
     if not idxs:
-        return "Nothing to rate."
+        return (gr.update(),) * 9 + ("Nothing to rate.",)
     if not verdict:
-        return "Pick accept or reject first."
+        return (gr.update(),) * 9 + ("Pick accept or reject first.",)
     c = CARDS[idxs[pos]]
     record = {
         "run_id": c.get("run_id"),
@@ -226,43 +239,75 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
     FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
     FEEDBACK_FILE.open("a", encoding="utf-8").write(line)  # local copy
     if not FEEDBACK_DATASET:
-        return f"Saved “{record['verdict']}” ✓ (local: {FEEDBACK_FILE})"
-    # Commit each review immediately as its own file — robust on ephemeral Spaces
-    # (CommitScheduler's 5-min batch can be lost when a free Space sleeps/restarts).
-    from huggingface_hub import HfApi
+        msg = f"Saved “{record['verdict']}” ✓ (local: {FEEDBACK_FILE})"
+    else:
+        # Commit each review immediately as its own file — robust on ephemeral Spaces
+        # (CommitScheduler's 5-min batch can be lost when a free Space sleeps/restarts).
+        from huggingface_hub import HfApi
 
-    stem = _safe_name(f"{record['ts']}-{record['reviewer']}-{record['item_id']}")
-    HfApi(token=os.environ.get("HF_TOKEN")).upload_file(
-        path_or_fileobj=line.encode("utf-8"),
-        path_in_repo=f"data/{stem}.jsonl",
-        repo_id=FEEDBACK_DATASET,
-        repo_type="dataset",
-        commit_message=f"feedback: {record['verdict']} by {record['reviewer']}",
-    )
-    return f"Saved “{record['verdict']}” ✓ → {FEEDBACK_DATASET}"
+        stem = _safe_name(f"{record['ts']}-{record['reviewer']}-{record['item_id']}")
+        HfApi(token=os.environ.get("HF_TOKEN")).upload_file(
+            path_or_fileobj=line.encode("utf-8"),
+            path_in_repo=f"data/{stem}.jsonl",
+            repo_id=FEEDBACK_DATASET,
+            repo_type="dataset",
+            commit_message=f"feedback: {record['verdict']} by {record['reviewer']}",
+        )
+        msg = f"Saved “{record['verdict']}” ✓ → {FEEDBACK_DATASET}"
+    new_pos = max(0, min(pos + 1, max(0, len(idxs) - 1)))
+    return (new_pos, *_card(idxs, new_pos, msg))
 
 
 # ----------------------------------------------------------------- layout
 
-# Class-based hover tooltip — Gradio has no content tooltip and strips `title`,
-# and launch(css=) isn't reachable on a Space, so inject a <style> and use :hover.
-# bottom:100% (touching) + no pointer-events:none so the box is scrollable.
+# Citation tooltip rendered at <body> level (#cite-tip) via JS, so it is NEVER
+# clipped by an ancestor's overflow (e.g. the judge accordion frame). The inline
+# `.tip` span is just a hidden data carrier the JS copies its content from.
+# (Gradio has no content tooltip, strips `title`, and launch(css/js=) isn't
+# reachable on a Space — but per-event demo.load(js=...) is.)
 _CSS = (
-    ".cite{position:relative;border-bottom:1px dotted #888;cursor:help}"
-    ".cite .tip{visibility:hidden;opacity:0;transition:opacity .12s;"
-    "position:absolute;z-index:50;left:0;bottom:100%;width:380px;max-width:80vw;"
-    "max-height:280px;overflow-y:auto;text-align:left;background:#111827;"
-    "color:#fff;padding:6px 10px;border-radius:6px;font-size:.74rem;"
-    "line-height:1.3;box-shadow:0 4px 14px rgba(0,0,0,.5)}"
-    ".cite .tip *{color:#fff}"
-    ".cite:hover .tip{visibility:visible;opacity:1}"
-    ".cite .tip p{margin:.3em 0}"
-    ".cite .tip ul,.cite .tip ol{margin:.3em 0;padding-left:1.1em}"
-    ".cite .tip li{margin:.1em 0}"
-    ".cite .tip strong{color:#fff}"
-    ".cite .tip h1,.cite .tip h2,.cite .tip h3,.cite .tip h4{font-size:.8rem;margin:.35em 0;color:#fff}"
-    ".cite .tip hr.tipsep{margin:6px 0;border:0;border-top:1px solid #444}"
+    ".cite{border-bottom:1px dotted #888;cursor:help}"
+    ".cite .tip{display:none}"
+    "#cite-tip{position:fixed;z-index:9999;display:none;width:380px;max-width:90vw;"
+    "max-height:280px;overflow-y:auto;text-align:left;background:#111827;color:#fff;"
+    "padding:6px 10px;border-radius:6px;font-size:.74rem;line-height:1.3;"
+    "box-shadow:0 6px 20px rgba(0,0,0,.55)}"
+    "#cite-tip *{color:#fff}"
+    "#cite-tip p{margin:.3em 0}"
+    "#cite-tip ul,#cite-tip ol{margin:.3em 0;padding-left:1.1em}"
+    "#cite-tip li{margin:.1em 0}"
+    "#cite-tip h1,#cite-tip h2,#cite-tip h3,#cite-tip h4{font-size:.8rem;margin:.35em 0}"
+    "#cite-tip hr.tipsep{margin:6px 0;border:0;border-top:1px solid #444}"
 )
+
+# Runs once on load: a delegated handler that pops the hovered citation's hidden
+# `.tip` content into a body-level #cite-tip box positioned near the citation.
+_TOOLTIP_JS = """
+() => {
+  if (window.__citeTipInit) return; window.__citeTipInit = true;
+  const tip = document.createElement('div'); tip.id = 'cite-tip';
+  document.body.appendChild(tip);
+  let over = false;
+  tip.addEventListener('mouseenter', () => { over = true; });
+  tip.addEventListener('mouseleave', () => { over = false; tip.style.display = 'none'; });
+  document.addEventListener('mouseover', (e) => {
+    const cite = e.target.closest ? e.target.closest('.cite') : null;
+    if (!cite) return;
+    const src = cite.querySelector('.tip'); if (!src) return;
+    tip.innerHTML = src.innerHTML; tip.style.display = 'block';
+    const r = cite.getBoundingClientRect();
+    const tw = Math.min(380, window.innerWidth * 0.9);
+    tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8)) + 'px';
+    const top = r.top - tip.offsetHeight - 6;
+    tip.style.top = (top < 8 ? r.bottom + 6 : top) + 'px';
+  });
+  document.addEventListener('mouseout', (e) => {
+    const cite = e.target.closest ? e.target.closest('.cite') : null;
+    if (!cite) return;
+    setTimeout(() => { if (!over) tip.style.display = 'none'; }, 150);
+  });
+}
+"""
 
 
 def build_demo() -> gr.Blocks:
@@ -301,8 +346,8 @@ def build_demo() -> gr.Blocks:
             refl_html = gr.HTML()
 
             # Judge's call is hidden by default so it doesn't anchor the reviewer;
-            # sits just before the feedback panel.
-            with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
+            # sits just before the feedback panel and re-collapses on each new card.
+            with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False) as judge_acc:
                 judge_md = gr.HTML()
 
             gr.Markdown("### Your feedback")
@@ -316,7 +361,10 @@ def build_demo() -> gr.Blocks:
         idxs_state = gr.State(list(range(len(CARDS))))
         pos_state = gr.State(0)
 
-        view_out = [meta_md, doc_box, refl_html, judge_md, poslabel, status]
+        VIEW = [meta_md, doc_box, refl_html, judge_md, poslabel]
+        # What every card-change handler writes: the view, then reset feedback inputs,
+        # the (collapsed) judge accordion, and the status line.
+        CARD_OUT = [*VIEW, verdict, reason, judge_acc, status]
 
         def start(name):
             nm = (name or "").strip()
@@ -336,7 +384,7 @@ def build_demo() -> gr.Blocks:
             start,
             inputs=[name_in],
             outputs=[gate, main_panel, gate_msg,
-                     reviewer_state, order_state, idxs_state, pos_state, *view_out[:-1]],
+                     reviewer_state, order_state, idxs_state, pos_state, *VIEW],
         )
 
         filters = [gen, judge, lang, decision, safety, answer]
@@ -344,25 +392,26 @@ def build_demo() -> gr.Blocks:
             f.change(
                 apply_filters,
                 inputs=[order_state, *filters],
-                outputs=[idxs_state, pos_state, *view_out],
+                outputs=[idxs_state, pos_state, *CARD_OUT],
             )
         prev_btn.click(
             lambda i, p: step(i, p, -1),
-            inputs=[idxs_state, pos_state], outputs=[pos_state, *view_out],
+            inputs=[idxs_state, pos_state], outputs=[pos_state, *CARD_OUT],
         )
         next_btn.click(
             lambda i, p: step(i, p, 1),
-            inputs=[idxs_state, pos_state], outputs=[pos_state, *view_out],
+            inputs=[idxs_state, pos_state], outputs=[pos_state, *CARD_OUT],
         )
         submit_btn.click(
             submit_feedback,
             inputs=[idxs_state, pos_state, reviewer_state, verdict, reason],
-            outputs=[status],
+            outputs=[pos_state, *CARD_OUT],
         )
         demo.load(
             lambda: render(list(range(len(CARDS))), 0),
-            outputs=[meta_md, doc_box, refl_html, judge_md, poslabel],
+            outputs=VIEW,
         )
+        demo.load(js=_TOOLTIP_JS)  # body-level citation tooltip (escapes clipping)
     return demo
 
 
