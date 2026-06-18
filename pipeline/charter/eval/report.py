@@ -45,12 +45,16 @@ _SECTION_RE = re.compile(r"^###\s+(\d+\.\d+)\s+(.*)$")
 _lang_seeded = False
 
 
-def parse_charter_sections(charter_text: str, max_chars: int = 700) -> dict[str, str]:
-    """Map each ``### X.Y Title`` value-spec section to its (capped) text.
+def parse_charter_sections(charter_text: str, max_chars: int = 4000) -> dict[str, str]:
+    """Map each ``### X.Y Title`` value-spec section to its rendered HTML.
 
     Used for the dashboard's citation hover tooltips: a reflection's ``[X.Y]``
-    resolves to ``sections["X.Y"]``.
+    resolves to ``sections["X.Y"]``. The section markdown is rendered to HTML so
+    the tooltip shows formatting (bold, bullets) rather than raw markup.
     """
+    from markdown_it import MarkdownIt
+
+    md = MarkdownIt()
     sections: dict[str, str] = {}
     cur_id: str | None = None
     cur_title = ""
@@ -59,11 +63,11 @@ def parse_charter_sections(charter_text: str, max_chars: int = 700) -> dict[str,
     def flush() -> None:
         if not cur_id:
             return
-        text = f"{cur_id} {cur_title}".strip()
+        src = f"**{cur_id} {cur_title}**".strip()
         body = "\n".join(buf).strip()
         if body:
-            text += "\n" + body
-        sections[cur_id] = text[:max_chars].rstrip() + ("…" if len(text) > max_chars else "")
+            src += "\n\n" + body
+        sections[cur_id] = md.render(src[:max_chars]).strip()
 
     for line in charter_text.splitlines():
         m = _SECTION_RE.match(line)

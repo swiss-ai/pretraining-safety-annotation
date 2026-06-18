@@ -118,13 +118,16 @@ def _doc_value(c: dict) -> str:
 
 
 def _wrap_citations(text: str) -> str:
-    """HTML-escape text; wrap each [X.Y] citation in a span with the section text as a
-    CSS hover tooltip (a nested span — Gradio's sanitizer strips the `title` attribute)."""
+    """HTML-escape text; wrap each [X.Y] citation in a span whose nested tooltip holds
+    the value-spec section as pre-rendered HTML (Gradio strips the `title` attribute, so
+    we use a class-based :hover tooltip)."""
     esc = html.escape(text)
 
     def repl(m: re.Match) -> str:
         ids = [s.strip() for s in m.group(1).split(",")]
-        tip = html.escape("\n\n".join(CHARTER_SECTIONS.get(i, i) for i in ids))
+        tip = "<hr class='tipsep'>".join(
+            CHARTER_SECTIONS.get(i, html.escape(i)) for i in ids
+        )
         return f'<span class="cite">[{m.group(1)}]<span class="tip">{tip}</span></span>'
 
     return _CITE_RE.sub(repl, esc)
@@ -225,14 +228,21 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
 
 # Class-based hover tooltip — Gradio has no content tooltip and strips `title`,
 # and launch(css=) isn't reachable on a Space, so inject a <style> and use :hover.
+# bottom:100% (touching) + no pointer-events:none so the box is scrollable.
 _CSS = (
     ".cite{position:relative;border-bottom:1px dotted #888;cursor:help}"
     ".cite .tip{visibility:hidden;opacity:0;transition:opacity .12s;"
-    "position:absolute;z-index:50;left:0;bottom:1.5em;width:340px;max-width:80vw;"
-    "white-space:pre-wrap;text-align:left;background:#1f2937;color:#f9fafb;"
-    "padding:8px 10px;border-radius:6px;font-size:.82rem;line-height:1.35;"
-    "box-shadow:0 4px 14px rgba(0,0,0,.35);pointer-events:none}"
+    "position:absolute;z-index:50;left:0;bottom:100%;width:380px;max-width:80vw;"
+    "max-height:280px;overflow-y:auto;text-align:left;background:#1f2937;"
+    "color:#e5e7eb;padding:6px 10px;border-radius:6px;font-size:.74rem;"
+    "line-height:1.3;box-shadow:0 4px 14px rgba(0,0,0,.4)}"
     ".cite:hover .tip{visibility:visible;opacity:1}"
+    ".cite .tip p{margin:.3em 0}"
+    ".cite .tip ul,.cite .tip ol{margin:.3em 0;padding-left:1.1em}"
+    ".cite .tip li{margin:.1em 0}"
+    ".cite .tip strong{color:#fff}"
+    ".cite .tip h1,.cite .tip h2,.cite .tip h3,.cite .tip h4{font-size:.8rem;margin:.35em 0;color:#fff}"
+    ".cite .tip hr.tipsep{margin:6px 0;border:0;border-top:1px solid #444}"
 )
 
 
