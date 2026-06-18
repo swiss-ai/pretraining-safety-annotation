@@ -2,6 +2,60 @@
 
 Estimates GPU-hours needed to annotate ~102M samples with reflection generation.
 
+## Qwen3.6-35B-A3B-FP8 throughput optimization (2026-06-19)
+
+**Result: the current production config is already optimal — keep it.** A full sweep of
+server flags, concurrency, speculative decoding (MTP), and DeepGEMM found nothing that
+beats the baseline (TP1×DP4, c1024, sglang 0.5.9, tuned-3.5 flags). Tooling:
+`debug_submit.sh` + `debug_runner.sh` (one server config per job, sweeps client
+concurrency; sampling/data/seed/prompt held fixed). Numbers are n=2000 debug runs
+(~10-15% ramp-penalized vs the n=5000 finals, but RELATIVE ranking is clean).
+
+| Config | sglang | Conc | Samples/sec | GPU-hours (100M) | vs baseline |
+|--------|--------|------|-------------|------------------|-------------|
+| **baseline (production)** | 0.5.9 | **c1024** | **3.65** | **30,450** | — (best) |
+| base0510 (version control) | 0.5.10 | c1024 | 3.43 | 32,377 | −6% |
+| maxreq768 | 0.5.9 | c1536 | 3.33 | 33,356 | −9% |
+| maxreq1024 | 0.5.9 | c2048 | 3.32 | 33,479 | −9% |
+| mtp0510b (MTP, accept-len 1.79) | 0.5.10 | c512 | 3.27 | 33,934 | −10% |
+| mtp0510b (MTP) | 0.5.10 | c1024 | 3.12 | 35,571 | −15% |
+| baseline | 0.5.9 | c512 | 3.06 | 36,346 | −16% |
+| tuned (chunk16384+lpm+mem0.90) | 0.5.9 | c1024 | 2.53 | 44,001 | −31% |
+| DeepGEMM | 0.5.9/0.5.10 | — | JIT-hang | — | not viable |
+
+### Findings (all negative — baseline wins)
+- **Concurrency peaks at c1024.** Bigger client concurrency / `--max-running-requests` (c1536, c2048)
+  *reduces* end-to-end throughput: at high concurrency the 17K-token prefills contend and the
+  per-request decode batch doesn't grow enough to compensate. Matches the prior 3.5 sweep.
+- **MTP / NEXTN speculative decode is net-negative.** It only *works* on sglang ≥0.5.10
+  (0.5.9 crashes: `eagle_worker_v2.py _draft_extend_for_prefill AssertionError`). On 0.5.10,
+  use `--mamba-scheduler-strategy extra_buffer` + `SGLANG_ENABLE_SPEC_V2=1` to keep the radix
+  cache. Even with a *good* accept length (1.79/2), it loses −9% at c1024 vs same-version base —
+  spec-decode is a latency optimization; the draft+verify overhead doesn't pay off at batch-saturated
+  high-throughput serving. (Confirmed by research: gains decay below 1.0× well before batch 256.)
+- **DeepGEMM is not usable on the available sglang builds.** `--moe-runner-backend deep_gemm`
+  loads fine on aarch64/GH200, but the masked MoE-decode kernels (`GROUPED_GEMM_NT_F8F8BF16_MASKED`,
+  num_groups=256) JIT-compile *lazily during inference* and deadlock under the concurrent 17K-token
+  prefill load — the workload never reaches steady state (0/700 warmup completions in 28+ min).
+  `sglang.compile_deep_gemm` precompiles the prefill (contiguous) GEMMs but NOT the masked-decode
+  ones; setting a persistent `SGLANG_DG_CACHE_DIR` accumulates a cache but it never completes.
+  Same on 0.5.9 and 0.5.10. Would need an upstream fix or a much newer build (0.5.11 alps image exists
+  but uses a different FS layout). Persistent cache: `/iopsstor/scratch/cscs/jminder/sglang_dg_cache`.
+- **sglang 0.5.10.post1 is ~6% slower** than 0.5.9 for the plain config (3.43 vs 3.65) — upgrading
+  only to chase MTP/DeepGEMM is a net loss given both fail to beat baseline.
+- **Flag tuning hurts:** `--chunked-prefill-size 16384` + `--schedule-policy lpm` + `--mem-fraction-static 0.90`
+  was −31%. The baseline defaults (chunked-prefill 8192, fcfs, mem 0.88) are better.
+- **Highest-leverage *remaining* knob is output length, not server config.** Cost is dominated by
+  ~3,540 output (thinking) tokens/sample; decode is the bottleneck. Reducing thinking length (prompt/
+  sampling, e.g. presence_penalty) would cut GPU-hours roughly proportionally — but that's a quality
+  decision, out of scope for pure throughput tuning.
+
+**Recommendation:** keep the production config — sglang 0.5.9, `--tp-size 1 --dp-size 4
+--kv-cache-dtype bf16 --mamba-ssm-dtype bfloat16 --cuda-graph-max-bs 512 --context-length 32768
+--mem-fraction-static 0.88 --schedule-conservativeness 0.3 --max-running-requests 512
+--mamba-full-memory-ratio 2.0`, client concurrency 1024. (`cuda-graph-max-bs` can drop 1024→512
+since `max-running-requests`=512 — graphs above 512 are never used; faster startup, no perf change.)
+
 ## Current State (2026-04-13)
 
 Best results per task, sorted by GPU-hours. All on GH200 nodes (4 GPUs each).
