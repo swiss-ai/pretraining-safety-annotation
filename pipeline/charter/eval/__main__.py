@@ -205,7 +205,7 @@ def cmd_retrieve_feedback(args: list[str]) -> int:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     s = summarize_feedback(rows)
     agree = f"{s['agreement']:.1%}" if s["agreement"] is not None else "—"
-    print(f"{s['n']} verdicts ({s['up']} 👍 / {s['down']} 👎) -> {out_path}")
+    print(f"{s['n']} verdicts ({s['accept']} accept / {s['reject']} reject) -> {out_path}")
     print(f"judge agreement (n={s['n_vs_judge']}): {agree}")
     return 0
 

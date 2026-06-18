@@ -13,7 +13,7 @@ pinned: false
 
 A single-page [Gradio](https://gradio.app) Space that shows `charter.eval`
 generations + judgings as cards (document → first-person reflection → judge
-rubric scores + accept/reject verdict) and collects a binary 👍/👎 + reason per
+rubric scores + accept/reject verdict) and collects a binary accept/reject + reason per
 card. Feedback is synced to a HF **dataset** for adapting the judge.
 
 This is the dashboard for the
@@ -24,7 +24,7 @@ old multi-page NiceGUI dashboard.
 
 ```
 charter.eval run dir ──(report)──► dashboard/data/cards.json ──► this Space (display)
-                                                                      │ 👍/👎 + reason
+                                                                      │ accept/reject + reason
                                                                       ▼
                                           HF dataset (FEEDBACK_DATASET) ──(retrieve-feedback)──► judge
 ```
@@ -66,4 +66,4 @@ uv run python -m pipeline.charter.eval retrieve-feedback <user>/<dataset>
 ```
 
 Dedups to one verdict per (run, item, generator, judge, reviewer), writes a tidy
-table, and prints judge-agreement (👍 on `accept` / 👎 on `reject`).
+table, and prints judge-agreement (reviewer verdict vs judge decision).

@@ -142,13 +142,13 @@ def test_build_cards_skips_runs_without_judgments(tmp_path):
 
 def test_summarize_feedback_agreement():
     rows = [
-        {"thumb": "up", "judge_decision": "accept"},   # agree
-        {"thumb": "down", "judge_decision": "accept"},  # disagree
-        {"thumb": "down", "judge_decision": "reject"},  # agree
-        {"thumb": "up", "judge_decision": None},        # no judge decision
+        {"verdict": "accept", "judge_decision": "accept"},   # agree
+        {"verdict": "reject", "judge_decision": "accept"},   # disagree
+        {"verdict": "reject", "judge_decision": "reject"},   # agree
+        {"verdict": "accept", "judge_decision": None},       # no judge decision
     ]
     s = summarize_feedback(rows)
-    assert s == {"n": 4, "up": 2, "down": 2, "n_vs_judge": 3, "agreement": pytest.approx(2 / 3)}
+    assert s == {"n": 4, "accept": 2, "reject": 2, "n_vs_judge": 3, "agreement": pytest.approx(2 / 3)}
 
 
 def _load_app(tmp_path, cards_path: Path):
@@ -189,6 +189,7 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "ACCEPT" in judge_md
     # Reflection is HTML with citation hover tooltips drawn from the value spec.
     assert 'class="cite"' in refl and "[2.1]" in refl
+    assert 'class="tip"' in refl  # nested hover-tooltip span (not the title attribute)
 
     # Filter by model alias (not the full alias__prompt stem).
     assert app.CARDS[idxs[0]]["gen_model"] == "gen1"
@@ -207,15 +208,15 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "answered in" in meta_en
 
     # Submitting a thumb writes a binary feedback row locally.
-    status = app.submit_feedback(idxs, 0, "alice", "👍 helpful", "spot on")
-    assert "Saved up" in status
+    status = app.submit_feedback(idxs, 0, "alice", "✅ accept", "spot on")
+    assert "accept" in status
     written = [
         json.loads(line)
         for line in app.FEEDBACK_FILE.read_text().splitlines()
         if line.strip()
     ]
     assert len(written) == 1
-    assert written[0]["thumb"] == "up"
+    assert written[0]["verdict"] == "accept"
     assert written[0]["item_id"] == "i1"
     assert written[0]["reviewer"] == "alice"
     assert written[0]["judge_decision"] == "accept"

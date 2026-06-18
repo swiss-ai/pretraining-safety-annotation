@@ -2,7 +2,7 @@
 
 Shows charter.eval generations + judgings as cards (the document up to the
 reflection point + the first-person reflection + the judge's rubric scores and
-accept/reject verdict) and collects a binary 👍/👎 + reason per card. Feedback is
+accept/reject verdict) and collects a binary accept/reject + reason per card. Feedback is
 appended to a local JSONL and synced to a HF dataset via ``CommitScheduler``
 (token lives as a Space secret), so the page itself holds no credentials.
 
@@ -21,6 +21,7 @@ import datetime
 import html
 import json
 import os
+import random
 import re
 from pathlib import Path
 
@@ -63,6 +64,8 @@ def _make_scheduler():
 
 
 CARDS, CHARTER_SECTIONS = load_payload()
+# Shuffle by default so cards aren't grouped by model / run / language while reviewing.
+random.Random(int(os.environ.get("SHUFFLE_SEED", "42"))).shuffle(CARDS)
 SCHEDULER = _make_scheduler()
 
 
@@ -115,13 +118,14 @@ def _doc_value(c: dict) -> str:
 
 
 def _wrap_citations(text: str) -> str:
-    """HTML-escape text and wrap each [X.Y] citation in a span with the section as a tooltip."""
+    """HTML-escape text; wrap each [X.Y] citation in a span with the section text as a
+    CSS hover tooltip (a nested span — Gradio's sanitizer strips the `title` attribute)."""
     esc = html.escape(text)
 
     def repl(m: re.Match) -> str:
         ids = [s.strip() for s in m.group(1).split(",")]
-        tip = "\n\n".join(CHARTER_SECTIONS.get(i, i) for i in ids)
-        return f'<span class="cite" title="{html.escape(tip, quote=True)}">[{m.group(1)}]</span>'
+        tip = html.escape("\n\n".join(CHARTER_SECTIONS.get(i, i) for i in ids))
+        return f'<span class="cite">[{m.group(1)}]<span class="tip">{tip}</span></span>'
 
     return _CITE_RE.sub(repl, esc)
 
@@ -194,7 +198,7 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
     if not idxs:
         return "Nothing to rate."
     if not verdict:
-        return "Pick 👍 or 👎 first."
+        return "Pick accept or reject first."
     c = CARDS[idxs[pos]]
     record = {
         "run_id": c.get("run_id"),
@@ -202,7 +206,7 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
         "generator": c.get("generator"),
         "judge": c.get("judge"),
         "judge_decision": c.get("judge_decision"),
-        "thumb": "up" if verdict.startswith("👍") else "down",
+        "verdict": "accept" if verdict.startswith("✅") else "reject",
         "reason": (reason or "").strip(),
         "reviewer": (reviewer or "anon").strip() or "anon",
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -212,14 +216,24 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
     if SCHEDULER is not None:
         with SCHEDULER.lock:
             FEEDBACK_FILE.open("a", encoding="utf-8").write(line)
-        return f"Saved {record['thumb']} ✓ (syncing to {FEEDBACK_DATASET})"
+        return f"Saved “{record['verdict']}” ✓ (syncing to {FEEDBACK_DATASET})"
     FEEDBACK_FILE.open("a", encoding="utf-8").write(line)
-    return f"Saved {record['thumb']} ✓ (local: {FEEDBACK_FILE})"
+    return f"Saved “{record['verdict']}” ✓ (local: {FEEDBACK_FILE})"
 
 
 # ----------------------------------------------------------------- layout
 
-_CSS = ".cite{border-bottom:1px dotted #888;cursor:help}"
+# Class-based hover tooltip — Gradio has no content tooltip and strips `title`,
+# and launch(css=) isn't reachable on a Space, so inject a <style> and use :hover.
+_CSS = (
+    ".cite{position:relative;border-bottom:1px dotted #888;cursor:help}"
+    ".cite .tip{visibility:hidden;opacity:0;transition:opacity .12s;"
+    "position:absolute;z-index:50;left:0;bottom:1.5em;width:340px;max-width:80vw;"
+    "white-space:pre-wrap;text-align:left;background:#1f2937;color:#f9fafb;"
+    "padding:8px 10px;border-radius:6px;font-size:.82rem;line-height:1.35;"
+    "box-shadow:0 4px 14px rgba(0,0,0,.35);pointer-events:none}"
+    ".cite:hover .tip{visibility:visible;opacity:1}"
+)
 
 
 def build_demo() -> gr.Blocks:
@@ -236,13 +250,14 @@ def build_demo() -> gr.Blocks:
 
         with gr.Column(visible=False) as main_panel:
             who_md = gr.Markdown()
-            with gr.Row(elem_id="filters"):
-                gen = gr.Dropdown(_options("gen_model"), value=ALL, label="Model", min_width=120)
-                judge = gr.Dropdown(_options("judge_model"), value=ALL, label="Judge", min_width=120)
-                lang = gr.Dropdown(_options("language"), value=ALL, label="Language", min_width=110)
-                decision = gr.Dropdown(_options("judge_decision"), value=ALL, label="Verdict", min_width=110)
-                safety = gr.Dropdown(_options("safety_score"), value=ALL, label="Safety", min_width=90)
-                answer = gr.Dropdown(ANSWER_LANG_OPTS, value=ALL, label="Answer lang", min_width=130)
+            with gr.Accordion("Filters", open=False):
+                with gr.Row():
+                    gen = gr.Dropdown(_options("gen_model"), value=ALL, label="Model", min_width=120)
+                    judge = gr.Dropdown(_options("judge_model"), value=ALL, label="Judge", min_width=120)
+                    lang = gr.Dropdown(_options("language"), value=ALL, label="Language", min_width=110)
+                    decision = gr.Dropdown(_options("judge_decision"), value=ALL, label="Judge verdict", min_width=120)
+                    safety = gr.Dropdown(_options("safety_score"), value=ALL, label="Safety", min_width=90)
+                    answer = gr.Dropdown(ANSWER_LANG_OPTS, value=ALL, label="Answer lang", min_width=130)
 
             with gr.Row():
                 prev_btn = gr.Button("◀", size="sm", scale=0, min_width=56)
@@ -257,7 +272,7 @@ def build_demo() -> gr.Blocks:
             refl_html = gr.HTML()
 
             gr.Markdown("### Your feedback")
-            verdict = gr.Radio(["👍 helpful", "👎 not helpful"], label="Verdict")
+            verdict = gr.Radio(["✅ accept", "❌ reject"], label="Your verdict")
             reason = gr.Textbox(label="Reason (optional)", lines=2)
             submit_btn = gr.Button("Submit feedback", variant="primary")
             status = gr.Markdown()

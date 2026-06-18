@@ -34,7 +34,7 @@ The frozen production prompts live under `final_prompts/{model_alias}/`.
 ## Quick start
 
 ```bash
-# Dashboard: inspect eval generations/judgings + collect 👍/👎 feedback (HF Space)
+# Dashboard: inspect eval generations/judgings + collect accept/reject feedback (HF Space)
 uv run python -m pipeline.charter.eval report <run_id>   # build dashboard/data/cards.json
 uv run python dashboard/app.py                           # local preview at :7860
 uv run python -m pipeline.charter.eval deploy-dashboard <user>/<space-name>
@@ -63,7 +63,7 @@ See [`dashboard/README.md`](dashboard/README.md) for the dashboard (Space build/
 
 A single-page Gradio app (deployed as a HF Space) that shows `charter.eval`
 generations + judgings as cards — document → first-person reflection → the
-producing **model** — and collects a binary 👍/👎 + reason per card. The judge's
+producing **model** — and collects a binary accept/reject + reason per card. The judge's
 score/decision/reasoning is hidden behind a "Reveal judge verdict" accordion so
 it doesn't anchor the reviewer. Feedback syncs to a HF **dataset**
 (`FEEDBACK_DATASET`) via `CommitScheduler`, and `retrieve-feedback` pulls it back
@@ -119,7 +119,7 @@ pipeline/
 
 configs/config.yaml            # global config (charter.{seed,improve,eval,scale})
 
-dashboard/                     # single-page Gradio HF Space (eval inspection + 👍/👎 feedback)
+dashboard/                     # single-page Gradio HF Space (eval inspection + accept/reject feedback)
 ├── app.py                     # the app (reads data/cards.json; no pipeline import)
 ├── requirements.txt           # Space deps (gradio + huggingface_hub)
 └── README.md                  # Space card + build/deploy/feedback docs
@@ -148,7 +148,7 @@ uv run python -m pipeline.charter.scale submit --run reflections charter.scale.m
 |---|---|
 | `SWISS_AI_API_KEY` | API key for the SwissAI endpoint (charter.improve / charter.eval default) |
 | `ANTHROPIC_API_KEY` | Claude API key used by the improver agent |
-| `FEEDBACK_DATASET` | HF dataset repo the dashboard syncs 👍/👎 feedback to (unset → local-only) |
+| `FEEDBACK_DATASET` | HF dataset repo the dashboard syncs accept/reject feedback to (unset → local-only) |
 | `DASHBOARD_PORT` | Local dashboard preview port (default: 7860) |
 | `BACKUP_REPO` | HuggingFace dataset repo for annotation backup |
 | `HF_TOKEN` | HuggingFace token for dataset loading |

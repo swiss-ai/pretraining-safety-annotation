@@ -223,7 +223,7 @@ def retrieve_feedback(dataset: str, local_dir: Path | str) -> list[dict]:
     latest: dict[tuple, dict] = {}
     for path in sorted(local_dir.rglob("*.jsonl")):
         for row in _read_jsonl(path):
-            if row.get("thumb") in ("up", "down") and row.get("item_id"):
+            if row.get("verdict") in ("accept", "reject") and row.get("item_id"):
                 latest[_feedback_key(row)] = row
     return list(latest.values())
 
@@ -246,20 +246,16 @@ def deploy_space(space_id: str, folder: Path | str = "dashboard") -> None:
 def summarize_feedback(rows: list[dict]) -> dict:
     """Counts and judge-agreement for retrieved feedback.
 
-    A thumb agrees with the judge when 👍 lands on an ``accept`` verdict (or 👎
-    on ``reject``) — the signal for whether the judge needs adapting.
+    A reviewer's binary verdict (accept/reject) agrees with the judge when both
+    decisions match — the signal for whether the judge needs adapting.
     """
-    thumbs = Counter(r["thumb"] for r in rows)
+    verdicts = Counter(r["verdict"] for r in rows)
     judged = [r for r in rows if r.get("judge_decision") in ("accept", "reject")]
-    agree = sum(
-        1
-        for r in judged
-        if (r["thumb"] == "up") == (r["judge_decision"] == "accept")
-    )
+    agree = sum(1 for r in judged if r["verdict"] == r["judge_decision"])
     return {
         "n": len(rows),
-        "up": thumbs.get("up", 0),
-        "down": thumbs.get("down", 0),
+        "accept": verdicts.get("accept", 0),
+        "reject": verdicts.get("reject", 0),
         "n_vs_judge": len(judged),
         "agreement": agree / len(judged) if judged else None,
     }
