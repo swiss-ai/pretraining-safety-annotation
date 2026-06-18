@@ -209,11 +209,13 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert "answered in" in meta_en
 
     # Submitting a thumb writes a binary feedback row locally.
-    # submit returns [pos, *CARD_OUT]; status is last, verdict/reason are reset.
+    # submit returns [idxs, pos, *CARD_OUT]; status last, verdict/reason reset,
+    # and the graded card is dropped from the queue (only en card -> empty).
     out = app.submit_feedback(idxs, 0, "alice", "✅ accept", "spot on")
     assert "accept" in out[-1]
-    assert out[6] is None  # verdict radio cleared
-    assert out[7] == ""    # reason textbox cleared
+    assert out[0] == []    # graded card removed from the queue
+    assert out[7] is None  # verdict radio cleared
+    assert out[8] == ""    # reason textbox cleared
     written = [
         json.loads(line)
         for line in app.FEEDBACK_FILE.read_text().splitlines()
@@ -224,6 +226,30 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert written[0]["item_id"] == "i1"
     assert written[0]["reviewer"] == "alice"
     assert written[0]["judge_decision"] == "accept"
+
+
+def test_spec_search(tmp_path):
+    _make_run(tmp_path)
+    cards_path = tmp_path / "cards.json"
+    write_cards(["run1"], cards_path, eval_dir=tmp_path)
+    app = _load_app(tmp_path, cards_path)
+    assert "Beneficence" in app.spec_html("")            # full spec by default
+    assert "Beneficence" in app.spec_html("beneficence")  # text search
+    assert app.spec_html("2.1")                           # id search matches
+    assert "No sections match" in app.spec_html("zzz_no_such_term_zzz")
+
+
+def test_graded_cards_excluded(tmp_path):
+    _make_run(tmp_path)
+    cards_path = tmp_path / "cards.json"
+    write_cards(["run1"], cards_path, eval_dir=tmp_path)
+    app = _load_app(tmp_path, cards_path)  # local mode (FEEDBACK_DATASET unset)
+    assert app.graded_keys("bob") == set()
+    # bob grades the first card -> it becomes a known graded key for bob only.
+    app.submit_feedback([0, 1], 0, "bob", "✅ accept", "")
+    key = app._card_key(app.CARDS[0])
+    assert app.graded_keys("bob") == {key}
+    assert app.graded_keys("alice") == set()
 
 
 def test_annotator_order_per_name(tmp_path):

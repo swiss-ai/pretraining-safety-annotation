@@ -61,6 +61,37 @@ def annotator_order(name: str) -> list[int]:
     return order
 
 
+def _card_key(c: dict) -> tuple:
+    return (c.get("run_id"), c.get("item_id"), c.get("generator"), c.get("judge"))
+
+
+def graded_keys(reviewer: str) -> set:
+    """Card keys this reviewer has already graded (feedback dataset, or local file)."""
+    if FEEDBACK_DATASET:
+        from huggingface_hub import snapshot_download
+
+        root = snapshot_download(
+            FEEDBACK_DATASET, repo_type="dataset",
+            allow_patterns="data/*.jsonl", token=os.environ.get("HF_TOKEN"),
+        )
+        paths = list(Path(root).rglob("*.jsonl"))
+    else:
+        paths = [FEEDBACK_FILE] if FEEDBACK_FILE.exists() else []
+    keys: set = set()
+    for p in paths:
+        for raw in p.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                r = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if r.get("reviewer") == reviewer:
+                keys.add(_card_key(r))
+    return keys
+
+
 def _options(field: str) -> list[str]:
     vals = {str(c.get(field)) for c in CARDS if c.get(field) is not None}
     return [ALL] + sorted(vals)
@@ -214,15 +245,15 @@ def _safe_name(s: str) -> str:
 
 
 def submit_feedback(idxs, pos, reviewer, verdict, reason):
-    """Save the verdict, then advance to the next card (resets feedback inputs).
+    """Save the verdict, drop the graded card from the queue, show the next one.
 
-    Returns values for [pos_state, *CARD_OUT]. On a validation error nothing
-    moves — only the status message updates.
+    Returns values for [idxs_state, pos_state, *CARD_OUT]. On a validation error
+    nothing moves — only the status message updates.
     """
     if not idxs:
-        return (gr.update(),) * 9 + ("Nothing to rate.",)
+        return (gr.update(),) * 10 + ("Nothing to rate.",)
     if not verdict:
-        return (gr.update(),) * 9 + ("Pick accept or reject first.",)
+        return (gr.update(),) * 10 + ("Pick accept or reject first.",)
     c = CARDS[idxs[pos]]
     record = {
         "run_id": c.get("run_id"),
@@ -254,8 +285,33 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
             commit_message=f"feedback: {record['verdict']} by {record['reviewer']}",
         )
         msg = f"Saved “{record['verdict']}” ✓ → {FEEDBACK_DATASET}"
-    new_pos = max(0, min(pos + 1, max(0, len(idxs) - 1)))
-    return (new_pos, *_card(idxs, new_pos, msg))
+    # Drop the just-graded card from the queue; the next card slides into `pos`.
+    new_idxs = idxs[:pos] + idxs[pos + 1:]
+    new_pos = min(pos, max(0, len(new_idxs) - 1))
+    return (new_idxs, new_pos, *_card(new_idxs, new_pos, msg))
+
+
+# ----------------------------------------------------------------- value spec
+
+
+def _spec_sections() -> list[tuple[str, str]]:
+    """Charter sections (id, rendered HTML) sorted by section number."""
+
+    def key(sid: str):
+        return tuple(int(p) if p.isdigit() else 0 for p in sid.split("."))
+
+    return sorted(CHARTER_SECTIONS.items(), key=lambda kv: key(kv[0]))
+
+
+def spec_html(query: str = "") -> str:
+    """The value spec as HTML, filtered to sections matching ``query`` (id or text)."""
+    q = (query or "").strip().lower()
+    blocks = [
+        f"<div style='margin:.5em 0;padding-bottom:.4em;border-bottom:1px solid #8884'>{body}</div>"
+        for sid, body in _spec_sections()
+        if not q or q in sid.lower() or q in re.sub(r"<[^>]+>", " ", body).lower()
+    ]
+    return "".join(blocks) or "<i>No sections match.</i>"
 
 
 # ----------------------------------------------------------------- layout
@@ -356,6 +412,12 @@ def build_demo() -> gr.Blocks:
             submit_btn = gr.Button("Submit feedback", variant="primary")
             status = gr.Markdown()
 
+            with gr.Accordion("Value specification (search)", open=False):
+                spec_search = gr.Textbox(
+                    label="Search the value spec", placeholder="e.g. discrimination, privacy, 5.1"
+                )
+                spec_view = gr.HTML(spec_html(""))
+
         reviewer_state = gr.State("")
         order_state = gr.State(list(range(len(CARDS))))
         idxs_state = gr.State(list(range(len(CARDS))))
@@ -370,20 +432,22 @@ def build_demo() -> gr.Blocks:
             nm = (name or "").strip()
             noop = gr.update()
             if not nm:
-                # gate, main, gate_msg, reviewer, order, idxs, pos, + 5 view comps = 12
-                return (noop, noop, "Please enter your name.") + (noop,) * 9
-            order = annotator_order(nm)
+                # gate, main, gate_msg, who_md, reviewer, order, idxs, pos, +5 view = 13
+                return (noop, noop, "Please enter your name.") + (noop,) * 10
+            done = graded_keys(nm)
+            order = [i for i in annotator_order(nm) if _card_key(CARDS[i]) not in done]
             view = render(order, 0)
+            graded = f" ({len(done)} already graded)" if done else ""
+            who = f"Reviewing as **{nm}** — {len(order)} to review{graded}"
             return (
-                gr.update(visible=False), gr.update(visible=True),
-                f"Reviewing as **{nm}** — you have your own card order",
+                gr.update(visible=False), gr.update(visible=True), "", who,
                 nm, order, order, 0, *view,
             )
 
         start_btn.click(
             start,
             inputs=[name_in],
-            outputs=[gate, main_panel, gate_msg,
+            outputs=[gate, main_panel, gate_msg, who_md,
                      reviewer_state, order_state, idxs_state, pos_state, *VIEW],
         )
 
@@ -405,12 +469,13 @@ def build_demo() -> gr.Blocks:
         submit_btn.click(
             submit_feedback,
             inputs=[idxs_state, pos_state, reviewer_state, verdict, reason],
-            outputs=[pos_state, *CARD_OUT],
+            outputs=[idxs_state, pos_state, *CARD_OUT],
         )
         demo.load(
             lambda: render(list(range(len(CARDS))), 0),
             outputs=VIEW,
         )
+        spec_search.change(spec_html, inputs=[spec_search], outputs=[spec_view])
         demo.load(js=_TOOLTIP_JS)  # body-level citation tooltip (escapes clipping)
     return demo
 
