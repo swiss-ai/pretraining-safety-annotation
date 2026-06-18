@@ -111,7 +111,8 @@ pipeline/
 │   ├── improve/               # generate→judge iteration + autonomous improver loop
 │   ├── eval/                  # generator/judge benchmarking on fixed benches (benches.py: dclm-en, fw2-multi); report.py → dashboard cards
 │   └── scale/                 # scale-up generation (SLURM + co-located sglang); see scale/README.md
-└── prompts/                   # init templates checked into git
+└── prompts/                   # prompts checked into git
+    ├── models/{alias}/        # per-model versioned prompts: {generator,judge}_reflection_vN.md (runtime PROMPTS_DIR; transient state_*.md gitignored)
     ├── init_generator_reflection.md
     ├── init_judge_reflection.md
     ├── improver.md / improver_generator.md / improver_judge.md
@@ -131,7 +132,7 @@ final_prompts/qwen3.5-35b-a3b/
 └── generator_reflection_v7.md             # frozen charter.scale reflection prompt
 ```
 
-Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `pipeline/prompts/models/{alias}/`.
+Per-model versioned prompts — both `generator_reflection_vN.md` and `judge_reflection_vN.md`, written by the improver loop and read by `charter.improve` / `charter.eval` — are tracked at `pipeline/prompts/models/{alias}/` (the runtime `PROMPTS_DIR`). Loose global templates (`init_*`, `improver*`, `human_notes_*`) stay directly in `pipeline/prompts/`; transient improver `state_*.md` is gitignored. (Separate from `final_prompts/`, the frozen prompts `charter.scale` runs at scale.)
 
 ## Configuration
 

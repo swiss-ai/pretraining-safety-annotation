@@ -22,6 +22,8 @@ One top-level group under `pipeline/`:
 
 Inspect `eval` results and collect accept/reject feedback via the **dashboard** (`dashboard/`) — a single-page Gradio HF Space fed by `pipeline/charter/eval/report.py` (`report` → `cards.json`, `deploy-dashboard`, `retrieve-feedback`); see the README's Dashboard section. Running an eval has live gotchas (prompt-resolution dir, OpenRouter routing, context window, generate→judge barrier) — these are captured in agent memory rather than here.
 
+Per-model generator/judge prompts (`{generator,judge}_reflection_vN.md`) are tracked at `pipeline/prompts/models/{alias}/` — the runtime `PROMPTS_DIR`, resolved by `resolve_prompt_path`. Loose global templates (`init_*`, `improver*`, `human_notes_*`) live directly in `pipeline/prompts/`; transient improver `state_*.md` is gitignored. This is distinct from `final_prompts/` (the frozen prompt `charter.scale` runs at scale, line above).
+
 Subfolder READMEs (especially `pipeline/charter/scale/README.md` and `pipeline/charter/scale/AGENTS.md`) carry the detail — prefer updating those over bloating top-level docs.
 
 ## Some guidelines for our collaboration:
