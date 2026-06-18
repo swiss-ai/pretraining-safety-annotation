@@ -41,7 +41,39 @@ def _charter_elements(row: dict) -> list[str]:
 
 
 _BRACKET_RE = re.compile(r"\[[^\]]*\]")
+_SECTION_RE = re.compile(r"^###\s+(\d+\.\d+)\s+(.*)$")
 _lang_seeded = False
+
+
+def parse_charter_sections(charter_text: str, max_chars: int = 700) -> dict[str, str]:
+    """Map each ``### X.Y Title`` value-spec section to its (capped) text.
+
+    Used for the dashboard's citation hover tooltips: a reflection's ``[X.Y]``
+    resolves to ``sections["X.Y"]``.
+    """
+    sections: dict[str, str] = {}
+    cur_id: str | None = None
+    cur_title = ""
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not cur_id:
+            return
+        text = f"{cur_id} {cur_title}".strip()
+        body = "\n".join(buf).strip()
+        if body:
+            text += "\n" + body
+        sections[cur_id] = text[:max_chars].rstrip() + ("…" if len(text) > max_chars else "")
+
+    for line in charter_text.splitlines():
+        m = _SECTION_RE.match(line)
+        if m or line.startswith("## ") or line.startswith("# "):
+            flush()
+            cur_id, cur_title, buf = (m.group(1), m.group(2).strip(), []) if m else (None, "", [])
+        elif cur_id:
+            buf.append(line)
+    flush()
+    return sections
 
 
 def _detect_lang(text: str) -> str | None:
@@ -146,10 +178,23 @@ def write_cards(
     run_ids: list[str], out_path: Path | str, *, eval_dir: Path | str | None = None
 ) -> int:
     """Build cards and write the portable ``cards.json`` the Space app reads."""
+    from pipeline.config import load_config
+
     cards = build_cards(run_ids, eval_dir=eval_dir)
+    charter_path = Path(load_config().charter_path)
+    sections = (
+        parse_charter_sections(charter_path.read_text(encoding="utf-8"))
+        if charter_path.exists()
+        else {}
+    )
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"runs": list(run_ids), "n_cards": len(cards), "cards": cards}
+    payload = {
+        "runs": list(run_ids),
+        "n_cards": len(cards),
+        "charter_sections": sections,
+        "cards": cards,
+    }
     out_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return len(cards)
 

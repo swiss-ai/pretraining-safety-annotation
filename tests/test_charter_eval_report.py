@@ -131,6 +131,8 @@ def test_write_cards_payload(tmp_path):
     assert payload["n_cards"] == 2
     assert payload["runs"] == ["run1"]
     assert len(payload["cards"]) == 2
+    # Charter sections are baked in for the dashboard's citation tooltips.
+    assert "2.1" in payload["charter_sections"]
 
 
 def test_build_cards_skips_runs_without_judgments(tmp_path):
@@ -181,8 +183,12 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert len(idxs) == 1
     meta, doc, refl, judge_md, poslabel = app.render(idxs, 0)
     assert poslabel == "1 / 1"
-    assert "reflection injected here" in doc
+    # Doc shows ONLY up to the reflection point (i1 reflection_point=20), no after-text.
+    assert "reflection injected here" not in doc
+    assert doc == app.CARDS[idxs[0]]["text"][:20]
     assert "ACCEPT" in judge_md
+    # Reflection is HTML with citation hover tooltips drawn from the value spec.
+    assert 'class="cite"' in refl and "[2.1]" in refl
 
     # Filter by model alias (not the full alias__prompt stem).
     assert app.CARDS[idxs[0]]["gen_model"] == "gen1"

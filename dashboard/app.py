@@ -1,10 +1,10 @@
 """Apertus Pretraining Safety Annotation Dashboard — a single-page HF Space.
 
-Shows charter.eval generations + judgings as cards (one document + its
-first-person reflection + the judge's rubric scores and accept/reject verdict)
-and collects a binary 👍/👎 + reason per card. Feedback is appended to a local
-JSONL and synced to a HF dataset via ``CommitScheduler`` (token lives as a Space
-secret), so the page itself holds no credentials.
+Shows charter.eval generations + judgings as cards (the document up to the
+reflection point + the first-person reflection + the judge's rubric scores and
+accept/reject verdict) and collects a binary 👍/👎 + reason per card. Feedback is
+appended to a local JSONL and synced to a HF dataset via ``CommitScheduler``
+(token lives as a Space secret), so the page itself holds no credentials.
 
 Data is a portable ``data/cards.json`` produced by
 ``python -m pipeline.charter.eval report``. This app never imports ``pipeline``.
@@ -18,8 +18,10 @@ Env:
 from __future__ import annotations
 
 import datetime
+import html
 import json
 import os
+import re
 from pathlib import Path
 
 import gradio as gr
@@ -33,13 +35,15 @@ FEEDBACK_DATASET = os.environ.get("FEEDBACK_DATASET", "")
 FLUSH_MINUTES = float(os.environ.get("FEEDBACK_FLUSH_MINUTES", "5"))
 
 ALL = "(all)"
+_CITE_RE = re.compile(r"\[(\d+\.\d+(?:\s*,\s*\d+\.\d+)*)\]")
 
 
-def load_cards() -> list[dict]:
-    """Load the portable cards.json snapshot (empty list if not built yet)."""
+def load_payload() -> tuple[list[dict], dict]:
+    """Load cards + charter sections from the portable snapshot."""
     if not CARDS_PATH.exists():
-        return []
-    return json.loads(CARDS_PATH.read_text(encoding="utf-8")).get("cards", [])
+        return [], {}
+    d = json.loads(CARDS_PATH.read_text(encoding="utf-8"))
+    return d.get("cards", []), d.get("charter_sections", {})
 
 
 def _make_scheduler():
@@ -58,7 +62,7 @@ def _make_scheduler():
     )
 
 
-CARDS = load_cards()
+CARDS, CHARTER_SECTIONS = load_payload()
 SCHEDULER = _make_scheduler()
 
 
@@ -102,20 +106,36 @@ def filter_indices(
 
 
 def _doc_value(c: dict) -> str:
+    """Only the text up to the reflection point — what the model actually saw."""
     text = c.get("text") or ""
     rp = c.get("reflection_point")
-    if isinstance(rp, int) and 0 < rp < len(text):
-        return f"{text[:rp]}\n\n⟿⟿⟿ reflection injected here ⟿⟿⟿\n\n{text[rp:]}"
+    if isinstance(rp, int) and 0 < rp <= len(text):
+        return text[:rp]
     return text
 
 
-def _refl_md(c: dict) -> str:
-    cites = " ".join(c.get("charter_elements") or []) or "—"
-    parts = [f"### Reflection (first-person)\n{c.get('reflection_1p') or '_(none)_'}",
-             f"\n**Charter citations:** {cites}"]
+def _wrap_citations(text: str) -> str:
+    """HTML-escape text and wrap each [X.Y] citation in a span with the section as a tooltip."""
+    esc = html.escape(text)
+
+    def repl(m: re.Match) -> str:
+        ids = [s.strip() for s in m.group(1).split(",")]
+        tip = "\n\n".join(CHARTER_SECTIONS.get(i, i) for i in ids)
+        return f'<span class="cite" title="{html.escape(tip, quote=True)}">[{m.group(1)}]</span>'
+
+    return _CITE_RE.sub(repl, esc)
+
+
+def _refl_html(c: dict) -> str:
+    refl = _wrap_citations(c.get("reflection_1p") or "(none)")
+    cites = _wrap_citations(" ".join(c.get("charter_elements") or []) or "—")
+    out = [
+        f"<h3 style='margin:.3em 0'>Reflection (first-person)</h3><p>{refl}</p>",
+        f"<p><b>Charter citations:</b> {cites}</p>",
+    ]
     if c.get("analysis"):
-        parts.append(f"\n**Analysis:** {c['analysis']}")
-    return "\n".join(parts)
+        out.append(f"<p><b>Analysis:</b> {html.escape(c['analysis'])}</p>")
+    return "".join(out)
 
 
 def _judge_md(c: dict) -> str:
@@ -152,7 +172,7 @@ def render(idxs: list[int], pos: int):
         f"**model `{c.get('gen_model')}`**  ·  prompt `{c.get('gen_prompt') or '—'}`  ·  "
         f"lang `{c.get('language')}`  ·  safety `{c.get('safety_score')}`  ·  {answer}"
     )
-    return meta, _doc_value(c), _refl_md(c), _judge_md(c), f"{pos + 1} / {len(idxs)}"
+    return meta, _doc_value(c), _refl_html(c), _judge_md(c), f"{pos + 1} / {len(idxs)}"
 
 
 def apply_filters(gen, judge, lang, decision, safety, answer):
@@ -199,75 +219,89 @@ def submit_feedback(idxs, pos, reviewer, verdict, reason):
 
 # ----------------------------------------------------------------- layout
 
+_CSS = ".cite{border-bottom:1px dotted #888;cursor:help}"
+
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(title=TITLE) as demo:
+        gr.HTML(f"<style>{_CSS}</style>")
         gr.Markdown(f"# {TITLE}")
-        gr.Markdown(
-            f"{len(CARDS)} generation/judgment cards. Filter, read, and leave a "
-            "👍/👎 + reason — feedback syncs to a HF dataset for adapting the judge."
-        )
 
-        with gr.Row():
-            gen = gr.Dropdown(_options("gen_model"), value=ALL, label="Model")
-            judge = gr.Dropdown(_options("judge_model"), value=ALL, label="Judge model")
-            lang = gr.Dropdown(_options("language"), value=ALL, label="Language")
-            decision = gr.Dropdown(
-                _options("judge_decision"), value=ALL, label="Judge verdict"
+        # Name gate: the reviewer identifies themselves once, up front.
+        with gr.Column(visible=True) as gate:
+            gr.Markdown("Enter your name to start reviewing.")
+            name_in = gr.Textbox(label="Your name", placeholder="e.g. julian")
+            start_btn = gr.Button("Start reviewing", variant="primary")
+            gate_msg = gr.Markdown()
+
+        with gr.Column(visible=False) as main_panel:
+            who_md = gr.Markdown()
+            with gr.Row(elem_id="filters"):
+                gen = gr.Dropdown(_options("gen_model"), value=ALL, label="Model", min_width=120)
+                judge = gr.Dropdown(_options("judge_model"), value=ALL, label="Judge", min_width=120)
+                lang = gr.Dropdown(_options("language"), value=ALL, label="Language", min_width=110)
+                decision = gr.Dropdown(_options("judge_decision"), value=ALL, label="Verdict", min_width=110)
+                safety = gr.Dropdown(_options("safety_score"), value=ALL, label="Safety", min_width=90)
+                answer = gr.Dropdown(ANSWER_LANG_OPTS, value=ALL, label="Answer lang", min_width=130)
+
+            with gr.Row():
+                prev_btn = gr.Button("◀", size="sm", scale=0, min_width=56)
+                poslabel = gr.Markdown("0 / 0")
+                next_btn = gr.Button("▶", size="sm", scale=0, min_width=56)
+
+            meta_md = gr.Markdown()
+            doc_box = gr.Textbox(
+                label="Document (up to the reflection point — what the model saw)",
+                interactive=False, lines=14, max_lines=24,
             )
-            safety = gr.Dropdown(_options("safety_score"), value=ALL, label="Safety")
-            answer = gr.Dropdown(ANSWER_LANG_OPTS, value=ALL, label="Answer language")
+            refl_html = gr.HTML()
 
-        with gr.Row():
-            prev_btn = gr.Button("◀ Prev")
-            poslabel = gr.Markdown("0 / 0")
-            next_btn = gr.Button("Next ▶")
+            gr.Markdown("### Your feedback")
+            verdict = gr.Radio(["👍 helpful", "👎 not helpful"], label="Verdict")
+            reason = gr.Textbox(label="Reason (optional)", lines=2)
+            submit_btn = gr.Button("Submit feedback", variant="primary")
+            status = gr.Markdown()
 
-        meta_md = gr.Markdown()
-        doc_box = gr.Textbox(label="Document", interactive=False, lines=16, max_lines=30)
-        refl_md = gr.Markdown()
+            # Judge's call is hidden by default so it doesn't anchor the reviewer.
+            with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
+                judge_md = gr.Markdown()
 
-        gr.Markdown("### Your feedback")
-        with gr.Row():
-            reviewer = gr.Textbox(label="Your name", placeholder="anon", scale=1)
-            verdict = gr.Radio(["👍 helpful", "👎 not helpful"], label="Verdict", scale=1)
-        reason = gr.Textbox(label="Reason (optional)", lines=2)
-        submit_btn = gr.Button("Submit feedback", variant="primary")
-        status = gr.Markdown()
-
-        # Judge's call is hidden by default so it doesn't anchor the reviewer.
-        with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
-            judge_md = gr.Markdown()
-
+        reviewer_state = gr.State("")
         idxs_state = gr.State(list(range(len(CARDS))))
         pos_state = gr.State(0)
 
+        def start(name):
+            nm = (name or "").strip()
+            if not nm:
+                return "", gr.update(), gr.update(), "Please enter your name.", ""
+            return nm, gr.update(visible=False), gr.update(visible=True), "", f"Reviewing as **{nm}**"
+
+        start_btn.click(
+            start,
+            inputs=[name_in],
+            outputs=[reviewer_state, gate, main_panel, gate_msg, who_md],
+        )
+
         filters = [gen, judge, lang, decision, safety, answer]
-        view_out = [meta_md, doc_box, refl_md, judge_md, poslabel, status]
+        view_out = [meta_md, doc_box, refl_html, judge_md, poslabel, status]
         for f in filters:
-            f.change(
-                apply_filters,
-                inputs=filters,
-                outputs=[idxs_state, pos_state, *view_out],
-            )
+            f.change(apply_filters, inputs=filters, outputs=[idxs_state, pos_state, *view_out])
         prev_btn.click(
             lambda i, p: step(i, p, -1),
-            inputs=[idxs_state, pos_state],
-            outputs=[pos_state, *view_out],
+            inputs=[idxs_state, pos_state], outputs=[pos_state, *view_out],
         )
         next_btn.click(
             lambda i, p: step(i, p, 1),
-            inputs=[idxs_state, pos_state],
-            outputs=[pos_state, *view_out],
+            inputs=[idxs_state, pos_state], outputs=[pos_state, *view_out],
         )
         submit_btn.click(
             submit_feedback,
-            inputs=[idxs_state, pos_state, reviewer, verdict, reason],
+            inputs=[idxs_state, pos_state, reviewer_state, verdict, reason],
             outputs=[status],
         )
         demo.load(
             lambda: render(list(range(len(CARDS))), 0),
-            outputs=[meta_md, doc_box, refl_md, judge_md, poslabel],
+            outputs=[meta_md, doc_box, refl_html, judge_md, poslabel],
         )
     return demo
 
