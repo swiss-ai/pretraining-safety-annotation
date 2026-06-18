@@ -64,9 +64,19 @@ def _make_scheduler():
 
 
 CARDS, CHARTER_SECTIONS = load_payload()
-# Shuffle by default so cards aren't grouped by model / run / language while reviewing.
-random.Random(int(os.environ.get("SHUFFLE_SEED", "42"))).shuffle(CARDS)
 SCHEDULER = _make_scheduler()
+
+
+def annotator_order(name: str) -> list[int]:
+    """A per-annotator shuffled order over all cards (deterministic by name).
+
+    Each annotator gets their own order so reviewers cover different reflections
+    (and the cards aren't grouped by model / run / language).
+    """
+    salt = os.environ.get("SHUFFLE_SALT", "annotator")
+    order = list(range(len(CARDS)))
+    random.Random(f"{salt}::{name}").shuffle(order)
+    return order
 
 
 def _options(field: str) -> list[str]:
@@ -78,31 +88,35 @@ ANSWER_LANG_OPTS = [ALL, "in source language", "English fallback", "undetected"]
 _ANSWER_MATCH = {"in source language": True, "English fallback": False, "undetected": None}
 
 
-def filter_indices(
-    gen: str, judge: str, lang: str, decision: str, safety: str, answer: str = ALL
-) -> list[int]:
-    """Indices of cards matching the active filters (in card order).
+def _passes(c: dict, gen: str, judge: str, lang: str, decision: str, safety: str, answer: str) -> bool:
+    """Whether one card matches the active filters.
 
     The generator/judge filters key on the *model* alias (``gen_model`` /
     ``judge_model``), not the full ``alias__prompt`` stem. ``answer`` filters on
     whether the reflection was written in the source language (``in_language``).
     """
-    out: list[int] = []
-    for i, c in enumerate(CARDS):
-        if gen != ALL and c.get("gen_model") != gen:
-            continue
-        if judge != ALL and c.get("judge_model") != judge:
-            continue
-        if lang != ALL and (c.get("language") or "—") != lang:
-            continue
-        if decision != ALL and (c.get("judge_decision") or "—") != decision:
-            continue
-        if safety != ALL and str(c.get("safety_score")) != safety:
-            continue
-        if answer != ALL and c.get("in_language") is not _ANSWER_MATCH[answer]:
-            continue
-        out.append(i)
-    return out
+    if gen != ALL and c.get("gen_model") != gen:
+        return False
+    if judge != ALL and c.get("judge_model") != judge:
+        return False
+    if lang != ALL and (c.get("language") or "—") != lang:
+        return False
+    if decision != ALL and (c.get("judge_decision") or "—") != decision:
+        return False
+    if safety != ALL and str(c.get("safety_score")) != safety:
+        return False
+    if answer != ALL and c.get("in_language") is not _ANSWER_MATCH[answer]:
+        return False
+    return True
+
+
+def filter_indices(
+    gen: str, judge: str, lang: str, decision: str, safety: str,
+    answer: str = ALL, order: list[int] | None = None,
+) -> list[int]:
+    """Card indices matching the filters, in ``order`` (default: natural order)."""
+    seq = range(len(CARDS)) if order is None else order
+    return [i for i in seq if _passes(CARDS[i], gen, judge, lang, decision, safety, answer)]
 
 
 # ----------------------------------------------------------------- rendering
@@ -184,8 +198,8 @@ def render(idxs: list[int], pos: int):
     return meta, _doc_value(c), _refl_html(c), _judge_md(c), f"{pos + 1} / {len(idxs)}"
 
 
-def apply_filters(gen, judge, lang, decision, safety, answer):
-    idxs = filter_indices(gen, judge, lang, decision, safety, answer)
+def apply_filters(order, gen, judge, lang, decision, safety, answer):
+    idxs = filter_indices(gen, judge, lang, decision, safety, answer, order=order)
     meta, doc, refl, judge_md, poslabel = render(idxs, 0)
     return idxs, 0, meta, doc, refl, judge_md, poslabel, ""
 
@@ -284,36 +298,52 @@ def build_demo() -> gr.Blocks:
             )
             refl_html = gr.HTML()
 
+            # Judge's call is hidden by default so it doesn't anchor the reviewer;
+            # sits just before the feedback panel.
+            with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
+                judge_md = gr.Markdown()
+
             gr.Markdown("### Your feedback")
             verdict = gr.Radio(["✅ accept", "❌ reject"], label="Your verdict")
             reason = gr.Textbox(label="Reason (optional)", lines=2)
             submit_btn = gr.Button("Submit feedback", variant="primary")
             status = gr.Markdown()
 
-            # Judge's call is hidden by default so it doesn't anchor the reviewer.
-            with gr.Accordion("Reveal judge verdict (score · decision · reasoning)", open=False):
-                judge_md = gr.Markdown()
-
         reviewer_state = gr.State("")
+        order_state = gr.State(list(range(len(CARDS))))
         idxs_state = gr.State(list(range(len(CARDS))))
         pos_state = gr.State(0)
 
+        view_out = [meta_md, doc_box, refl_html, judge_md, poslabel, status]
+
         def start(name):
             nm = (name or "").strip()
+            noop = gr.update()
             if not nm:
-                return "", gr.update(), gr.update(), "Please enter your name.", ""
-            return nm, gr.update(visible=False), gr.update(visible=True), "", f"Reviewing as **{nm}**"
+                # gate, main, gate_msg, reviewer, order, idxs, pos, + 5 view comps = 12
+                return (noop, noop, "Please enter your name.") + (noop,) * 9
+            order = annotator_order(nm)
+            view = render(order, 0)
+            return (
+                gr.update(visible=False), gr.update(visible=True),
+                f"Reviewing as **{nm}** — you have your own card order",
+                nm, order, order, 0, *view,
+            )
 
         start_btn.click(
             start,
             inputs=[name_in],
-            outputs=[reviewer_state, gate, main_panel, gate_msg, who_md],
+            outputs=[gate, main_panel, gate_msg,
+                     reviewer_state, order_state, idxs_state, pos_state, *view_out[:-1]],
         )
 
         filters = [gen, judge, lang, decision, safety, answer]
-        view_out = [meta_md, doc_box, refl_html, judge_md, poslabel, status]
         for f in filters:
-            f.change(apply_filters, inputs=filters, outputs=[idxs_state, pos_state, *view_out])
+            f.change(
+                apply_filters,
+                inputs=[order_state, *filters],
+                outputs=[idxs_state, pos_state, *view_out],
+            )
         prev_btn.click(
             lambda i, p: step(i, p, -1),
             inputs=[idxs_state, pos_state], outputs=[pos_state, *view_out],

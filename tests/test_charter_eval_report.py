@@ -220,3 +220,16 @@ def test_app_renders_and_collects_feedback(tmp_path):
     assert written[0]["item_id"] == "i1"
     assert written[0]["reviewer"] == "alice"
     assert written[0]["judge_decision"] == "accept"
+
+
+def test_annotator_order_per_name(tmp_path):
+    _make_run(tmp_path)
+    cards_path = tmp_path / "cards.json"
+    write_cards(["run1"], cards_path, eval_dir=tmp_path)
+    app = _load_app(tmp_path, cards_path)
+    # Deterministic per name, and a full permutation over all cards.
+    assert app.annotator_order("alice") == app.annotator_order("alice")
+    assert sorted(app.annotator_order("alice")) == list(range(len(app.CARDS)))
+    # filter_indices returns matches in the supplied per-annotator order.
+    assert app.filter_indices("(all)", "(all)", "(all)", "(all)", "(all)", order=[1, 0]) == [1, 0]
+    assert app.filter_indices("(all)", "(all)", "(all)", "(all)", "(all)", order=[0, 1]) == [0, 1]
