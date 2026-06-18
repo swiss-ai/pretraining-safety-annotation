@@ -131,7 +131,7 @@ final_prompts/qwen3.5-35b-a3b/
 └── generator_reflection_v7.md             # frozen charter.scale reflection prompt
 ```
 
-Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `data/pipeline/prompts/{alias}/`.
+Per-model versioned prompts (one dir per model alias, written by the improver loop) live at `pipeline/prompts/models/{alias}/`.
 
 ## Configuration
 

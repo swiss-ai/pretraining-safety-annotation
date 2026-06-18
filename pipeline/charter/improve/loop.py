@@ -292,7 +292,7 @@ Do NOT waste tool calls on these commands — they will return empty or irreleva
 
     # Human notes: optional operator guidance, injected if present.
     # - Global (role-scoped):  pipeline/prompts/human_notes_<role>.md
-    # - Per-model override:    data/pipeline/prompts/<alias>/human_notes_<role>.md
+    # - Per-model override:    pipeline/prompts/models/<alias>/human_notes_<role>.md
     # Both are loaded if they exist; neither is required. Contents are shown
     # near the top of the prompt under a "Human notes" section.
     human_notes_parts: list[str] = []

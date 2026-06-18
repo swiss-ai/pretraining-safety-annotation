@@ -24,9 +24,16 @@ venv/
 *.parquet
 *.bin
 
-# Generated outputs
+# Generated outputs: ignore log dirs, except the tracked judge-optim notes
 **/logs/
+!/logs/
+/logs/*
+!/logs/judge_optim/
 throughput_estimations/results/
+
+# Transient improver state in the tracked per-model prompt tree
+# (keep versioned prompts and human_notes trackable)
+pipeline/prompts/models/*/state_*.md
 
 # Claude Code
 .claude/

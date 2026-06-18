@@ -238,6 +238,13 @@ def _install_common_patches(monkeypatch, tmp_path, n_items_default=5):
         "pipeline.charter.eval.eval_judges.resolve_prompt_path",
         _fake_resolve,
     )
+    # The metadata path (_candidate_metadata in eval_generators) calls the
+    # real pipeline.config.resolve_prompt_path directly, which would init
+    # stub prompt dirs under the now-tracked PROMPTS_DIR. Redirect PROMPTS_DIR
+    # to a tmp dir so that side effect cannot pollute the repo.
+    import pipeline.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "PROMPTS_DIR", prompts_dir)
     return prompts_dir
 
 

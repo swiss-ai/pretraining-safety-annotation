@@ -12,7 +12,7 @@ CONFIG_YAML_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 DATA_DIR = PROJECT_ROOT / "data"
 PIPELINE_DATA_DIR = DATA_DIR / "pipeline"
 ANNOTATION_DATA_DIR = DATA_DIR / "annotation"
-PROMPTS_DIR = PIPELINE_DATA_DIR / "prompts"
+PROMPTS_DIR = Path(__file__).parent / "prompts" / "models"
 _INIT_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
@@ -381,7 +381,7 @@ _EXPLICIT_VERSION_RE = re.compile(
 def resolve_prompt_path(filename: str, alias: str) -> Path:
     """Resolve a prompt filename within the model-specific directory.
 
-    Prompts live at data/pipeline/prompts/{alias}/{filename}. If the
+    Prompts live at pipeline/prompts/models/{alias}/{filename}. If the
     model directory doesn't exist yet AND we're being asked for a
     `_latest.md` flow, initializes it from init templates.
 

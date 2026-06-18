@@ -122,7 +122,7 @@ its own prompt. The per-model version trails show the work:
 
 Each `generator_reflection_vN.md` is model-specific. The three `v7` files above
 are different prompts with different content (distinct SHA-256), not one shared
-file. Per-model prompts live in `data/pipeline/prompts/{alias}/`. That is why the
+file. Per-model prompts live in `pipeline/prompts/models/{alias}/`. That is why the
 benchmarking runs each model on its own prompt rather than a single shared one.
 
 ## Stage 4: cross-model benchmarking (`charter.eval`)
@@ -208,7 +208,7 @@ uv run python pipeline/assets/model_selection/make_plots.py
 | What | Where |
 |---|---|
 | Human seed reviews and judge-human correlations | annotation backup `storage.db` (`reviews`, `judge_correlations`); repo `BACKUP_REPO` |
-| Judge calibration and per-model prompt optimization | `pipeline/charter/improve/`; per-model prompts in `data/pipeline/prompts/{alias}/` |
+| Judge calibration and per-model prompt optimization | `pipeline/charter/improve/`; per-model prompts in `pipeline/prompts/models/{alias}/` |
 | Cross-model eval (generations and Kimi-K2.5 judgments) | `data/pipeline/charter_eval/ref_v3/`, `ref_v4_qwen/` |
 | Ranking logic (`mean_aggregate`, accept-by-safety, vs-human) | `pipeline/charter/eval/rank.py` |
 | Throughput and GPU-h benchmarks and SGLang tuning | `throughput_estimations/README.md` (see git history) |
