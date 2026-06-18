@@ -48,6 +48,8 @@ _SAMPLING_DEFAULTS: list[tuple[str, dict[str, float | int]]] = [
     ),
     # Qwen3 thinking: t=0.6, top_p=0.95, top_k=20
     ("qwen3", {"temperature": 0.6, "top_p": 0.95, "top_k": 20}),
+    # Gemma-4 (4-31b, 4-26b-a4b): model generation_config default = t=1.0, top_p=0.95, top_k=64
+    ("gemma", {"temperature": 1.0, "top_p": 0.95, "top_k": 64}),
     # SmolLM3: t=0.6, top_p=0.95
     ("smollm3", {"temperature": 0.6, "top_p": 0.95}),
     # Kimi: t=0.6

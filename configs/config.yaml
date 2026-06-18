@@ -165,6 +165,10 @@ charter:
         endpoint: https://openrouter.ai/api/v1
         thinking: true
         prompt_reflection: generator_reflection_v6.md
+        sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 64
       - alias: gemma-4-26b-a4b
         api_name: google/gemma-4-26b-a4b-it
         hf_slug: google/gemma-4-26b-a4b-it
@@ -172,6 +176,10 @@ charter:
         endpoint: https://openrouter.ai/api/v1
         thinking: true
         prompt_reflection: generator_reflection_v5.md
+        sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 64
       # - alias: nemotron-3-super-120b-a12b
       #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
       #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
