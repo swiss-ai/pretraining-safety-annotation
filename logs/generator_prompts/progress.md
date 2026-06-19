@@ -182,12 +182,32 @@ config). Live judge tag rotated -yhzm→**-cXND** (committed `7e7486f`).
     English-inert. English NOT degraded.
   - Net: v2 (under-reading) + v3 (language) compound — fw2 the big win, English held.
 
-### Status / handoff (2026-06-19, fw2)
-- **Best qwen3.6-35b prompt = `generator_reflection_v3.md`** (commits v2 `aa2a65c` + v3 `1ef7c40`).
-  dclm ~88% (variance band) / fw2 79.3%. config.yaml still points qwen3.6-35b at v1 — bump to `_v3.md`
-  to make it the default.
-- Remaining fw2 headroom: jpn weakest (70%); residual under-reads in cmn/jpn; the rest is the temp-1.0
-  variance tail. Next levers low-yield per the dclm experience (severity-routing/openers both reverted there).
+### Per-language injection (code feature, commit `99a1233`) — additional fw2 win, English untouched
+Implemented per-language reflection-language injection in `generate_batch` (`inject_language` param;
+threaded via `CandidateModel.inject_language` → `eval_generators`). Appends a per-language directive as
+a final **user** message after the document (recency), keyed off the item language tag:
+- deu/fra/ita/rus/jpn → in-language directive (primes target script, forbids English fallback);
+- **cmn → defer-to-body** (the cmn bench subset is genuinely contaminated: 17/32 bodies are NOT Chinese
+  — SEO/mixed CJK — so naming "Chinese" would force the wrong language);
+- **en → no injection** (generation byte-identical → English cannot regress, by construction).
+Tests added (directive map; message appended for non-English only; absent when off). Live judge tag
+auto-read from config in the harness.
+
+**Full-200 (v3 → v3+inject):**
+- fw2-multi: accept 79.3%→**80.3%**, mean 4.217→**4.309**, relevance 4.303→**4.455**, cg 4.035→4.152,
+  voice 4.197→4.293, **wrong-language 2→1/198**. (Headline accept +1pp is variance-limited near threshold;
+  the broad per-axis lift, esp. relevance +0.15, is the real gain.)
+- dclm-en: **89.9%** / mean 4.465 — English unchanged (en gets no injection). Also settles that v3's
+  earlier dclm 86.5% was a low variance draw; English is ~89–90%.
+
+### Status / handoff (2026-06-19, fw2 + injection)
+- **Best qwen3.6-35b config = `generator_reflection_v3.md` + `inject_language: true`** (prompt commits
+  v2 `aa2a65c`, v3 `1ef7c40`; injection feature `99a1233`). **dclm 89.9% / fw2 80.3%** (from fw2 62.5%).
+- **config.yaml NOT changed** (live/user file): to make this the default for the qwen3.6-35b candidate set
+  `prompt_reflection: generator_reflection_v3.md` and `inject_language: true`.
+- Remaining fw2 headroom: jpn weakest, residual cmn (contaminated subset) + temp-1.0 variance tail.
+  Further generic prompt levers low-yield (dclm severity-routing/openers both reverted); future gains likely
+  need per-language *quality* directives (the injection hook now makes that easy) or a cleaner cmn bench.
 
 ### Multilingual (fw2) — starting
 - All current prompts already carry a `## Language` section ("write reflection_1p in the SAME language as
