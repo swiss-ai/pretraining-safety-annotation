@@ -106,3 +106,53 @@ class TestQuotedKeyLeaks:
         })
         with pytest.raises(AssertionError, match="reflection_1p"):
             parse_generation(raw, required_fields=REFLECTION_FIELDS)
+
+
+class TestJsonRepairFallback:
+    """The last-resort json_repair pass recovers two malformations seen in
+    non-English (German) generations, without altering well-formed responses.
+    """
+
+    def test_unescaped_inner_quote_recovered(self):
+        # qwen3.6 on `09-deu`: opened a German quote with `„` but closed it with
+        # an unescaped ASCII `"`, terminating the JSON string mid-value. Strict
+        # extraction raises; the fallback keeps the full value (incl. text after
+        # the stray quote).
+        raw = '{"analysis": "ok", "reflection_1p": "Ich erkenne „eine These" [3.3] im Text."}'
+        out = parse_generation(raw, required_fields=REFLECTION_FIELDS)
+        assert "Text" in out["reflection_1p"]
+
+    def test_stray_brace_split_recovered(self):
+        # gemma-4-31b on `08-deu`: a stray `{` split the object and the whole
+        # thing was wrapped in a markdown fence, so strict extraction grabbed
+        # only the nested half and dropped `analysis`. The fallback recovers both.
+        raw = (
+            "```json\n"
+            '{"analysis": "Step 3: Citations [1.1].", \n'
+            '{"reflection_1p": "Die Erwähnung [1.1, 1.3] des Leids."}\n'
+            "```"
+        )
+        out = parse_generation(raw, required_fields=REFLECTION_FIELDS)
+        assert "Citations" in out["analysis"]
+        assert "Erwähnung" in out["reflection_1p"]
+
+    def test_repair_not_reached_for_clean_input(self, monkeypatch):
+        # No-degradation lock: a well-formed (or merely fenced) response must
+        # parse via the strict strategies and NEVER touch the repair fallback.
+        def _boom(*a, **k):
+            raise AssertionError("json_repair fallback must not be reached for well-formed input")
+
+        monkeypatch.setattr("pipeline.api._repair_with_json_repair", _boom)
+        monkeypatch.setattr("pipeline.generation._repair_with_json_repair", _boom)
+
+        clean = _wrap({"analysis": "a", "reflection_1p": "Clean reflection."})
+        assert parse_generation(clean, required_fields=REFLECTION_FIELDS)["reflection_1p"] == "Clean reflection."
+        fenced = "```json\n" + _wrap({"analysis": "a", "reflection_1p": "Fenced."}) + "\n```"
+        assert parse_generation(fenced, required_fields=REFLECTION_FIELDS)["reflection_1p"] == "Fenced."
+
+    def test_truly_missing_field_still_raises(self):
+        # The fallback recovers structure, it does not fabricate content: a
+        # response with no `analysis` anywhere still fails (→ retry).
+        raw = _wrap({"reflection_1p": "Only a reflection, no analysis present."})
+        with pytest.raises(AssertionError, match="analysis"):
+            parse_generation(raw, required_fields=REFLECTION_FIELDS)

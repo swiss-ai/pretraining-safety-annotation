@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from pipeline.api import extract_json
+from pipeline.api import extract_json, _repair_with_json_repair
 
 # Task instruction appended to the user message. Placed at the end of the user
 # content so the system prompt prefix and before-RP text prefix are shared
@@ -93,17 +93,12 @@ def _assert_no_key_leakage(parsed: dict, required_fields: set[str]) -> None:
         )
 
 
-def parse_generation(
-    raw: str,
-    required_fields: set[str] | None = None,
-) -> dict:
-    """Parse generator JSON output into structured fields.
+def _normalize_payload(parsed: dict) -> dict:
+    """Unwrap a single-key object wrapper and map known field aliases.
 
-    Extracts JSON from response, handling prose before/after JSON and code fences.
-    Normalises known alias variants to the canonical schema. The default
-    *required_fields* covers the reflection schema (analysis + reflection_1p).
+    Shared by the strict-extract path and the lenient repair fallback so both
+    apply the same normalisation before field validation.
     """
-    parsed = extract_json(raw)
     # Unwrap single-key wrappers (e.g. {"key": {...actual...}})
     if len(parsed) == 1:
         sole_value = next(iter(parsed.values()))
@@ -117,11 +112,38 @@ def parse_generation(
             if variant in parsed and canonical not in parsed:
                 parsed[canonical] = parsed.pop(variant)
                 changed = True
+    return parsed
+
+
+def parse_generation(
+    raw: str,
+    required_fields: set[str] | None = None,
+) -> dict:
+    """Parse generator JSON output into structured fields.
+
+    Extracts JSON from response, handling prose before/after JSON and code fences.
+    Normalises known alias variants to the canonical schema. The default
+    *required_fields* covers the reflection schema (analysis + reflection_1p).
+    """
     if required_fields is None:
         required_fields = {
             "analysis",
             "reflection_1p",
         }
+
+    parsed = _normalize_payload(extract_json(raw))
+    if required_fields - set(parsed.keys()):
+        # extract_json returned a structurally-incomplete object: a stray
+        # duplicated brace split the payload (e.g. `{"analysis":..., {"reflection_1p":...}}`)
+        # and only one half was recovered. Try a lenient whole-string repair
+        # before giving up. Only reached when strict extraction already lost a
+        # required field — i.e. a case that currently hard-fails — so a
+        # well-formed response is never re-routed through repair.
+        repaired = _repair_with_json_repair(raw)
+        if repaired is not None:
+            candidate = _normalize_payload(repaired)
+            if not (required_fields - set(candidate.keys())):
+                parsed = candidate
 
     missing = required_fields - set(parsed.keys())
     assert not missing, (

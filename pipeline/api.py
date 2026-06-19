@@ -14,6 +14,7 @@ import random
 import re
 import sys
 
+import json_repair
 import openai
 from tqdm.asyncio import tqdm_asyncio
 
@@ -371,11 +372,34 @@ def extract_json(raw: str) -> dict:
         if result is not None:
             return result
 
+    # 8. Last resort: a lenient repair pass (json_repair). Handles malformations
+    # the strict strategies above can't — an unescaped ASCII quote closing a
+    # typographic quote in non-English text (e.g. German „…"), a stray duplicated
+    # brace that splits the object, trailing fences. Only reached once every
+    # strict strategy has failed, so well-formed responses are never altered.
+    repaired_obj = _repair_with_json_repair(text)
+    if repaired_obj is not None:
+        logger.warning("extract_json: recovered malformed JSON via json_repair fallback")
+        return repaired_obj
+
     raise json.JSONDecodeError(
         f"No valid JSON object found in response ({len(raw)} chars)",
         raw[:200],
         0,
     )
+
+
+def _repair_with_json_repair(text: str) -> dict | None:
+    """Lenient last-resort parse via the ``json_repair`` library.
+
+    Returns a non-empty ``dict`` on success, else ``None`` (so the caller falls
+    through to a hard failure → retry). Field-presence/leakage validation stays
+    in ``parse_generation``; this only recovers a structurally-broken object.
+    """
+    obj = json_repair.loads(text)
+    if isinstance(obj, list):
+        obj = next((o for o in obj if isinstance(o, dict) and o), None)
+    return obj if isinstance(obj, dict) and obj else None
 
 
 _INVALID_BACKSLASH_ESCAPE_RE = re.compile(r'\\(?!["\\/]|u[0-9a-fA-F]{4})')
