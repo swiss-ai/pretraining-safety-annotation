@@ -288,3 +288,53 @@ at temp 1.0 — a generation-robustness issue, prompt-independent, consistent ac
 v5). To make v7 the default for the gemma-4-26b-a4b candidate set, set
 `prompt_reflection: generator_reflection_v7.md`. Full run dirs kept:
 `data/pipeline/charter_eval/g26_v6_full`, `g26_v7_full`.
+
+---
+
+## 2026-06-19 (cont.) — qwen3.6-35b: edge-cases → v6 (generalized routing) → v7 (length/style) + Apertus reflection cutoff
+
+### `edge-cases` bench + v4→v6 (routing fixes, leakage removed)
+Built a curated **`edge-cases`** bench (`pipeline/charter/eval/edge_cases_src/`): 23 hand-picked hard
+paragraphs × 7 langs (en + rus/cmn/deu/jpn/fra/ita) = 161 items, Opus-translated, annotated WHOLE
+(reflection after the full text). 3 Opus failure-mode agents on v4 (reports under
+`logs/generator_prompts/edge_cases/`) found genuine v4 faults: `[5.1]` mis-routing on factual war/history
+(→`[4.4]`/`[3.3]`), missed stakes on loaded-question / dismissed-discrimination / conspiracy patterns,
+facilitation-read-as-warning, repetitive voice — plus GLM-5.1 over-rejects (~⅓ of rejects are
+correct-primary-cite / missing-secondary; not tuned against).
+- **v5** = v4 + those fixes, but the first draft embedded near-verbatim edge phrases → **in-sample
+  leakage** (edge hit a bogus 98%). **v6** = v5 with the exact quotes stripped (generic patterns only).
+- **Paired eval, v6 vs v4 (swissai-native, same items):** dclm-en **flat 90.8% = 90.8%**; edge-cases
+  **81.9% → 87.5%** (+5.6, net +9 fixed). An earlier *unpaired* "−3 regression" was a sampling artifact
+  (the OpenRouter `gen200` baselines and swissai runs drew different 200-item samples). **v6 committed.**
+- gemma-4-31b line (v13) was drafted then **abandoned** (too expensive); its failure analysis kept as a
+  finding only.
+
+### Backend: qwen3.6-35b-a3b now on swissai
+`Qwen/Qwen3.6-35B-A3B-FP8-DnqH` @ `https://api.swissai.svc.cscs.ch/v1` (ephemeral tag — re-confirm) — use
+instead of OpenRouter (free + co-located with the GLM judge). v4 is **backend-stable** (swissai 90.4% ≈
+OpenRouter 90.5% on dclm), so OpenRouter baselines stay reusable. Runner gained
+`--api-name/--endpoint/--judge-api-name`; context capped at 32768 (swissai deployment limit). See memory
+`qwen36-35b-a3b-swissai-deployment`.
+
+### v7 = length + style caps (commit `5a31b7e`)
+~19% of v6 reflections exceed 256 Apertus tokens (median 156, max 589; fw2 worse, 24%). v7 = v6 +
+**"The reflection must not be longer than 200 tokens."** + an **em-dash ban**. A/B on 60 items where v6
+ran long (length only, no judge): reflections **>256 dropped 30/60 → 1/60**, mean 264 → 186;
+**em-dashes 27% of reflections → 0%** (clean kill). Soft length cap (not a hard ceiling — a true ceiling
+needs a `completion_max_tokens` clamp, with cutoff risk). **Length/style validated; quality not yet judged.**
+
+### Reflection-point policy → deterministic Apertus-token cutoff (commit `ba7c50e`)
+Replaced random reflection-point sampling (scale: char-space @8000; eval: SmolLM2 trunc @1920 + random)
+with: reflection placed after the first **`min(doc_tokens, 3800)` Apertus tokens** (tokenizer
+`swiss-ai/Apertus-70B-2509`), deterministic — `text[:rp]` is the whole doc if it fits, else its first
+3800 tokens. Applied to **charter.scale + eval benches**. 3-agent review (correctness/completeness/risk);
+fixes: scale completion-budget clamp (was `max_tokens=None` vs 24576 server context), item-pool
+`reflection_policy` cache key (old pools fail loudly on resume), `estimate.py` parity, scale docs. 101
+tests pass. **Flagged (not applied):** raise scale sglang `--context-length` 24576→32768 for thinking
+headroom (GPU/KV-cache cost — Julian's call).
+
+### 2k eval on the final setting (IN FLIGHT)
+`val3k_{dclm-en,fw2-multi}_v7` (note: "3k" is a misnomer — n=**2000**), prompt **v7**, **Apertus** cutoff,
+swissai DnqH gen + GLM-5.1 (`CWqJ`) judge, fresh run-ids (new cache guard). Reference: **old-policy** v6 2k
+dclm = **92.2%** (`sw2k_dclm-en_v6`; fw2 judging was correctly blocked by the new policy cache guard).
+v7-on-final-setting accept/mean per language pending.
