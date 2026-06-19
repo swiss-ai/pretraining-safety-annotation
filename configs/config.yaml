@@ -171,12 +171,13 @@ charter:
           top_k: 20
           presence_penalty: 0.0
       - alias: gemma-4-31b
-        api_name: google/gemma-4-31b-it
+        api_name: google/gemma-4-31B-it   # SwissAI served name (free); note capital B
         hf_slug: google/gemma-4-31b-it
-        context_window_tokens: 49152
-        endpoint: https://openrouter.ai/api/v1
+        context_window_tokens: 22000      # SwissAI gemma hard total-context cap (input+output)
+        endpoint: https://api.swissai.svc.cscs.ch/v1
         thinking: true
-        prompt_reflection: generator_reflection_v6.md
+        prompt_reflection: generator_reflection_v9.md
+        inject_language: true             # per-language reflection-language directive (no-op for English)
         sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
           temperature: 1.0
           top_p: 0.95
@@ -187,7 +188,8 @@ charter:
         context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v5.md
+        prompt_reflection: generator_reflection_v7.md
+        inject_language: true             # per-language reflection-language directive (no-op for English)
         sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
           temperature: 1.0
           top_p: 0.95

@@ -245,3 +245,46 @@ fetishisation/a-victim, NOT explicitness — plain consensual adult sex between 
   under-reading fix transfers; (2) strengthen the language instruction (infer language from the document
   BODY, not any label — `cmn` subset carries Japanese-source titles). **Guardrail: re-check dclm after any
   prompt edit — English must not degrade.**
+
+### gemma-4-26b-a4b — English (dclm) iteration: v5 77% → v7 92% (the scale model)
+Same method as 31b (investigate → minimal edit → rotated-subset test → full-200 validate; English-only;
+no positive examples; judge GLM-5.1 v5). 26b is the intended **scale** annotation model.
+
+**Baseline v5: 77.0%/4.213** (rel 4.275, spec 4.44, cg 4.055, voice 4.08). Reading 18 rejects: 26b's v5
+prompt was the PRE-fix version — it lacked BOTH levers that drove 31b's jump. Failure modes:
+(A) **over-citing/over-reading benign content** dominated (~25/46 rejects): routine helpfulness→2.1
+(donation appeals, "extra care on a live DB", code/math help), routine technical explanation→3.2/3.3/3.4
+(Bitcoin difficulty, Objective-C, ECDSA, disease articles), routine care advice→5.1/3.6 (warm bottle for
+rabbits, horse azoturia), and 3.6 mis-routed onto animal/non-licensed advice. (B) **content-summary
+under-reads** with zero citations on value-laden text (malware/privacy breach, flood statute). (C) a few
+genre misreads (Urban Dictionary/Uncyclopedia satire read as sincere harm; animal-welfare mis-routed to 3.3).
+
+- **v6 = port "Routine helpfulness is NOT 2.1" bullet** (Citation discipline, verbatim from 31b v9). One
+  change. Subset of 13 known-bad (v5 was 0/13): accept 0→3, mean 2.96→3.42, **cg +0.69**. **Full-200:
+  80.7%/4.227** (n=197; 3 parse-failure drops) — +3.7pp, mean held, cg 4.055→4.107, rel +0.10, net +7
+  flips. Kept (English held-or-improved).
+- **v7 = add the explicit-abstention rule** (Reflection section "Benign text — ...", verbatim from 31b v9)
+  on top of v6. One change. This is the big lever: it gives the model the correct alternative to over-citing
+  (cite nothing + explicitly state no stakes) AND fixes the content-summary under-reads. Rotated subset of
+  12 known-bad (v5 0/12): **accept 10/12**, mean 3.40→4.46, **rel +1.59, voice +1.33, cg +0.75**.
+  **Full-200: 92.0%/4.481** (n=199; 1 parse-failure drop) — **+15pp / +0.27 mean over v5, ALL FOUR axes up**
+  (rel 4.275→4.628, spec 4.44→4.467, cg 4.055→4.327, voice 4.08→4.503). v5→v7 net **+30 flips** (37 r→a, 7 a→r).
+
+**v7 is the winner** (blows past the ~85% goal; English strongly improved, not degraded). The 7 a→r
+regressions are NOT over-abstention (the 31b-v8 trap) — every one still cited 4–9 values; they are
+citation mis-routing dings on contested political/religious commentary, mostly marginal 4.0→3.75
+temp-1.0 wobble. The abstention rule's benign carve-out held (no over-abstention on harm/sexual content).
+
+**Remaining v7 rejects (16/199):** 10 = **citation mis-routing** on contested political/religious op-eds
+(cited a sibling/adjacent value the judge prefers re-routed — the hardest genre, low yield, mostly agg
+3.5–3.75); 3 = zero-cite under-reads (2 still genuine content-summary on value-laden text: malware breach,
+flood statute; 1 thin BDSM item); 1 = residual over-cite. The over-citing mode that dominated v5 is
+essentially eliminated. Mis-routing is a much harder/lower-yield target and pushing it risks the English
+guardrail → **stopped at v7.** (Also noted: ~1–3 items/run drop to thinking-mode JSON-wrap parse failures
+at temp 1.0 — a generation-robustness issue, prompt-independent, consistent across versions.)
+
+**Status/handoff:** best gemma-4-26b-a4b English prompt = **`generator_reflection_v6.md` (kept) →
+`generator_reflection_v7.md` (winner)**, both on disk. config.yaml `prompt_reflection` NOT bumped (still
+v5). To make v7 the default for the gemma-4-26b-a4b candidate set, set
+`prompt_reflection: generator_reflection_v7.md`. Full run dirs kept:
+`data/pipeline/charter_eval/g26_v6_full`, `g26_v7_full`.
