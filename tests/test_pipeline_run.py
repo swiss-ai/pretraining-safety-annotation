@@ -398,6 +398,64 @@ class TestIntegration:
         rows = load_items_for_iteration(1)
         assert len(rows) == 3
 
+    def test_language_directive_map(self):
+        """Per-language directive: None for English/unknown, in-language for tagged langs."""
+        from pipeline.charter.improve.run import _language_directive
+
+        assert _language_directive("en") is None
+        assert _language_directive(None) is None
+        assert _language_directive("xx-unknown") is None
+        assert "Deutsch" in _language_directive("deu")
+        assert "français" in _language_directive("fra")
+        assert _language_directive("cmn")  # non-empty defer-to-body directive
+
+    def test_language_injection_messages(self):
+        """inject_language appends a per-language user message for non-English
+        items only; English (and inject off) get no extra message."""
+        import asyncio
+
+        captured: list[list[dict]] = []
+        mock_client = self._make_mock_client()
+        inner = mock_client.chat.completions.create
+
+        async def _recording_create(**kwargs):
+            captured.append(kwargs.get("messages", []))
+            return await inner(**kwargs)
+
+        mock_client.chat.completions.create = _recording_create
+
+        prompt_dir = self.tmp_path / "prompts"
+        prompt_dir.mkdir()
+        gen_prompt = prompt_dir / "gen_reflection_v1.md"
+        gen_prompt.write_text("Generate. Charter: {charter}")
+
+        def _items():
+            return [
+                {"item_id": "de", "subset": "deu", "text": ("Hallo Welt " * 8).strip(),
+                 "reflection_point": 20, "is_gold": False},
+                {"item_id": "en", "subset": "en", "text": ("hello world " * 8).strip(),
+                 "reflection_point": 20, "is_gold": False},
+            ]
+
+        from pipeline.charter.improve.run import generate_batch
+
+        # inject ON
+        captured.clear()
+        generate_batch(_items(), gen_prompt, "charter", "m", iteration=1,
+                       client=mock_client, semaphore=asyncio.Semaphore(4),
+                       save=False, inject_language=True)
+        by_item = {("de" if "Hallo" in m[1]["content"] else "en"): m for m in captured}
+        assert len(by_item["de"]) == 3 and by_item["de"][2]["role"] == "user"
+        assert "Deutsch" in by_item["de"][2]["content"]
+        assert len(by_item["en"]) == 2  # English: no injected message
+
+        # inject OFF (default): no extra message even for German
+        captured.clear()
+        generate_batch(_items(), gen_prompt, "charter", "m", iteration=1,
+                       client=mock_client, semaphore=asyncio.Semaphore(4),
+                       save=False)
+        assert all(len(m) == 2 for m in captured)
+
     def test_save_false_no_write(self):
         """Test that save=False prevents writing to the database."""
         import asyncio

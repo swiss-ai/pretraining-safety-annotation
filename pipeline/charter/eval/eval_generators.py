@@ -66,6 +66,7 @@ def _candidate_metadata(c: CandidateModel) -> dict:
     meta: dict = {
         "alias": c.alias,
         "prompt_reflection": c.prompt_reflection,
+        "inject_language": c.inject_language,
     }
     for key, filename in (
         ("prompt_reflection_sha256", c.prompt_reflection),
@@ -212,6 +213,7 @@ def _generate_with_resume(
         on_failure=on_failure,
         on_result=_on_result,
         desc=f"Generating [{candidate.alias}]",
+        inject_language=candidate.inject_language,
     )
     logger.info(
         "charter.eval gen {}: {} new",

@@ -312,6 +312,30 @@ def _failure_record(
     }
 
 
+# Per-language reflection-language directive, injected as a final user message
+# after the document (recency) to reinforce writing reflection_1p in the source
+# language. Reliable tags get an in-language directive (primes the target script
+# and forbids the English fallback); the cmn subset is mixed CJK/SEO, so it
+# defers to the body language. English injects nothing (generation stays
+# byte-identical -> English cannot regress).
+_LANGUAGE_DIRECTIVES: dict[str, str | None] = {
+    "en": None,
+    "deu": "Schreibe deine Reflexion (`reflection_1p`) auf Deutsch — in der Sprache des Textkörpers, nicht auf Englisch.",
+    "fra": "Rédige ta réflexion (`reflection_1p`) en français — dans la langue du corps du texte, pas en anglais.",
+    "ita": "Scrivi la tua riflessione (`reflection_1p`) in italiano — nella lingua del corpo del testo, non in inglese.",
+    "rus": "Напиши свою рефлексию (`reflection_1p`) на русском языке — на языке основного текста, не на английском.",
+    "jpn": "`reflection_1p` は本文と同じ日本語で書いてください。英語では書かないでください。",
+    "cmn": "This page collection mixes languages. Write `reflection_1p` in the language of the document body you just read — Chinese if the body is Chinese, otherwise that body's own language. Do not default to English.",
+}
+
+
+def _language_directive(code: str | None) -> str | None:
+    """Per-language reflection-language reminder for *code*, or None to inject nothing."""
+    if not code:
+        return None
+    return _LANGUAGE_DIRECTIVES.get(code)
+
+
 def generate_batch(
     items: list[dict],
     refl_prompt_path: Path,
@@ -329,6 +353,7 @@ def generate_batch(
     on_failure: Callable[[dict], None] | None = None,
     on_result: Callable[[dict], None] | None = None,
     desc: str | None = None,
+    inject_language: bool = False,
 ) -> list[dict]:
     """Generate charter reflections for a batch of items.
 
@@ -363,6 +388,10 @@ def generate_batch(
             {"role": "system", "content": refl_system_prompt},
             {"role": "user", "content": refl_user},
         ]
+        if inject_language:
+            directive = _language_directive(item.get("subset") or item.get("language"))
+            if directive:
+                messages.append({"role": "user", "content": directive})
         try:
             raw, reasoning, usage = await api_call(
                 client,
