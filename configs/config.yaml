@@ -109,10 +109,10 @@ charter:
     eval_dir: data/pipeline/charter_eval
     gold_judge:
       alias: glm-5.1
-      api_name: zai-org/GLM-5.1-FP8-yhzm   # swissai deployment tag rotated from -Tgii (2026-06-18); these tags are ephemeral
+      api_name: zai-org/GLM-5.1-FP8-cXND   # swissai deployment tag rotated -Tgii -> -yhzm -> -cXND (2026-06-19); these tags are ephemeral
       hf_slug: zai-org/GLM-5.1-FP8
       endpoint: https://api.swissai.svc.cscs.ch/v1
-      prompt_reflection: judge_reflection_v4.md
+      prompt_reflection: judge_reflection_v5.md
       completion_max_tokens: 65536
       context_window_tokens: 65536
       # thinking: true                  # <-- judge currently runs WITHOUT reasoning; set to enable
@@ -154,6 +154,17 @@ charter:
         endpoint: https://openrouter.ai/api/v1
         prompt_reflection: generator_reflection_v1.md
         sampling:   # generation_config default minus presence_penalty (A/B winner; pp=1.5 hurt quality)
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          presence_penalty: 0.0
+      - alias: qwen3.6-27b
+        api_name: qwen/qwen3.6-27b
+        hf_slug: Qwen/Qwen3.6-27B-FP8
+        context_window_tokens: 49152
+        endpoint: https://openrouter.ai/api/v1
+        prompt_reflection: generator_reflection_v1.md
+        sampling:   # qwen3.6 family gen_config default (temp 1.0), presence_penalty 0.0
           temperature: 1.0
           top_p: 0.95
           top_k: 20
