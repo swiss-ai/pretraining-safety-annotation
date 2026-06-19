@@ -77,18 +77,26 @@ class TestReflectionsBuildCalls:
         # Char-space sampling: no token index is produced.
         assert "reflection_token_index" not in meta
 
-    def test_reflection_point_within_char_cap(self):
-        """The char-space reflection point must fall strictly within max_chars."""
-        text = "Hello world. " * 500  # ~6500 chars, exceeds the cap
+    def test_reflection_point_at_apertus_cutoff(self):
+        """A long doc is cut at the Apertus token cap: the char prefix
+        re-tokenizes to exactly max_tokens Apertus tokens."""
+        from pipeline.tokenizer import _get_apertus_tokenizer
+
+        max_tokens = 50
+        text = "word " * 200  # > max_tokens Apertus tokens
         calls = _reflections_build_calls(
             doc_text=text,
             doc_id="test_doc",
             system_prompt="S.",
             reflection_seed=42,
-            max_chars=100,
+            max_tokens=max_tokens,
         )
         _, _, meta = calls[0]
-        assert meta["reflection_point"] < 100
+        rp = meta["reflection_point"]
+        tok = _get_apertus_tokenizer()
+        prefix_tokens = len(tok.encode(text[:rp], add_special_tokens=False).ids)
+        assert rp < len(text)  # truncated, not the whole doc
+        assert prefix_tokens == max_tokens
 
     def test_reflection_point_deterministic(self):
         text = "Hello world. " * 100

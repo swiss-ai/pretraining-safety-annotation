@@ -32,6 +32,48 @@ def _get_tokenizer() -> Tokenizer:
     return _tokenizer
 
 
+# Apertus tokenizer for the production reflection-point cutoff: documents are
+# tokenized with the Apertus-70B model's own tokenizer and the reflection is
+# placed at min(doc_len, REFLECTION_MAX_TOKENS) tokens.
+APERTUS_TOKENIZER_NAME = "swiss-ai/Apertus-70B-2509"
+REFLECTION_MAX_TOKENS = 3800
+
+# Version marker for the reflection-point *policy* used to materialize eval
+# item pools. Bump this whenever the placement rule changes (tokenizer,
+# cut-off, sampling vs deterministic) so cached pools built under an old
+# policy fail loudly on resume instead of being silently reused. Currently:
+# deterministic Apertus-tokenizer cut-off at min(doc_tokens, 3800).
+REFLECTION_POLICY = "apertus-min-3800-v1"
+
+_apertus_tokenizer: Tokenizer | None = None
+
+
+def _get_apertus_tokenizer() -> Tokenizer:
+    """Return the shared Apertus tokenizer (lazy singleton)."""
+    global _apertus_tokenizer
+    if _apertus_tokenizer is None:
+        _apertus_tokenizer = Tokenizer.from_pretrained(APERTUS_TOKENIZER_NAME)
+    return _apertus_tokenizer
+
+
+def compute_reflection_point_apertus(
+    text: str, max_tokens: int = REFLECTION_MAX_TOKENS
+) -> int:
+    """Reflection point as a char offset, in Apertus-tokenizer space.
+
+    Deterministic (no sampling): the reflection is placed after the first
+    ``min(n_tokens, max_tokens)`` Apertus tokens, so ``text[:offset]`` is the
+    whole document when it fits in ``max_tokens``, otherwise its first
+    ``max_tokens`` tokens.
+    """
+    enc = _get_apertus_tokenizer().encode(text, add_special_tokens=False)
+    n = len(enc.ids)
+    assert n > 0, "Text produced no tokens"
+    if n <= max_tokens:
+        return len(text)
+    return enc.offsets[max_tokens][0]
+
+
 def _encode(text: str):
     """Encode *text* without special tokens and return the ``Encoding``."""
     return _get_tokenizer().encode(text, add_special_tokens=False)

@@ -25,7 +25,6 @@ import argparse
 import asyncio
 import json
 import os
-import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,9 +45,12 @@ from pipeline.config import (
 from pipeline.api import MAX_RETRIES, RETRY_BACKOFF_BASE, resolve_sampling_params
 from pipeline.generation import REFLECTION_TASK
 from pipeline.charter.improve.run import _parse_generation, _parse_reflection_judgment
-from pipeline.tokenizer import compute_reflection_point, truncate_to_max_tokens
+from pipeline.tokenizer import REFLECTION_MAX_TOKENS, compute_reflection_point_apertus
 
-MAX_TOKENS = 1920  # annotation samples: 2048 seq - 128 reflection budget
+# Production schematic (charter.scale): the reflection point is placed
+# deterministically after the first min(doc_tokens, reflection_max_tokens)
+# Apertus tokens (no sampling). Matches pipeline/charter/scale and
+# pipeline/charter/eval, which both call compute_reflection_point_apertus.
 
 
 async def _api_call(
@@ -59,14 +61,19 @@ async def _api_call(
     thinking: bool = False,
     max_tokens: int | None = None,
     sampling_params: dict[str, float | int] | None = None,
+    thinking_style: str = "sglang",
 ) -> tuple[str, str | None, dict]:
-    """API call with retry. Tolerates content=None when reasoning is present."""
+    """API call with retry. Tolerates content=None when reasoning is present.
+
+    *thinking_style* selects how thinking is requested: ``sglang`` uses
+    ``separate_reasoning`` + ``enable_thinking``; ``vllm`` uses only
+    ``chat_template_kwargs.enable_thinking`` (vLLM rejects ``separate_reasoning``).
+    """
     extra_body = None
     if thinking:
-        extra_body = {
-            "separate_reasoning": True,
-            "chat_template_kwargs": {"enable_thinking": True},
-        }
+        extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
+        if thinking_style == "sglang":
+            extra_body["separate_reasoning"] = True
 
     # Sampling params: temperature, top_p, presence_penalty are native OpenAI
     # API kwargs; top_k goes into extra_body (sglang/vllm extension).
@@ -151,21 +158,20 @@ def load_samples(data_path: str, n_samples: int) -> list[str]:
 
 
 def prepare_items(
-    texts: list[str], seed: int, max_tokens: int = MAX_TOKENS
+    texts: list[str], max_tokens: int = REFLECTION_MAX_TOKENS
 ) -> list[dict]:
-    """Truncate texts and compute reflection points.
+    """Compute the production reflection point per text (Apertus-token cut-off).
 
-    Pre-initialises the tokenizer so that load time is not included in
-    measurement.
+    The model input is ``text[:reflection_point]`` where the reflection point is
+    placed deterministically after the first ``min(doc_tokens, max_tokens)``
+    Apertus tokens — exactly as ``charter.scale``/``charter.eval`` do it. Server-side
+    tokenization of the prompt + charter is what the measurement captures.
     """
-    # Warm up tokenizer singleton before measurement
-    truncate_to_max_tokens("warmup", max_tokens)
-
-    rng = random.Random(seed)
     items = []
     for text in texts:
-        text = truncate_to_max_tokens(text, max_tokens)
-        rp = compute_reflection_point(text, rng)
+        if not (text or "").strip():
+            continue
+        rp = compute_reflection_point_apertus(text, max_tokens=max_tokens)
         items.append({"text": text, "reflection_point": rp})
     return items
 
@@ -231,6 +237,7 @@ def run_generator_estimation(
     thinking: bool = False,
     max_tokens: int | None = None,
     sampling_params: dict[str, float | int] | None = None,
+    thinking_style: str = "sglang",
 ) -> list[dict]:
     """Run reflection generator API calls on *items*, returning per-request metrics.
 
@@ -245,7 +252,7 @@ def run_generator_estimation(
         return await _api_call(
             client, model, messages, semaphore,
             thinking=thinking, max_tokens=max_tokens,
-            sampling_params=sampling_params,
+            sampling_params=sampling_params, thinking_style=thinking_style,
         )
 
     async def process_one(idx: int, item: dict) -> dict:
@@ -587,15 +594,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--data-path", help="Path to annotated parquet dir or sidecar.parquet."
     )
+    p.add_argument(
+        "--prompt-path",
+        help="Path to the reflection generator prompt to benchmark (e.g. "
+        "final_prompts/<alias>/generator_reflection_vN.md). Overrides the "
+        "config/seed resolution so the ACTUAL final prompt is measured.",
+    )
     p.add_argument("--n-samples", type=int, default=200)
     p.add_argument(
-        "--max-text-tokens",
+        "--reflection-max-tokens",
         type=int,
-        default=None,
-        help="Max tokens per text sample (overrides MAX_TOKENS=1920).",
+        default=REFLECTION_MAX_TOKENS,
+        help="Cap on the Apertus-token reflection point (charter.scale schematic).",
     )
     p.add_argument("--max-concurrent", type=int, default=50)
-    p.add_argument("--total-samples", type=int, default=102_772_028)
+    p.add_argument("--total-samples", type=int, default=100_000_000)
     p.add_argument("--n-nodes", type=int, default=4)
     p.add_argument("--gpus-per-node", type=int, default=4)
     p.add_argument("--tp-size", type=int, default=1, help="Tensor parallel size.")
@@ -632,6 +645,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=None,
         help="Enable thinking mode (auto-detected from config if --model-alias is set).",
+    )
+    p.add_argument(
+        "--thinking-style",
+        choices=["sglang", "vllm"],
+        default="sglang",
+        help="How thinking is requested: sglang (separate_reasoning + enable_thinking) "
+        "or vllm (enable_thinking only; vLLM rejects separate_reasoning).",
     )
     p.add_argument(
         "--temperature", type=float, default=None, help="Override sampling temperature."
@@ -695,7 +715,15 @@ def main() -> None:
         )
 
     def _resolve_gen_prompt() -> Path:
-        """Resolve the reflection generator prompt path."""
+        """Resolve the reflection generator prompt path.
+
+        Precedence: explicit --prompt-path (the actual final prompt) >
+        per-alias latest in pipeline/prompts/models > canonical seed.
+        """
+        if args.prompt_path:
+            p = Path(args.prompt_path)
+            assert p.exists(), f"--prompt-path not found: {p}"
+            return p
         if args.model_alias:
             return resolve_prompt_path(
                 "generator_reflection_latest.md", alias=args.model_alias
@@ -716,14 +744,19 @@ def main() -> None:
     if args.role == "generator":
         assert args.data_path, "--data-path is required for generator role"
         total_samples = args.n_samples + args.warmup + args.cooldown
-        max_text_tokens = args.max_text_tokens or MAX_TOKENS
+        max_reflection_tokens = args.reflection_max_tokens
 
         print(f"Loading {total_samples} samples from {args.data_path} ...")
         texts = load_samples(args.data_path, total_samples)
-        items = prepare_items(texts, args.seed, max_tokens=max_text_tokens)
-        print(f"Prepared {len(items)} items (max {max_text_tokens} tokens each)")
+        items = prepare_items(texts, max_tokens=max_reflection_tokens)
+        print(
+            f"Prepared {len(items)} items (reflection point capped at "
+            f"{max_reflection_tokens} Apertus tokens)"
+        )
 
-        refl_system_prompt = _load_system_prompt(_resolve_gen_prompt())
+        gen_prompt_path = _resolve_gen_prompt()
+        refl_system_prompt = _load_system_prompt(gen_prompt_path)
+        print(f"Reflection prompt: {gen_prompt_path}")
 
     elif args.role == "judge":
         assert args.generations_path, "--generations-path is required for judge role"
@@ -788,6 +821,7 @@ def main() -> None:
             thinking=thinking,
             max_tokens=(args.max_tokens if args.max_tokens > 0 else None),
             sampling_params=sampling_params,
+            thinking_style=args.thinking_style,
         )
 
         stats = compute_stats(
@@ -813,6 +847,10 @@ def main() -> None:
                 "model_alias": model_alias,
                 "role": "generator",
                 "mode": "reflection",
+                "prompt_path": str(gen_prompt_path),
+                "reflection_max_tokens": max_reflection_tokens,
+                "thinking": thinking,
+                "thinking_style": args.thinking_style,
                 "n_samples": args.n_samples,
                 "warmup": args.warmup,
                 "cooldown": args.cooldown,

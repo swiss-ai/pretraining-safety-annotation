@@ -243,6 +243,50 @@ class TestEnsureItemPool:
             except Exception:
                 pass
 
+    def test_ensure_item_pool_resume_stale_reflection_policy_raises(
+        self, tmp_path, monkeypatch
+    ):
+        """A pool built under an old/absent reflection-point policy must fail
+        loudly on resume rather than silently serving stale reflection points."""
+        from pipeline.charter.eval import items as items_mod
+        from pipeline.charter.eval.storage import JsonlRunStore
+
+        fake_items = [_make_item(f"i{i}", f"text {i}") for i in range(5)]
+        fake = _fake_sample_diverse_factory(fake_items, revision="rev-1")
+        monkeypatch.setattr(items_mod, "sample_diverse", fake)
+        monkeypatch.setattr(
+            items_mod, "compute_reflection_point", _fake_compute_reflection_point
+        )
+
+        store = self._make_store(tmp_path, "items-005")
+        try:
+            items_mod.ensure_item_pool(
+                store, n_items=5, seed=1, max_tokens=512
+            )
+            store.flush()
+
+            # Simulate an old-policy pool: drop the reflection_policy marker
+            # (pools built before the marker existed have no such key).
+            meta = store.read_metadata()
+            meta.pop("reflection_policy", None)
+            store.write_metadata(meta)
+            store.flush()
+        finally:
+            store.close()
+
+        store2 = JsonlRunStore(tmp_path, "items-005")
+        store2.open(create=False)
+        try:
+            with pytest.raises(ValueError, match="reflection_policy"):
+                items_mod.ensure_item_pool(
+                    store2, n_items=5, seed=1, max_tokens=512
+                )
+        finally:
+            try:
+                store2.close()
+            except Exception:
+                pass
+
     def test_ensure_item_pool_resume_mismatched_dataset_revision_raises(
         self, tmp_path, monkeypatch
     ):

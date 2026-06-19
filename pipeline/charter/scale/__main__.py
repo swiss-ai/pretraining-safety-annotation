@@ -418,6 +418,18 @@ def _resolve_annotation_inputs(cfg, run_name: str) -> tuple[str, int]:
     return str(paths_file), n_tasks
 
 
+def _sglang_context_length(extra_args: str) -> int | None:
+    """Parse the served ``--context-length`` from the sglang ``extra_args`` string.
+
+    Returns None when the flag is absent (sglang then derives the window from the
+    model config, which we cannot know here).
+    """
+    import re
+
+    m = re.search(r"--context-length(?:[=\s]+)(\d+)", extra_args or "")
+    return int(m.group(1)) if m else None
+
+
 def cmd_submit(args, overrides):
     """Submit an annotation run over the dense filtered dataset."""
     from datatrove.pipeline.readers import ParquetReader
@@ -429,6 +441,16 @@ def cmd_submit(args, overrides):
     sc = cfg.charter.scale
     run_name = args.run
     run_def = get_run(run_name)
+
+    # The completion-budget clamp uses sc.context_window_tokens; it must match the
+    # served --context-length or a request could overflow (truncated thinking) or
+    # under-utilize the window. Fail fast on drift rather than annotate at scale
+    # with a desynced bound.
+    served_ctx = _sglang_context_length(sc.sglang.extra_args)
+    assert served_ctx is None or served_ctx == sc.context_window_tokens, (
+        f"charter.scale.context_window_tokens={sc.context_window_tokens} disagrees "
+        f"with sglang --context-length={served_ctx} in extra_args. Update both to match."
+    )
 
     paths_file, n_tasks = _resolve_annotation_inputs(cfg, run_name)
     logger.info("Run '{}': {} tasks over dense dataset {}", run_name, n_tasks, sc.filtered_dir)
@@ -459,7 +481,8 @@ def cmd_submit(args, overrides):
             reflection_seed=sc.reflection_seed,
             max_retries_per_doc=sc.max_retries_per_doc,
             progress_interval=sc.progress_interval,
-            max_chars=sc.reflection_max_chars,
+            max_tokens=sc.reflection_max_tokens,
+            context_window_tokens=sc.context_window_tokens,
         ),
     ]
 

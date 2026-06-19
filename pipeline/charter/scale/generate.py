@@ -35,9 +35,44 @@ from pipeline.config import (
 )
 from pipeline.generation import parse_generation
 from pipeline.log import logger
+from pipeline.tokenizer import REFLECTION_MAX_TOKENS, count_tokens
 from pipeline.charter.scale.runs import get_run
 
 FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
+
+# Chat-formatting overhead and a safety margin used to bound the completion
+# budget below the server context window (mirrors the eval/improve path in
+# pipeline/charter/improve/run.py). count_tokens uses the SmolLM2 tokenizer as a
+# cheap proxy for the served model's tokenization; the margin absorbs the slack.
+CHAT_MESSAGE_OVERHEAD_TOKENS = 8
+CHAT_REPLY_PRIMER_TOKENS = 16
+CONTEXT_WINDOW_MARGIN_TOKENS = 512
+
+
+def _estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:
+    """Estimate prompt tokens for a chat completion request."""
+    total = CHAT_REPLY_PRIMER_TOKENS
+    for msg in messages:
+        total += CHAT_MESSAGE_OVERHEAD_TOKENS
+        total += count_tokens(msg["content"])
+    return total
+
+
+def _completion_budget(messages: list[dict[str, str]], context_window_tokens: int) -> int:
+    """Per-request completion budget: context window minus prompt minus margin.
+
+    Raises AssertionError when the prompt already overflows the window (after
+    the safety margin) so the caller's retry loop records the doc as a failure
+    rather than sending a request that the server will truncate mid-generation.
+    """
+    prompt_tokens = _estimate_prompt_tokens(messages)
+    available = context_window_tokens - prompt_tokens - CONTEXT_WINDOW_MARGIN_TOKENS
+    assert available > 0, (
+        "Prompt exceeds server context window after safety margin: "
+        f"prompt_estimate={prompt_tokens} context_window={context_window_tokens} "
+        f"margin={CONTEXT_WINDOW_MARGIN_TOKENS}"
+    )
+    return available
 
 
 class AnnotationGenerator(PipelineStep):
@@ -59,7 +94,8 @@ class AnnotationGenerator(PipelineStep):
         reflection_seed: int = 42,
         max_retries_per_doc: int = 5,
         progress_interval: int = 1000,
-        max_chars: int = 8000,
+        max_tokens: int = REFLECTION_MAX_TOKENS,
+        context_window_tokens: int = 24576,
     ):
         super().__init__()
         self.run_name = run_name
@@ -70,7 +106,8 @@ class AnnotationGenerator(PipelineStep):
         self.save_batch_size = save_batch_size
         self.thinking = thinking
         self.json_mode = json_mode
-        self.max_chars = max_chars
+        self.max_tokens = max_tokens
+        self.context_window_tokens = context_window_tokens
         self.reflection_seed = reflection_seed
         self.max_retries_per_doc = max_retries_per_doc
         self.progress_interval = progress_interval
@@ -161,7 +198,8 @@ class AnnotationGenerator(PipelineStep):
                     failures_path=failures_path,
                     progress_interval=self.progress_interval,
                     rank=rank,
-                    max_chars=self.max_chars,
+                    max_tokens=self.max_tokens,
+                    context_window_tokens=self.context_window_tokens,
                 )
             )
         finally:
@@ -328,7 +366,8 @@ async def _generate_all(
     failures_path: Path,
     progress_interval: int,
     rank: int,
-    max_chars: int = 8000,
+    max_tokens: int = REFLECTION_MAX_TOKENS,
+    context_window_tokens: int = 24576,
 ) -> tuple[int, int]:
     """Process all docs concurrently. Returns (n_ok, n_fail)."""
     client, semaphore = make_api_client(
@@ -351,14 +390,14 @@ async def _generate_all(
         doc_id = doc.id
         doc_text = doc.text
 
-        # Build API calls for this run. The reflection point is sampled in
-        # character space (no tokenization), capped at max_chars.
+        # Build API calls for this run. The reflection point is the first
+        # min(doc_tokens, max_tokens) Apertus tokens (deterministic).
         call_specs = run_def.build_calls(
             doc_text=doc_text,
             doc_id=doc_id,
             system_prompt=system_prompt,
             reflection_seed=reflection_seed,
-            max_chars=max_chars,
+            max_tokens=max_tokens,
         )
 
         for attempt in range(max_retries):
@@ -371,6 +410,11 @@ async def _generate_all(
                 }
 
                 for messages, required_fields, meta in call_specs:
+                    # Clamp the completion budget below the server context
+                    # window. A non-positive budget raises (handled by the retry
+                    # loop -> failures.jsonl) rather than sending an overflowing
+                    # request that the server would truncate mid-generation.
+                    budget = _completion_budget(messages, context_window_tokens)
                     raw, reasoning, usage = await api_call(
                         client,
                         served_model,
@@ -379,7 +423,7 @@ async def _generate_all(
                         thinking=thinking,
                         json_mode=json_mode,
                         sampling_params=sampling_params,
-                        max_tokens=None,
+                        max_tokens=budget,
                     )
                     if required_fields:
                         parsed = parse_generation(raw, required_fields=required_fields)

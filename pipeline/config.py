@@ -250,7 +250,12 @@ class CharterScaleConfig:
     language_filter: list[str] = field(default_factory=lambda: ["en"])
     safety_min_score: int = 4
     safety_min_confidence: float = 0.9
-    reflection_max_chars: int = 8000  # char-space reflection-point cap (no tokenization)
+    reflection_max_chars: int = 8000  # deprecated/unused: superseded by reflection_max_tokens
+    reflection_max_tokens: int = 3800  # reflection cut-off in Apertus tokens (min(doc_len, this))
+    # Total sglang context window (must match the served --context-length in
+    # sglang.extra_args). Used to clamp the per-request completion budget so a
+    # long thinking trace + reflection can never overflow the server boundary.
+    context_window_tokens: int = 24576
     reflection_prompt: str = "generator_reflection_v1.md"
     generator_alias: str = "glm-4.5-air"
     thinking: bool = False

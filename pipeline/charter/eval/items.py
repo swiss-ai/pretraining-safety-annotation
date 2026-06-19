@@ -16,7 +16,7 @@ from pipeline.data import sample_diverse
 from pipeline.log import logger
 from pipeline.charter.improve.storage import load_items_for_iteration, load_reviews
 from pipeline.charter.eval.storage import JsonlRunStore
-from pipeline.tokenizer import compute_reflection_point
+from pipeline.tokenizer import REFLECTION_POLICY, compute_reflection_point
 
 
 def build_item_pool(
@@ -91,6 +91,22 @@ def ensure_item_pool(
                     f"{key}={meta.get(key)!r} but caller requested "
                     f"{key}={expected!r}"
                 )
+        # Reflection-point policy guard. The reflection point is baked into each
+        # cached item, so a pool built under an old policy (e.g. char-space
+        # sampling) would silently serve stale reflection points while being
+        # reported as the current run. Unlike the checks above this is strict:
+        # a missing marker means the pool predates the marker (so its policy is
+        # unknown / old) and must be rebuilt. `max_tokens` no longer captures the
+        # policy (it is unused by load_bench_items), so this is the real key.
+        recorded_policy = meta.get("reflection_policy")
+        if recorded_policy != REFLECTION_POLICY:
+            raise ValueError(
+                f"ensure_item_pool: existing pool has reflection_policy="
+                f"{recorded_policy!r} but the current policy is "
+                f"{REFLECTION_POLICY!r}. The cached reflection points were built "
+                f"under a different policy and must not be reused — delete the run "
+                f"dir (or build a fresh pool) for a new-policy eval run."
+            )
         if len(existing) != n_items:
             raise ValueError(
                 f"ensure_item_pool: existing items.jsonl has {len(existing)} "
@@ -126,6 +142,7 @@ def ensure_item_pool(
             "n_items": n_items,
             "seed": seed,
             "max_tokens": max_tokens,
+            "reflection_policy": REFLECTION_POLICY,
             "dataset_revision": dataset_revision,
             # Pinned copy for resume-time tamper detection.
             "_original_dataset_revision": dataset_revision,

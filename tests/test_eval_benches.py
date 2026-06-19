@@ -35,7 +35,7 @@ def _write_bench_parquet(path, per_lang):
 
 class TestRegistry:
     def test_known_benches(self):
-        assert set(B.BENCHES) == {"dclm-en", "fw2-multi"}
+        assert set(B.BENCHES) == {"dclm-en", "fw2-multi", "edge-cases"}
         assert B.get_bench("fw2-multi").languages == ["rus", "cmn", "deu", "jpn", "fra", "ita"]
 
     def test_unknown_bench_raises(self):
@@ -47,6 +47,11 @@ class TestLoadBenchItems:
     @pytest.fixture
     def cached_bench(self, tmp_path, monkeypatch):
         monkeypatch.setattr(B, "BENCH_DIR", tmp_path)
+        monkeypatch.setitem(
+            B.BENCHES, "tb",
+            B.Bench(name="tb", corpus="dclm-edu", source_dir="",
+                    languages=["deu", "fra", "ita"]),
+        )
         _write_bench_parquet(tmp_path / "tb.parquet", {"deu": 50, "fra": 50, "ita": 50})
         return "tb"
 
@@ -61,8 +66,31 @@ class TestLoadBenchItems:
         items = B.load_bench_items(cached_bench, n_items=9, max_tokens=1920, seed=1)
         it = items[0]
         assert set(it) == {"item_id", "text", "safety_score", "subset", "is_gold", "reflection_point"}
-        assert 0 < it["reflection_point"] < len(it["text"])
+        # Short docs reflect on the whole text (rp == len); never past the end.
+        assert 0 < it["reflection_point"] <= len(it["text"])
         assert it["is_gold"] is False
+
+    def test_long_doc_capped_at_apertus_cutoff(self, tmp_path, monkeypatch):
+        from pipeline.tokenizer import REFLECTION_MAX_TOKENS, _get_apertus_tokenizer
+
+        monkeypatch.setattr(B, "BENCH_DIR", tmp_path)
+        monkeypatch.setitem(
+            B.BENCHES, "tbl",
+            B.Bench(name="tbl", corpus="dclm-edu", source_dir="", languages=["en"]),
+        )
+        long_text = "word " * 6000  # > 3800 Apertus tokens
+        pq.write_table(
+            pa.Table.from_pylist(
+                [{"item_id": "<urn:long>", "text": long_text, "safety_score": 5, "language": "en"}],
+                schema=B.BENCH_SCHEMA,
+            ),
+            tmp_path / "tbl.parquet",
+        )
+        it = B.load_bench_items("tbl", n_items=1, max_tokens=1920, seed=1)[0]
+        tok = _get_apertus_tokenizer()
+        ctx_tokens = len(tok.encode(it["text"][: it["reflection_point"]], add_special_tokens=False).ids)
+        assert it["reflection_point"] < len(it["text"])  # truncated
+        assert ctx_tokens == REFLECTION_MAX_TOKENS
 
     def test_deterministic(self, cached_bench):
         a = B.load_bench_items(cached_bench, 30, 1920, 7)

@@ -36,9 +36,9 @@ Datatrove writes `completions/{rank:05d}` only after `PipelineStep.run()` return
 
 `reflection_seed` controls the reflection point per document via RNG seeded with `f"{seed}_{doc_id}"`. Same seed → same reflection points across runs.
 
-### Char-Space Reflection Point (No Tokenization)
+### Reflection Point (Apertus-Token Cut-off)
 
-The reflection point is sampled **directly in character space** (`compute_reflection_point_char`) — the scale path never loads a tokenizer. `reflection_position` is that character offset; there is no `reflection_token_index`. The eligible region is capped at `reflection_max_chars` (bounds the before-context prompt). This also sidesteps the SmolLM2-tokenizer CJK/Cyrillic skew for FineWeb-2.
+The reflection point is **deterministic**: the reflection is placed after the first `min(doc_tokens, reflection_max_tokens)` Apertus tokens (`compute_reflection_point_apertus`, tokenizer `swiss-ai/Apertus-70B-2509`). `reflection_position` is the resulting character offset, so `doc_text[:reflection_position]` is the whole document when it fits in the cut-off, otherwise its first `reflection_max_tokens` tokens. No sampling. (Earlier versions sampled in character space capped at `reflection_max_chars`; that field is now deprecated/unused.)
 
 ## Module Responsibilities
 
@@ -80,7 +80,8 @@ All config lives under `charter.scale:` in `configs/config.yaml`. Key fields:
 | `prefilter_max_shards` | 0 | 0 = all source shards; >0 caps for smoke/subset |
 | `safety_min_score` | 4 | Keep `safety_score >= this` … |
 | `safety_min_confidence` | 0.9 | … and `safety_probs[safety_score] >= this` |
-| `reflection_max_chars` | 8000 | char-space reflection-point cap (no tokenization) |
+| `reflection_max_tokens` | 3800 | reflection cut-off in Apertus tokens: `min(doc_len, this)` |
+| `reflection_max_chars` | 8000 | deprecated/unused (superseded by `reflection_max_tokens`) |
 | `sglang.reasoning_parser` | `kimi_k2` | **Required for thinking models** (GLM→`glm45`, Qwen3.5/Kimi→`kimi_k2`, Nemotron→`nano_v3`) |
 | `sglang.env_toml` | | **Required**: path to container TOML |
 

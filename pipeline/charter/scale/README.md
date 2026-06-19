@@ -54,7 +54,7 @@ Provenance (`doc_id, corpus, source_shard, language, safety_score`) + token usag
 | Column | Type | Meaning |
 |--------|------|---------|
 | `reflection_1p` | large_string | first-person reflection (text up to the reflection point) |
-| `reflection_position` | int32 | character offset of the reflection point (sampled in char space, no tokenization) |
+| `reflection_position` | int32 | character offset of the reflection point (deterministic Apertus-token cut-off: `min(doc_len, reflection_max_tokens)`) |
 | `charter_reflection` | large_string | JSON list of `[X.Y]` charter element IDs |
 
 ## Invariants (see `AGENTS.md`)
@@ -64,9 +64,11 @@ Provenance (`doc_id, corpus, source_shard, language, safety_score`) + token usag
   re-strides every rank and breaks resume. `n_tasks` is chosen + capped (≪ `MaxArraySize`),
   never the shard count.
 - **doc_id is the key** for resume, output, and the downstream join. No row-order concept.
-- **Annotate-first, char-space reflection point**: no tokenization anywhere in the scale path.
-  The reflection point is sampled directly as a character offset (`reflection_position`),
-  capped at `reflection_max_chars`.
+- **Deterministic Apertus-token reflection point**: the scale path loads the Apertus
+  tokenizer (`swiss-ai/Apertus-70B-2509`) and places the reflection after the first
+  `min(doc_len, reflection_max_tokens=3800)` tokens via `compute_reflection_point_apertus`.
+  `reflection_position` is the resulting character offset — the whole document when it
+  fits in the cut-off, otherwise its first `reflection_max_tokens` tokens. No sampling.
 
 ## Configuration
 
@@ -81,7 +83,8 @@ charter.scale:
   language_filter: [en]
   safety_min_score: 4
   safety_min_confidence: 0.9
-  reflection_max_chars: 8000 # char-space reflection-point cap
+  reflection_max_tokens: 3800 # reflection cut-off in Apertus tokens: min(doc_len, this)
+  reflection_max_chars: 8000  # deprecated/unused (superseded by reflection_max_tokens)
   reflection_prompt: generator_reflection_v7.md
   generator_alias: qwen3.5-35b-a3b
   sglang: { ... }            # annotation only; prefilter launches no sglang

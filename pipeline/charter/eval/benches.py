@@ -187,18 +187,20 @@ def load_bench_items(name: str, n_items: int, max_tokens: int, seed: int) -> lis
 
     Returns charter.eval item dicts (``item_id, text, safety_score, subset,
     is_gold, reflection_point``) with ``subset`` set to the language so the
-    ranker can break results down per language. The reflection point is sampled
-    in character space (matching production), deterministically per item.
+    ranker can break results down per language. The reflection point matches
+    production: deterministically placed after the first ``min(doc_len, 3800)``
+    Apertus tokens (``max_tokens`` is unused — kept for signature stability).
     """
     import random
 
-    from pipeline.tokenizer import compute_reflection_point_char, truncate_to_max_tokens
+    from pipeline.tokenizer import compute_reflection_point_apertus
 
     bench = get_bench(name)
     table = pq.read_table(ensure_bench(name))
 
-    # Curated full-text bench: annotate every doc whole, reflection AFTER the full
-    # (untruncated) text. No sampling/balancing — the whole pool is the bench.
+    # Curated full-text bench: annotate every doc whole (reflection after the
+    # text, capped at the Apertus cut-off). No sampling/balancing — the whole
+    # pool is the bench. Edge-case docs are short, so this is the full text.
     if bench.full_text:
         rows = sorted(table.to_pylist(), key=lambda r: r["item_id"])
         return [
@@ -208,7 +210,7 @@ def load_bench_items(name: str, n_items: int, max_tokens: int, seed: int) -> lis
                 "safety_score": r["safety_score"],
                 "subset": r["language"],
                 "is_gold": False,
-                "reflection_point": len(r["text"]),
+                "reflection_point": compute_reflection_point_apertus(r["text"]),
             }
             for r in rows
         ]
@@ -230,8 +232,7 @@ def load_bench_items(name: str, n_items: int, max_tokens: int, seed: int) -> lis
 
     items: list[dict] = []
     for r in picked:
-        text = truncate_to_max_tokens(r["text"], max_tokens)
-        rp_rng = random.Random(f"bench_rp::{seed}::{r['item_id']}")
+        text = r["text"]
         items.append(
             {
                 "item_id": r["item_id"],
@@ -239,7 +240,7 @@ def load_bench_items(name: str, n_items: int, max_tokens: int, seed: int) -> lis
                 "safety_score": r["safety_score"],
                 "subset": r["language"],
                 "is_gold": False,
-                "reflection_point": compute_reflection_point_char(text, rp_rng),
+                "reflection_point": compute_reflection_point_apertus(text),
             }
         )
     return items

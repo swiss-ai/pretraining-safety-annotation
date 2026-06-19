@@ -9,14 +9,13 @@ executes it.
 from __future__ import annotations
 
 import json
-import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from pipeline.config import extract_charter_elements
 from pipeline.generation import REFLECTION_TASK
-from pipeline.tokenizer import compute_reflection_point_char
+from pipeline.tokenizer import REFLECTION_MAX_TOKENS, compute_reflection_point_apertus
 
 
 @dataclass
@@ -27,7 +26,7 @@ class RunDefinition:
     prompt_type: str  # "reflection" — selects the prompt file
     output_columns: list[str]
     build_calls: Callable
-    # (doc_text, doc_id, system_prompt, reflection_seed, max_chars)
+    # (doc_text, doc_id, system_prompt, reflection_seed, max_tokens)
     #  -> list[(messages, required_output_fields, meta)]
     post_process: Callable
     # (doc_id, doc_text, parsed_results_per_call, meta) -> dict of column values
@@ -52,16 +51,18 @@ def _reflections_build_calls(
     doc_id: str,
     system_prompt: str,
     reflection_seed: int,
-    max_chars: int = 8000,
+    max_tokens: int = REFLECTION_MAX_TOKENS,
 ) -> list[tuple[list[dict], set[str], dict]]:
     """Build a single API call for the reflections run.
 
-    The reflection point is sampled directly in character space (no
-    tokenization). ``max_chars`` caps how far into the document it may fall,
-    bounding the before-context prompt size.
+    The reflection point is deterministic: the reflection is placed after the
+    first ``min(doc_tokens, max_tokens)`` Apertus tokens, so the before-context
+    is the whole document when it fits in ``max_tokens``, otherwise its first
+    ``max_tokens`` tokens. ``doc_id``/``reflection_seed`` are kept for signature
+    compatibility but unused (placement no longer samples).
     """
-    rp_rng = random.Random(f"{reflection_seed}_{doc_id}")
-    rp_char = compute_reflection_point_char(doc_text, rp_rng, max_chars=max_chars)
+    del doc_id, reflection_seed  # deterministic placement; kept for signature compat
+    rp_char = compute_reflection_point_apertus(doc_text, max_tokens=max_tokens)
 
     context_before = doc_text[:rp_char]
 
