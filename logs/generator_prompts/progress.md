@@ -225,10 +225,17 @@ fetishisation/a-victim, NOT explicitness — plain consensual adult sex between 
 - **Best qwen3.6-35b config = `generator_reflection_v4.md` + `inject_language: true`**
   (prompt commits v2 `aa2a65c`, v3 `1ef7c40`, v4 `52e2746`; injection feature `99a1233`).
   **dclm 90.5% / fw2 92.5%** (fw2 from 62.5% baseline = +30pp; English held).
-- **config.yaml NOT changed** (live/user file): to make this the default for the qwen3.6-35b candidate set
-  `prompt_reflection: generator_reflection_v4.md` and `inject_language: true`.
+- **config.yaml DEFAULT now = v4 + inject** for the qwen3.6-35b-a3b generator_eval candidate (commit
+  `04bc0f6`: `prompt_reflection: generator_reflection_v4.md`, `inject_language: true`). Judge tag/prompt
+  also current (`7e7486f`: GLM-5.1 `-cXND`, judge_reflection_v5).
+- **English also benefits from the adult lever** (not just fw2): the dclm-en bench is 14% adult/sexual
+  content (28/200); v4 flipped 3 of those reject→accept (zero adult regressions), giving the highest dclm
+  run (90.5%). The injection itself is a no-op for English (en → no directive).
 - Remaining fw2 tail (~15 rejects) is small and mixed (borderline consensual-adult the judge only caps at 3;
-  residual cmn contamination; temp-1.0 variance). Diminishing returns — likely the stopping point.
+  residual cmn contamination; temp-1.0 variance). Remaining dclm tail (19 rejects) is mostly non-adult
+  zero-cite under-reads — the same charter-capped tail where severity-routing & openers both reverted
+  (variance-locked ~90%). Diminishing returns on both — stopping point.
+- Full-200 confirmation runs: `gen200_{fw2,dclm}_v5_q36_v4inj` (status done, n=200, judge v5).
 
 ### Multilingual (fw2) — starting
 - All current prompts already carry a `## Language` section ("write reflection_1p in the SAME language as
