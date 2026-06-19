@@ -156,6 +156,39 @@ temp-1.0 variance tail).
 Committed v9 + v2 (prompt files). config.yaml prompt_reflection NOT bumped (still v6 / v1). gemma
 intermediates v7/v8 left on disk (superseded).
 
+### qwen3.6-35b-a3b — multilingual (fw2) iteration (Julian: do EN ceiling first, then fw2)
+Carried the DCLM winner **v2** (reported-framing≠no-stakes) into fw2. Method as before (rotated subsets,
+n=5, one lever, serialize judge runs; harness `~/tmp/seval.py` now reads the live judge tag/prompt from
+config). Live judge tag rotated -yhzm→**-cXND** (committed `7e7486f`).
+
+- **v2 transfers to fw2** (subset n=5, v1→v2): accept 0.686→**0.752**, charter_grounding 3.75→**3.94 (+0.19)**,
+  rel +0.11, spec +0.12; voice 4.01→3.91 and wrong-language 6%→10% (the English under-reading paragraph
+  slightly primes English fallback). Net positive — v2 is the fw2 base.
+- **Key finding: wrong-language is INTERMITTENT/high-variance** — items that were voice_tone==1 in the
+  baseline write the WRONG language only ~14–20% of the time on re-run, not deterministically. Same
+  temp-1.0 variance as everything else.
+- **v3 = language lever — strong WIN.** Rewrote `## Language`: write `reflection_1p` in the language of
+  the **main body prose**, NOT any title/tags/menu/embedded snippet (pages mix languages; `cmn` subset
+  has Japanese-source titles); names "English over a non-English source is a failure". LANG-prone subset
+  (n=5, v2→v3): **wrong-language 12%→3%** (LANG-group 14%→4%), **voice_tone 3.83→4.15 (+0.32)**,
+  accept 0.742→0.783, cg 4.03→4.15. DCLM regression subset check: flat (cg −0.05, within noise; the edit
+  is English-inert by construction).
+- **Full-200 confirmation (v3, committed `1ef7c40`):**
+  - **fw2-multi v1→v3: accept 62.5%→79.3% (+16.8pp)**, mean 3.884→4.217, cg 3.67→4.035, voice 3.93→4.197,
+    rel 3.905→4.303, spec 4.03→4.333, **wrong-language 19/200→2/198**; flips 48 r→a / 14 a→r. Per-language
+    all healthy: deu 84%, fra 85%, rus 82%, cmn 78%, ita 77%, jpn 70% (weakest).
+  - **dclm-en preserved:** mean 4.430→**4.479** (highest), voice 4.385→4.475, spec 4.40→4.45, cg 4.385,
+    wrong-lang 1→0. accept 89%→86.5% = balanced threshold variance (v2→v3 flips 17 down / 12 up), edit
+    English-inert. English NOT degraded.
+  - Net: v2 (under-reading) + v3 (language) compound — fw2 the big win, English held.
+
+### Status / handoff (2026-06-19, fw2)
+- **Best qwen3.6-35b prompt = `generator_reflection_v3.md`** (commits v2 `aa2a65c` + v3 `1ef7c40`).
+  dclm ~88% (variance band) / fw2 79.3%. config.yaml still points qwen3.6-35b at v1 — bump to `_v3.md`
+  to make it the default.
+- Remaining fw2 headroom: jpn weakest (70%); residual under-reads in cmn/jpn; the rest is the temp-1.0
+  variance tail. Next levers low-yield per the dclm experience (severity-routing/openers both reverted there).
+
 ### Multilingual (fw2) — starting
 - All current prompts already carry a `## Language` section ("write reflection_1p in the SAME language as
   the source"), but wrong-language is still ~25% of fw2 rejects (voice_tone=1 under v5) on the qwen3.6-35b
