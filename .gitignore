@@ -24,11 +24,12 @@ venv/
 *.parquet
 *.bin
 
-# Generated outputs: ignore log dirs, except the tracked judge-optim notes
+# Generated outputs: ignore log dirs, except the tracked optimization notes
 **/logs/
 !/logs/
 /logs/*
 !/logs/judge_optim/
+!/logs/generator_prompts/
 throughput_estimations/results/
 
 # Transient improver state in the tracked per-model prompt tree

@@ -134,3 +134,33 @@ rus 2, ita 2, jpn 2, fra 1; other 9. Rejects spread evenly across subsets (jpn 1
   Flip `prompt_reflection: generator_reflection_v2.md` to make v2 the default eval/scale prompt.
 - **Generator choice still open:** qwen3.6-27b is the best-balanced under v5 (dclm 4.495 / fw2 74%) —
   if 27b is the production pick, re-run this prompt iteration on it (v2 edit is model-agnostic; re-validate).
+
+---
+
+## 2026-06-19 — English prompt wins (gemma-4-31b, qwen3.6-27b) + start multilingual
+
+Two agents iterated the **English (dclm)** generator prompts (judge v5; method: investigate → minimal
+edit → rotated subset test → full-200 validate; no positive examples; English-only).
+
+**gemma-4-31b: v6 72.0%/4.186 → v9 89.5%/4.526** (+17.5pp accept, +0.34 mean, all axes up, cg 4.13→4.46;
+net +35 flips). Levers: (v7) explicit-abstention rule — benign text MUST state nothing is at stake, not
+recap (fixes the content-summary mode → the big jump to 89%); (v9) "routine helpfulness ≠ [2.1]" with an
+anti-over-suppression guard. **v8 reverted**: a naive "abstain when dropping [2.1]" over-abstained on
+sexual-violence/deepfake content (those items 4.25→2.0–2.5) — kept the guarded v9 instead.
+
+**qwen3.6-27b: v1 88.4%/4.495 → v2 90.0%/4.516** (+1.6pp, net +3, cg +0.038). One bullet naming
+zero-citation escape-hatch phrases as forbidden on value-laden content, with a benign carve-out
+(protects the 81 no-citation accepts; zero over-citation regressions). Stopped at v2 (residual is the
+temp-1.0 variance tail).
+
+Committed v9 + v2 (prompt files). config.yaml prompt_reflection NOT bumped (still v6 / v1). gemma
+intermediates v7/v8 left on disk (superseded).
+
+### Multilingual (fw2) — starting
+- All current prompts already carry a `## Language` section ("write reflection_1p in the SAME language as
+  the source"), but wrong-language is still ~25% of fw2 rejects (voice_tone=1 under v5) on the qwen3.6-35b
+  line — the in-prompt instruction alone isn't enough.
+- Plan: (1) test the current English-tuned prompts (gemma v9, qwen-27b v2) on fw2 to baseline + see if the
+  under-reading fix transfers; (2) strengthen the language instruction (infer language from the document
+  BODY, not any label — `cmn` subset carries Japanese-source titles). **Guardrail: re-check dclm after any
+  prompt edit — English must not degrade.**
