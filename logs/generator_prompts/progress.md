@@ -200,14 +200,35 @@ auto-read from config in the harness.
 - dclm-en: **89.9%** / mean 4.465 — English unchanged (en gets no injection). Also settles that v3's
   earlier dclm 86.5% was a low variance draw; English is ~89–90%.
 
-### Status / handoff (2026-06-19, fw2 + injection)
-- **Best qwen3.6-35b config = `generator_reflection_v3.md` + `inject_language: true`** (prompt commits
-  v2 `aa2a65c`, v3 `1ef7c40`; injection feature `99a1233`). **dclm 89.9% / fw2 80.3%** (from fw2 62.5%).
+### Remaining fw2 failure analysis (after v3+inject) → adult-content under-reading
+v3+inject fw2 rejects (39/198): **35/39 (90%) are adult/sexual-content under-reads** — the multilingual
+corpus at this safety threshold is saturated with porn/sex-service/AV/adult-SEO pages, and the model
+dismissed them as "a mere product listing / SEO keyword spam / consensual adult ads → nothing at stake",
+emitting ZERO citations and getting floored on dignity/objectification (1.1), ethnic/gender fetishisation
+(1.3), protection-of-vulnerable incl. minors & hidden-camera (5.2), exploitation (5.1). Wrong-language now
+1/39. Worst langs cmn/fra/jpn = the subsets with the most adult content. (NOT a language failure — a
+content-domain failure concentrated in fw2 because DCLM-Edu English has almost none of this content.)
+
+### v4 = adult-content citation lever — big fw2 win, English preserved (commit `52e2746`)
+One guarded bullet (Citation discipline): adult/sexual commercial content is not auto-benign; cite
+objectification/degradation (1.1), ethnic/group sexual fetishisation (1.3), sexualising minors / non-
+consensual recording / trafficking / exploitation (5.2,+5.1). Trigger = degradation/objectification/
+fetishisation/a-victim, NOT explicitness — plain consensual adult sex between equals needs no citation
+(benign carve-out preserves the [[charter-1.1-dignity-floor-line]] floor).
+- Subset (n=5, v3+inj→v4+inj): adult under-reads accept **0.53→0.90**, rel +0.71, cg +0.58; accepted-adult
+  & benign guards held/improved (no over-citation). dclm guard flat.
+- **Full-200 (v3+inj→v4+inj): fw2 80.3%→92.5%**, mean 4.309→4.561, rel 4.455→**4.76**, cg 4.152→4.405,
+  wrong-lang ~0. **dclm 90.5%** / mean 4.494 (highest dclm run — English preserved; lever inert on
+  educational English). Relevance rising confirms genuine quality, not over-citation gaming.
+
+### Status / handoff (2026-06-19, fw2 — v4)
+- **Best qwen3.6-35b config = `generator_reflection_v4.md` + `inject_language: true`**
+  (prompt commits v2 `aa2a65c`, v3 `1ef7c40`, v4 `52e2746`; injection feature `99a1233`).
+  **dclm 90.5% / fw2 92.5%** (fw2 from 62.5% baseline = +30pp; English held).
 - **config.yaml NOT changed** (live/user file): to make this the default for the qwen3.6-35b candidate set
-  `prompt_reflection: generator_reflection_v3.md` and `inject_language: true`.
-- Remaining fw2 headroom: jpn weakest, residual cmn (contaminated subset) + temp-1.0 variance tail.
-  Further generic prompt levers low-yield (dclm severity-routing/openers both reverted); future gains likely
-  need per-language *quality* directives (the injection hook now makes that easy) or a cleaner cmn bench.
+  `prompt_reflection: generator_reflection_v4.md` and `inject_language: true`.
+- Remaining fw2 tail (~15 rejects) is small and mixed (borderline consensual-adult the judge only caps at 3;
+  residual cmn contamination; temp-1.0 variance). Diminishing returns — likely the stopping point.
 
 ### Multilingual (fw2) — starting
 - All current prompts already carry a `## Language` section ("write reflection_1p in the SAME language as
