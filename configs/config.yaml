@@ -152,7 +152,8 @@ charter:
         hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
         context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
-        prompt_reflection: generator_reflection_v1.md
+        prompt_reflection: generator_reflection_v4.md   # dclm 90.5% / fw2 92.5% (v2 under-reading + v3 source-lang + v4 adult-content lever)
+        inject_language: true                            # per-language directive after the doc; no-op for English
         sampling:   # generation_config default minus presence_penalty (A/B winner; pp=1.5 hurt quality)
           temperature: 1.0
           top_p: 0.95
