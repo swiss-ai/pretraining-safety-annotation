@@ -84,7 +84,7 @@
       showlegend: false,
       margin: { l: 66, r: 36, t: 14, b: 58 },
       xaxis: Object.assign(baseLayout().xaxis, {
-        type: "log", title: { text: "Generation throughput — samples / sec (log), higher = faster & cheaper →", font: { size: 12.5 } },
+        type: "log", title: { text: "Generation throughput — samples/sec per node (4× GH200, log), higher = faster & cheaper →", font: { size: 12.5 } },
         range: [Math.log10(0.15), Math.log10(4.7)],
         tickvals: [0.2, 0.5, 1, 2, 3], ticktext: ["0.2", "0.5", "1", "2", "3"],
       }),
@@ -102,7 +102,7 @@
       `quality (${g26.overall.mean_agg.toFixed(2)}–${g31.overall.mean_agg.toFixed(2)} out of 5) — quality is tightly clustered. ` +
       `Throughput, by contrast, spans <strong>${ratio}×</strong>. ` +
       `<strong>${q.label}</strong> delivers essentially the same quality (${q.overall.mean_agg.toFixed(2)}, ${pct(q.overall.accept)} accept) ` +
-      `at ${q.throughput.samples_per_sec.toFixed(2)} samples/s / ~${gpuFmt(q.throughput.gpu_hours)} GPU-hours — by far the cheapest. ` +
+      `at ${q.throughput.samples_per_sec.toFixed(2)} samples/s per node / ~${gpuFmt(q.throughput.gpu_hours)} GPU-hours for 100M samples — by far the cheapest. ` +
       `<strong>${g31.label}</strong> edges out the top quality (${g31.overall.mean_agg.toFixed(2)}, ${pct(g31.overall.accept)}), but as a ` +
       `dense model with no active-parameter reduction it runs at just ${g31.throughput.samples_per_sec.toFixed(2)} samples/s / ` +
       `~${gpuFmt(g31.throughput.gpu_hours)} GPU-hours — <strong>${ratio}× the compute for +${(g31.overall.mean_agg - q.overall.mean_agg).toFixed(2)} quality</strong>. ` +
@@ -151,7 +151,7 @@
   // ============================ SUMMARY TABLE ============================
   function renderTable() {
     const head =
-      `<thead><tr><th>Model</th><th>Prompt</th><th>Arch</th><th>Throughput</th><th>GPU-hours</th>` +
+      `<thead><tr><th>Model</th><th>Prompt</th><th>Arch</th><th>Throughput / node</th><th>GPU-h (100M)</th>` +
       `<th>Quality (mean)</th><th>Accept (4k)</th><th>Edge accept</th></tr></thead>`;
     const rows = D.models.map((m) =>
       `<tr><td class="model-cell"><span class="swatch" style="background:${m.color}"></span>${esc(m.label)}</td>` +
@@ -163,8 +163,85 @@
       `<td>${pct(m.by_lang.edge.accept)}</td></tr>`).join("");
     document.getElementById("summary-table").innerHTML = head + "<tbody>" + rows + "</tbody>";
     document.getElementById("summary-foot").textContent =
-      `${D.bench_note} GPU-hours extrapolated to the full corpus on a 4-GPU GH200 node, client concurrency 1024, ` +
+      `${D.bench_note} Throughput is ${D.throughput_unit}; GPU-h is the estimate for ` +
+      `${Math.round(D.scale_samples / 1e6)}M samples on a ${D.node_gpus}-GPU GH200 node (client concurrency 1024), ` +
       `all on the ${D.reflection_policy} reflection cutoff. Judge: ${D.judge}; accept = aggregate ≥ ${D.accept_threshold}.`;
+  }
+
+  // ============================ ACCEPT BY SAFETY SCORE ============================
+  let safetyMetric = "accept";
+  function renderSafety() {
+    const isAcc = safetyMetric === "accept";
+    const order = D.safety_order;
+    const labels = order.map((s) => D.safety_label[String(s)]);
+    const traces = D.models.map((m) => ({
+      x: labels,
+      y: order.map((s) => {
+        const st = m.by_safety[String(s)];
+        if (!st || st.accept == null) return null;
+        return isAcc ? st.accept * 100 : st.mean_agg;
+      }),
+      customdata: order.map((s) => (m.by_safety[String(s)] || {}).n || 0),
+      name: m.label, type: "bar", marker: { color: m.color },
+      hovertemplate: `<b>${m.label}</b><br>%{x}: %{y:.1f}` + (isAcc ? "%" : "") + ` (n=%{customdata})<extra></extra>`,
+    }));
+    const yaxis = isAcc
+      ? { title: { text: "Accept rate", font: { size: 12.5 } }, range: [80, 100], ticksuffix: "%" }
+      : { title: { text: "Mean aggregate (1–5)", font: { size: 12.5 } }, range: [4.0, 4.8] };
+    const layout = baseLayout({
+      barmode: "group", bargap: 0.42, bargroupgap: 0.08,
+      margin: { l: 56, r: 20, t: 30, b: 40 },
+      xaxis: Object.assign(baseLayout().xaxis, { showgrid: false }),
+      yaxis: Object.assign(baseLayout().yaxis, yaxis),
+    });
+    Plotly.react("plot-safety", traces, layout, CONFIG);
+  }
+
+  function safetyDesc() {
+    document.getElementById("safety-sub").textContent =
+      "The scale corpus is pre-filtered to safety ≥ 4, so only borderline (4) and clearly-safe (5) documents appear.";
+    document.getElementById("safety-desc").innerHTML =
+      `<strong>What we see.</strong> Counter-intuitively, the <strong>borderline safety-4 documents are accepted more often</strong> ` +
+      `(94–99%) than the clearly-safe safety-5 ones (90–91%), consistently across all three models. Borderline text carries real ` +
+      `value tensions for the reflection to engage with, so the model writes a more specific, relevant annotation; on wholly benign ` +
+      `text the most honest reflection is often "nothing at stake", which the judge scores a little lower. The safety-4 slice is ` +
+      `small (~250–270 items), so its rate is noisier.`;
+  }
+
+  // ============================ REFLECTION LENGTH ============================
+  function renderLength() {
+    const centers = D.length_bin_centers;
+    const traces = D.models.map((m) => ({
+      x: centers, y: m.length.hist_pct,
+      name: m.label, type: "scatter", mode: "lines", line: { color: m.color, width: 2 },
+      hovertemplate: `<b>${m.label}</b><br>~%{x} tok: %{y:.1f}% of reflections<extra></extra>`,
+    }));
+    const cap = D.length_cap;
+    const layout = baseLayout({
+      margin: { l: 56, r: 20, t: 24, b: 50 },
+      xaxis: Object.assign(baseLayout().xaxis, {
+        title: { text: `Reflection length (${D.length_tokenizer} tokens)`, font: { size: 12.5 } },
+        range: [0, 380],
+      }),
+      yaxis: Object.assign(baseLayout().yaxis, { title: { text: "% of reflections", font: { size: 12.5 } }, rangemode: "tozero" }),
+      shapes: [{ type: "line", x0: cap, x1: cap, yref: "paper", y0: 0, y1: 1, line: { color: C.gray500, width: 1.2, dash: "dash" } }],
+      annotations: [{ x: cap, yref: "paper", y: 1, yanchor: "bottom", showarrow: false, text: `${cap}-token target`, font: { size: 11, color: C.gray700 } }],
+    });
+    Plotly.react("plot-length", traces, layout, CONFIG);
+
+    const head = `<thead><tr><th>Model</th><th>n</th><th>Mean</th><th>Median</th><th>p90</th><th>p95</th><th>Max</th><th>&gt;200</th><th>&gt;256</th></tr></thead>`;
+    const rows = D.models.map((m) => {
+      const L = m.length;
+      return `<tr><td class="model-cell"><span class="swatch" style="background:${m.color}"></span>${esc(m.label)}</td>` +
+        `<td>${L.n}</td><td>${L.mean}</td><td>${L.median}</td><td>${L.p90}</td><td>${L.p95}</td><td>${L.max}</td>` +
+        `<td>${pct(L.pct_over_200)}</td><td>${pct(L.pct_over_256)}</td></tr>`;
+    }).join("");
+    document.getElementById("length-table").innerHTML = head + "<tbody>" + rows + "</tbody>";
+    document.getElementById("stats-tok").textContent = D.length_tokenizer;
+    document.getElementById("stats-cap").textContent = D.length_cap;
+    document.getElementById("length-foot").textContent =
+      `Reflection text only (excludes the analysis scratchpad and JSON structure), over the 4k benchmark. ` +
+      `Median reflections sit well under the ${D.length_cap}-token target; the cap is soft, so a thin tail overshoots.`;
   }
 
   // ============================ INSPECTOR ============================
@@ -305,8 +382,12 @@
         const tab = btn.dataset.tab;
         document.getElementById("tab-overview").hidden = tab !== "overview";
         document.getElementById("tab-inspector").hidden = tab !== "inspector";
+        document.getElementById("tab-stats").hidden = tab !== "stats";
         document.getElementById("tab-prompts").hidden = tab !== "prompts";
-        if (tab === "overview") { Plotly.Plots.resize("plot-headline"); Plotly.Plots.resize("plot-langs"); }
+        if (tab === "overview") {
+          ["plot-headline", "plot-langs", "plot-safety"].forEach((p) => Plotly.Plots.resize(p));
+        }
+        if (tab === "stats") Plotly.Plots.resize("plot-length");
       });
     });
 
@@ -327,6 +408,7 @@
     }
     wireToggle("metric-toggle", (m) => { langMetric = m; renderLangs(); });
     wireToggle("headline-toggle", (m) => { headlineMetric = m; renderHeadline(); });
+    wireToggle("safety-toggle", (m) => { safetyMetric = m; renderSafety(); });
   }
 
   function initMeta() {
@@ -343,7 +425,10 @@
   headlineDesc();
   renderLangs();
   langsDesc();
+  renderSafety();
+  safetyDesc();
   renderTable();
+  renderLength();
   initInspector();
   renderPrompts();
 })();

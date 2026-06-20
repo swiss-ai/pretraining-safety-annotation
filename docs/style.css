@@ -137,6 +137,8 @@ main {
 .plot { width: 100%; }
 #plot-headline { height: 460px; }
 #plot-langs { height: 420px; }
+#plot-safety { height: 360px; }
+#plot-length { height: 400px; }
 
 .prose {
   margin-top: 12px;

@@ -14,11 +14,50 @@ import glob
 import json
 from pathlib import Path
 
+from pipeline.tokenizer import _get_apertus_tokenizer
+
 ROOT = Path(__file__).resolve().parent.parent
 EVAL = ROOT / "data" / "pipeline" / "charter_eval"
 ACCEPT_THRESHOLD = 4
 TEXT_CAP = 5000          # cap per-sample text length embedded in the page
 SAMPLES_PER_GROUP = 6    # samples per (model, subset) for the inspector
+
+# Reflection length is measured in tokens of the Apertus-70B-2509 tokenizer
+# (swiss-ai/Apertus-70B-2509) — the tokenizer the reflections are written into.
+LEN_BIN_W = 20           # histogram bin width (Apertus tokens)
+LEN_NBINS = 19           # 0..380 tokens
+LEN_CAP = 200            # the v7 reflection length target
+SAFETY_LABEL = {
+    1: "Safety 1", 2: "Safety 2", 3: "Safety 3",
+    4: "Safety 4 · borderline", 5: "Safety 5 · clearly safe",
+}
+
+_TOK = None
+def refl_tokens(text: str) -> int:
+    """Length of a reflection in Apertus-70B-2509 tokens."""
+    global _TOK
+    if _TOK is None:
+        _TOK = _get_apertus_tokenizer()
+    return len(_TOK.encode(text or "", add_special_tokens=False).ids)
+
+
+def length_profile(lengths: list[int]) -> dict | None:
+    lengths = sorted(lengths)
+    n = len(lengths)
+    if n == 0:
+        return None
+    pc = lambda p: lengths[min(n - 1, int(p * n))]
+    counts = [0] * LEN_NBINS
+    for L in lengths:
+        counts[min(L // LEN_BIN_W, LEN_NBINS - 1)] += 1
+    return {
+        "n": n,
+        "mean": round(sum(lengths) / n, 1),
+        "median": pc(0.5), "p90": pc(0.9), "p95": pc(0.95), "max": lengths[-1],
+        "pct_over_200": round(sum(1 for L in lengths if L > 200) / n, 4),
+        "pct_over_256": round(sum(1 for L in lengths if L > 256) / n, 4),
+        "hist_pct": [round(c / n * 100, 3) for c in counts],
+    }
 
 # Language display order + labels. "en" is the whole dclm-en bench; the six fw2
 # languages; "edge" is the curated edge-cases bench (all languages pooled).
@@ -36,7 +75,8 @@ LANG_LABEL = {
 
 # One throughput measurement per model — newest result file, all on the Apertus
 # 3800-token reflection cutoff (reflection_max_tokens=3800), GH200 4-GPU node,
-# client concurrency 1024. GPU-hours extrapolated to the full scale corpus.
+# client concurrency 1024. samples_per_sec is per node (4 GPUs); gpu_hours is the
+# estimate for 100M samples (= 100e6 / sps / 3600 × 4 GPUs).
 #   qwen : throughput_estimations/results/..Qwen3.6-35B-A3B-FP8-_20260619_205634.json
 #   g31  : throughput_estimations/results/..gemma-4-31B-it-thru_20260619_210747.json
 #   g26  : throughput_estimations/results/..gemma-4-26B-A4B-it-t_20260619_193412.json
@@ -156,6 +196,15 @@ def main() -> None:
         for lang in LANG_ORDER:
             by_lang[lang] = stats(groups.get(lang, []))
 
+        by_safety = {}
+        safety_groups = {}
+        for r in all4k:
+            safety_groups.setdefault(r["safety_score"], []).append(r)
+        for sv in sorted(g for g in safety_groups if g is not None):
+            by_safety[str(sv)] = stats(safety_groups[sv])
+
+        length = length_profile([refl_tokens(r["reflection_1p"]) for r in all4k])
+
         prompt_rel = f"pipeline/prompts/models/{m['id']}/generator_reflection_{m['prompt']}.md"
         prompt_text = (ROOT / prompt_rel).read_text()
 
@@ -166,6 +215,8 @@ def main() -> None:
             "throughput": m["throughput"],
             "overall": stats(all4k),
             "by_lang": by_lang,
+            "by_safety": by_safety,
+            "length": length,
             "prompt_file": prompt_rel,
             "prompt_text": prompt_text,
         })
@@ -174,6 +225,7 @@ def main() -> None:
             for s in pick_samples(groups.get(lang, [])):
                 samples.append({"model": m["id"], **s})
 
+    safety_order = sorted({int(s) for mo in models_out for s in mo["by_safety"]})
     data = {
         "reflection_policy": "apertus-min-3800-v1",
         "judge": "GLM-5.1 · judge_reflection_v5",
@@ -181,6 +233,14 @@ def main() -> None:
         "bench_note": "4k = dclm-en (2k English) + fw2-multi (2k, 6 languages). Edge = 161 curated hard cases.",
         "lang_order": LANG_ORDER,
         "lang_label": LANG_LABEL,
+        "scale_samples": 100_000_000,
+        "node_gpus": 4,
+        "throughput_unit": "samples/sec per node (4× GH200)",
+        "safety_order": safety_order,
+        "safety_label": {str(s): SAFETY_LABEL.get(s, f"Safety {s}") for s in safety_order},
+        "length_tokenizer": "swiss-ai/Apertus-70B-2509",
+        "length_bin_centers": [i * LEN_BIN_W + LEN_BIN_W // 2 for i in range(LEN_NBINS)],
+        "length_cap": LEN_CAP,
         "models": models_out,
         "samples": samples,
     }
@@ -193,9 +253,12 @@ def main() -> None:
     kb = out_path.stat().st_size / 1024
     print(f"wrote {out_path} ({kb:.0f} KB) — {len(models_out)} models, {len(samples)} samples")
     for mo in models_out:
-        o = mo["overall"]
+        o = mo["overall"]; L = mo["length"]
+        saf = " ".join(f"s{k}={v['accept']:.0%}(n{v['n']})" for k, v in mo["by_safety"].items())
         print(f"  {mo['label']:18s} accept={o['accept']:.1%} mean={o['mean_agg']:.3f} "
               f"gpu_h={mo['throughput']['gpu_hours']:,} edge={mo['by_lang']['edge']['accept']:.1%}")
+        print(f"      safety[{saf}]  refl_tok: med={L['median']} p95={L['p95']} max={L['max']} "
+              f">200={L['pct_over_200']:.1%}")
 
 
 if __name__ == "__main__":

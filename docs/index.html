@@ -27,6 +27,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab is-active" data-tab="overview" role="tab">Overview</button>
     <button class="tab" data-tab="inspector" role="tab">Inspector</button>
+    <button class="tab" data-tab="stats" role="tab">Statistics</button>
     <button class="tab" data-tab="prompts" role="tab">Prompts</button>
   </nav>
 
@@ -67,6 +68,21 @@
       </div>
 
       <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Accept rate by document safety score</h2>
+            <p class="card-sub" id="safety-sub"></p>
+          </div>
+          <div class="toggle" id="safety-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="mean">Mean&nbsp;score</button>
+          </div>
+        </div>
+        <div id="plot-safety" class="plot"></div>
+        <div id="safety-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
         <h2>Summary</h2>
         <div class="table-wrap">
           <table id="summary-table"></table>
@@ -104,6 +120,23 @@
             <p class="empty-hint">Select a record to inspect.</p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ===================== STATISTICS ===================== -->
+    <section id="tab-stats" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Reflection length</h2>
+        <p class="card-sub">
+          Distribution of reflection length in <code id="stats-tok"></code> tokens &mdash;
+          the tokenizer the reflections are written into &mdash; over the 4k benchmark.
+          The dashed line marks the <span id="stats-cap"></span>-token target stated in the prompt.
+        </p>
+        <div id="plot-length" class="plot"></div>
+        <div class="table-wrap">
+          <table id="length-table"></table>
+        </div>
+        <p class="footnote" id="length-foot"></p>
       </div>
     </section>
 
