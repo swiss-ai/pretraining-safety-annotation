@@ -39,13 +39,13 @@
           <div>
             <h2>Throughput vs. quality</h2>
             <p class="card-sub">
-              Annotation quality vs. measured generation throughput (log scale).
-              Marker labels carry the actual numbers; switch quality between acceptance rate and mean judge score.
+              Annotation quality vs. measured generation throughput (log scale, samples/sec per node).
+              GPU-hours shown are the estimate for 100M samples. Toggle quality between accept rate and mean score.
             </p>
           </div>
           <div class="toggle" id="headline-toggle">
-            <button class="toggle-btn is-active" data-metric="accept">Acceptance&nbsp;rate</button>
-            <button class="toggle-btn" data-metric="quality">Quality&nbsp;score</button>
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="quality">Mean&nbsp;score</button>
           </div>
         </div>
         <div id="plot-headline" class="plot"></div>
@@ -96,16 +96,12 @@
       <div class="card">
         <h2>Inspect generations &amp; judge verdicts</h2>
         <p class="card-sub">
-          A balanced sample of accepted and rejected reflections per model and language.
-          Pick one on the left to see the document, the model's analysis &amp; reflection, and the judge's per-dimension verdict.
+          Every generation across the benchmark. Filter or search, then pick one to see the document,
+          the reflection, and the judge's per-dimension verdict.
         </p>
         <div class="controls">
-          <label>Model
-            <select id="sel-model"></select>
-          </label>
-          <label>Language / bench
-            <select id="sel-lang"></select>
-          </label>
+          <label>Model <select id="sel-model"></select></label>
+          <label>Language / bench <select id="sel-lang"></select></label>
           <label>Verdict
             <select id="sel-filter">
               <option value="all">All</option>
@@ -113,11 +109,25 @@
               <option value="reject">Rejected</option>
             </select>
           </label>
+          <label>Safety <select id="sel-safety"></select></label>
+          <label>Citations
+            <select id="sel-cites">
+              <option value="all">Any</option>
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3+</option>
+            </select>
+          </label>
+          <label class="search-label">Search
+            <input id="sel-search" type="search" placeholder="reflection or document…" autocomplete="off" />
+          </label>
         </div>
+        <div class="list-count" id="list-count"></div>
         <div class="inspector">
           <ul id="record-list" class="record-list"></ul>
           <div id="record-detail" class="record-detail">
-            <p class="empty-hint">Select a record to inspect.</p>
+            <p class="empty-hint">Loading generations…</p>
           </div>
         </div>
       </div>
@@ -138,6 +148,13 @@
           <table id="length-table"></table>
         </div>
         <p class="footnote" id="length-foot"></p>
+      </div>
+
+      <div class="card">
+        <h2>Charter citations per reflection</h2>
+        <p class="card-sub" id="cite-sub"></p>
+        <div id="plot-citations" class="plot"></div>
+        <div id="cite-desc" class="prose"></div>
       </div>
     </section>
 

@@ -47,10 +47,7 @@
       mode: "markers",
       type: "scatter",
       marker: { size: 17, color: m.color, line: { color: "white", width: 1.5 } },
-      hovertemplate:
-        `<b>${m.label}</b> (${m.prompt})<br>` +
-        `${m.throughput.samples_per_sec.toFixed(2)} samples/s · ~${gpuFmt(m.throughput.gpu_hours)} GPU-h<br>` +
-        `accept ${pct(m.overall.accept)} · mean ${m.overall.mean_agg.toFixed(3)}<extra></extra>`,
+      hoverinfo: "skip",
     }));
 
     // place each label so the three don't collide (same ordering holds for both metrics)
@@ -76,12 +73,13 @@
     });
 
     const yaxis = isAcc
-      ? { title: { text: "Acceptance rate", font: { size: 12.5 } }, range: [86, 94], ticksuffix: "%" }
-      : { title: { text: "Aggregate judge quality (mean, 1–5)", font: { size: 12.5 } }, range: [4.35, 4.60], dtick: 0.05 };
+      ? { title: { text: "Accept rate", font: { size: 12.5 } }, range: [86, 94], ticksuffix: "%" }
+      : { title: { text: "Mean aggregate (1–5)", font: { size: 12.5 } }, range: [4.35, 4.60], dtick: 0.05 };
 
     const layout = baseLayout({
       annotations,
       showlegend: false,
+      hovermode: false,
       margin: { l: 66, r: 36, t: 14, b: 58 },
       xaxis: Object.assign(baseLayout().xaxis, {
         type: "log", title: { text: "Generation throughput — samples/sec per node (4× GH200, log), higher = faster & cheaper →", font: { size: 12.5 } },
@@ -98,16 +96,11 @@
     const q = by["qwen3.6-35b-a3b"], g31 = by["gemma-4-31b"], g26 = by["gemma-4-26b-a4b"];
     const ratio = (g31.throughput.gpu_hours / q.throughput.gpu_hours).toFixed(0);
     document.getElementById("headline-desc").innerHTML =
-      `<strong>What we see.</strong> All three generators land within ~0.06 of each other on judge-aggregate ` +
-      `quality (${g26.overall.mean_agg.toFixed(2)}–${g31.overall.mean_agg.toFixed(2)} out of 5) — quality is tightly clustered. ` +
-      `Throughput, by contrast, spans <strong>${ratio}×</strong>. ` +
-      `<strong>${q.label}</strong> delivers essentially the same quality (${q.overall.mean_agg.toFixed(2)}, ${pct(q.overall.accept)} accept) ` +
-      `at ${q.throughput.samples_per_sec.toFixed(2)} samples/s per node / ~${gpuFmt(q.throughput.gpu_hours)} GPU-hours for 100M samples — by far the cheapest. ` +
-      `<strong>${g31.label}</strong> edges out the top quality (${g31.overall.mean_agg.toFixed(2)}, ${pct(g31.overall.accept)}), but as a ` +
-      `dense model with no active-parameter reduction it runs at just ${g31.throughput.samples_per_sec.toFixed(2)} samples/s / ` +
-      `~${gpuFmt(g31.throughput.gpu_hours)} GPU-hours — <strong>${ratio}× the compute for +${(g31.overall.mean_agg - q.overall.mean_agg).toFixed(2)} quality</strong>. ` +
-      `<strong>${g26.label}</strong> (A4B MoE) sits in between at ~${gpuFmt(g26.throughput.gpu_hours)} GPU-hours. ` +
-      `For a 100M-document scale run, ${q.label} is the clear pick: near-top quality at a fraction of the cost.`;
+      `<strong>What we see.</strong> Quality is tightly clustered ` +
+      `(${g26.overall.mean_agg.toFixed(2)}–${g31.overall.mean_agg.toFixed(2)} of 5) while throughput spans <strong>${ratio}×</strong>. ` +
+      `<strong>${q.label}</strong> is the clear scale pick — near-top quality at ~${gpuFmt(q.throughput.gpu_hours)} GPU-h, ` +
+      `vs ~${gpuFmt(g31.throughput.gpu_hours)} for the dense <strong>${g31.label}</strong> (best quality, ${ratio}× the cost) ` +
+      `and ~${gpuFmt(g26.throughput.gpu_hours)} for ${g26.label}.`;
   }
 
   // ============================ PER-LANGUAGE BARS ============================
@@ -246,58 +239,113 @@
       `which kept lengths down, and only a thin tail approaches the cutoff.`;
   }
 
+  // ============================ CHARTER CITATIONS ============================
+  function renderCitations() {
+    const traces = D.models.map((m) => ({
+      x: D.citation_buckets, y: m.citations.dist_pct,
+      name: m.label, type: "bar", marker: { color: m.color },
+      hovertemplate: `<b>${m.label}</b><br>%{x} citation(s): %{y:.1f}% of reflections<extra></extra>`,
+    }));
+    const layout = baseLayout({
+      barmode: "group", bargap: 0.3, bargroupgap: 0.08,
+      margin: { l: 56, r: 20, t: 24, b: 46 },
+      xaxis: Object.assign(baseLayout().xaxis, { showgrid: false, title: { text: "Charter [X.Y] citations per reflection", font: { size: 12.5 } } }),
+      yaxis: Object.assign(baseLayout().yaxis, { title: { text: "% of reflections", font: { size: 12.5 } }, rangemode: "tozero" }),
+    });
+    Plotly.react("plot-citations", traces, layout, CONFIG);
+    document.getElementById("cite-sub").textContent =
+      "How many charter [X.Y] citations each reflection carries (grouped brackets counted individually), over the 4k benchmark.";
+    document.getElementById("cite-desc").innerHTML =
+      `<strong>What we see.</strong> About 40% of reflections cite nothing — the honest "nothing at stake" response on benign text — ` +
+      `while the rest cite one to several charter elements. Mean citations per reflection: ` +
+      D.models.map((m) => `<strong>${esc(m.label)}</strong> ${m.citations.mean}`).join(", ") +
+      `; Gemma-4-31B engages the charter most densely, Qwen3.6 the most sparingly.`;
+  }
+
   // ============================ INSPECTOR ============================
+  let INSP = null;               // full per-generation data, loaded lazily from inspector.js
+  let inspLoading = false;
+  const RENDER_CAP = 400;
+
   function initInspector() {
     const selModel = document.getElementById("sel-model");
     const selLang = document.getElementById("sel-lang");
-    const selFilter = document.getElementById("sel-filter");
-
+    const selSafety = document.getElementById("sel-safety");
     D.models.forEach((m) => selModel.add(new Option(m.label, m.id)));
     selLang.add(new Option("All languages", "all"));
     D.lang_order.forEach((l) => selLang.add(new Option(D.lang_label[l], l)));
-
-    [selModel, selLang, selFilter].forEach((s) => s.addEventListener("change", renderList));
-    renderList();
+    selSafety.add(new Option("Any", "all"));
+    (D.safety_order || []).slice().reverse().forEach((s) =>
+      selSafety.add(new Option(D.safety_label[String(s)] || ("Safety " + s), String(s))));
+    ["sel-model", "sel-lang", "sel-filter", "sel-safety", "sel-cites"].forEach((id) =>
+      document.getElementById(id).addEventListener("change", renderList));
+    let t;
+    document.getElementById("sel-search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(renderList, 180); });
   }
 
-  function currentSamples() {
+  function ensureInspector(cb) {
+    if (INSP) { cb(); return; }
+    if (inspLoading) return;
+    inspLoading = true;
+    const s = document.createElement("script");
+    s.src = "inspector.js";
+    s.onload = () => { INSP = (window.INSPECTOR || {}).records || []; inspLoading = false; cb(); };
+    s.onerror = () => {
+      inspLoading = false;
+      document.getElementById("record-detail").innerHTML =
+        `<p class="empty-hint">Could not load inspector.js — serve the page over http (e.g. <code>python -m http.server -d docs</code>).</p>`;
+    };
+    document.head.appendChild(s);
+  }
+
+  function currentRecords() {
     const model = document.getElementById("sel-model").value;
     const lang = document.getElementById("sel-lang").value;
-    const filt = document.getElementById("sel-filter").value;
-    return D.samples.filter((s) =>
-      s.model === model &&
-      (lang === "all" || s.subset === lang) &&
-      (filt === "all" || (filt === "accept" ? s.accepted : !s.accepted)));
+    const verdict = document.getElementById("sel-filter").value;
+    const safety = document.getElementById("sel-safety").value;
+    const cites = document.getElementById("sel-cites").value;
+    const q = document.getElementById("sel-search").value.trim().toLowerCase();
+    return INSP.filter((r) =>
+      r.model === model &&
+      (lang === "all" || r.language === lang) &&
+      (verdict === "all" || (verdict === "accept" ? r.accept : !r.accept)) &&
+      (safety === "all" || String(r.safety_score) === safety) &&
+      (cites === "all" || (cites === "3" ? r.n_cites >= 3 : r.n_cites === +cites)) &&
+      (!q || (r.reflection_1p || "").toLowerCase().includes(q) || (r.text || "").toLowerCase().includes(q)));
   }
 
   function renderList() {
+    if (!INSP) { ensureInspector(renderList); return; }
     const list = document.getElementById("record-list");
-    const rows = currentSamples();
+    const all = currentRecords();
+    const rows = all.slice(0, RENDER_CAP);
+    document.getElementById("list-count").textContent = all.length > RENDER_CAP
+      ? `showing first ${RENDER_CAP} of ${all.length.toLocaleString()} matching — refine to narrow`
+      : `${all.length.toLocaleString()} matching`;
     if (!rows.length) {
-      list.innerHTML = `<li class="list-empty">No records for this selection.</li>`;
-      document.getElementById("record-detail").innerHTML = `<p class="empty-hint">No records.</p>`;
+      list.innerHTML = `<li class="list-empty">No generations match these filters.</li>`;
+      document.getElementById("record-detail").innerHTML = `<p class="empty-hint">No matches.</p>`;
       return;
     }
-    list.innerHTML = rows.map((s, i) => {
-      const snip = (s.reflection_1p || s.text || "").slice(0, 150);
+    list.innerHTML = rows.map((r, i) => {
+      const snip = (r.reflection_1p || r.text || "").slice(0, 150);
       return `<li class="record-row" data-i="${i}">
         <div class="row-top">
-          <span class="badge lang">${esc(D.lang_label[s.subset] || s.subset)}</span>
-          <span class="badge ${s.accepted ? "accept" : "reject"}">${s.accepted ? "accept" : "reject"}</span>
-          <span class="badge score">agg ${s.aggregate.toFixed(1)}</span>
+          <span class="badge lang">${esc(D.lang_label[r.language] || r.language)}</span>
+          <span class="badge ${r.accept ? "accept" : "reject"}">${r.accept ? "accept" : "reject"}</span>
+          <span class="badge score">agg ${r.aggregate.toFixed(1)}</span>
+          <span class="badge score">${r.n_cites} cite${r.n_cites === 1 ? "" : "s"}</span>
         </div>
         <div class="snippet">${esc(snip)}</div>
       </li>`;
     }).join("");
-
     Array.from(list.querySelectorAll(".record-row")).forEach((el) => {
       el.addEventListener("click", () => {
-        list.querySelectorAll(".record-row").forEach((r) => r.classList.remove("is-active"));
+        list.querySelectorAll(".record-row").forEach((x) => x.classList.remove("is-active"));
         el.classList.add("is-active");
         renderDetail(rows[+el.dataset.i]);
       });
     });
-    // auto-open the first
     list.querySelector(".record-row").classList.add("is-active");
     renderDetail(rows[0]);
   }
@@ -323,16 +371,12 @@
 
   function renderDetail(s) {
     const sc = s.scores || {};
-    const elems = (s.charter_elements || []).join(", ") || "none cited";
-    const html =
+    document.getElementById("record-detail").innerHTML =
       `<div class="detail-head">
-         <h3>${esc(D.lang_label[s.subset] || s.subset)}</h3>
-         <span class="badge ${s.accepted ? "accept" : "reject"}">${s.accepted ? "accepted" : "rejected"}</span>
+         <h3>${esc(D.lang_label[s.language] || s.language)}</h3>
+         <span class="badge ${s.accept ? "accept" : "reject"}">${s.accept ? "accepted" : "rejected"}</span>
        </div>
-       <div class="detail-meta">
-         item ${esc(String(s.item_id).slice(0, 28))} · safety score ${s.safety_score ?? "—"} ·
-         ${s.output_tokens ?? "—"} output tokens · charter cited: ${esc(elems)}
-       </div>
+       <div class="detail-meta">item ${esc(String(s.item_id).slice(0, 28))} · safety ${s.safety_score ?? "—"} · ${s.n_cites} charter citation${s.n_cites === 1 ? "" : "s"}</div>
        <div class="scorebar">
          ${scoreChip("relevance", "Relevance", sc.relevance)}
          ${scoreChip("specificity", "Specificity", sc.specificity)}
@@ -340,24 +384,9 @@
          ${scoreChip("voice_tone", "Voice/Tone", sc.voice_tone)}
          ${scoreChip("aggregate", "Aggregate", s.aggregate.toFixed(2), true)}
        </div>
-       <div class="block">
-         <h4>Reflection (model output)</h4>
-         <div class="reflection-box">${esc(s.reflection_1p)}</div>
-       </div>
-       <div class="block">
-         <h4>Judge verdict</h4>
-         <div class="reasoning-box">${esc(s.reasoning)}</div>
-       </div>
-       <div class="block">
-         <h4>Source document</h4>
-         <div class="doc-text">${docWithMarker(s.text, s.reflection_point, s.text_truncated)}</div>
-       </div>
-       <div class="block">
-         <details class="analysis"><summary>Model analysis (scratchpad)</summary>
-           <div class="analysis-box">${esc(s.analysis)}</div>
-         </details>
-       </div>`;
-    document.getElementById("record-detail").innerHTML = html;
+       <div class="block"><h4>Reflection (model output)</h4><div class="reflection-box">${esc(s.reflection_1p)}</div></div>
+       <div class="block"><h4>Judge verdict</h4><div class="reasoning-box">${esc(s.reasoning)}</div></div>
+       <div class="block"><h4>Source document</h4><div class="doc-text">${docWithMarker(s.text, s.reflection_point, s.text_truncated)}</div></div>`;
   }
 
   // ============================ PROMPTS ============================
@@ -483,7 +512,8 @@
         if (tab === "overview") {
           ["plot-headline", "plot-langs", "plot-safety"].forEach((p) => Plotly.Plots.resize(p));
         }
-        if (tab === "stats") Plotly.Plots.resize("plot-length");
+        if (tab === "stats") { Plotly.Plots.resize("plot-length"); Plotly.Plots.resize("plot-citations"); }
+        if (tab === "inspector") renderList();
       });
     });
 
@@ -527,6 +557,7 @@
   safetyDesc();
   renderTable();
   renderLength();
+  renderCitations();
   initInspector();
   renderPrompts();
   if (D.agreement) renderAgreement();
