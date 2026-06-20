@@ -78,7 +78,7 @@ _REFLECTION_VOICES = ("reflection_1p",)
 
 CHAT_MESSAGE_OVERHEAD_TOKENS = 8
 CHAT_REPLY_PRIMER_TOKENS = 16
-CONTEXT_WINDOW_MARGIN_TOKENS = 512
+CONTEXT_WINDOW_MARGIN_TOKENS = 2048  # absorbs prompt-token estimate undercount on large (charter+doc) prompts; 512 overflowed the cap by ~1 on long docs
 
 
 def _estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:

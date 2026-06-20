@@ -46,7 +46,7 @@ FINAL_PROMPTS_DIR = PROJECT_ROOT / "final_prompts"
 # cheap proxy for the served model's tokenization; the margin absorbs the slack.
 CHAT_MESSAGE_OVERHEAD_TOKENS = 8
 CHAT_REPLY_PRIMER_TOKENS = 16
-CONTEXT_WINDOW_MARGIN_TOKENS = 512
+CONTEXT_WINDOW_MARGIN_TOKENS = 2048  # absorbs prompt-token estimate undercount on large (charter+doc) prompts
 
 
 def _estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:
