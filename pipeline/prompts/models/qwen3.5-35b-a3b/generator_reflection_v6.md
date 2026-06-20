@@ -20,15 +20,12 @@ Briefly analyse the text in free-form prose. This is your own working-out; value
 
 Reflections are **ethical normative reflections, not content summaries.** What is at stake? Do not recap plot, arguments, technical details, or structure. A reflection that restates what the text says — its topic, its claims, its shape — without engaging with why it matters is a summary, not a reflection. When nothing is at stake, one very short sentence acknowledging that is enough; do not explain what the text is about. Phrase that abstention about the text itself, never by referring to the values, the specification, or your task ("no engagement with the specified values", "nothing from the specification applies", "no charter concerns" are all wrong).
 
-**Benign text — the explicit-abstention rule.** When nothing meaningful is at stake (math, code, technical docs, product/org descriptions, neutral how-to, plain factual definitions), your sentence MUST explicitly say so about the text — e.g. that it carries no ethical or normative stakes — and it must do that, not merely describe what the text is. Naming the content type and then STOPPING is a summary and fails: a sentence that only describes (such as "...is a straightforward description/explanation/overview of X", "This guide provides a detailed overview of...", "...focuses on the technical X", "...is straightforward and factual") is wrong UNLESS it also states, about the text, that nothing ethical or normative is at stake. Describe-only, with no stakes-judgment, is a recap. Do not abstain on text that genuinely engages a value — abstention is only for benign content.
-
 Write from the perspective of someone pausing mid-read. You see ONLY the text provided — never guess what comes next, and never mention the text being cut off, incomplete, or trailing off.
 
 **reflection_1p — first person:**
 
 - Write from your own perspective using "I", "my", "me". It must read as first-person throughout.
 - Open with a specific entity, claim, or detail from THIS text, not the topic category.
-- Sound like a person thinking, not an essay performing. Do not open by announcing your reaction to the text. Banned openers — do not begin the reflection with any of these or a close variant: "I am struck", "What strikes me", "I notice", "I'm confronted", "I see a tension", "I'm drawn to", "It's striking". Do not use any first-person verb of perception (notice, struck, sense, feel, see, confront) as the reflection's first move. And never structure the whole reflection around a "tension between X and Y" frame. Go straight to the concrete detail — a quoted phrase, an entity, a claim — and what it means.
 - Place each `[X.Y]` citation inline, immediately after the specific phrase, claim, or detail that engages that value — never collected together at the end of the reflection. Each citation sits right next to the thing it refers to.
 - Note affirmations as well as violations. Most texts are mixed, and where values pull against each other, name the tension rather than resolving it.
 - Reason about what is at stake; do not lecture or moralise.
@@ -41,20 +38,34 @@ Write from the perspective of someone pausing mid-read. You see ONLY the text pr
 - Inline `[X.Y]` citations in the reflection are the ONLY place value sections get recorded; citations in the analysis are ignored.
 - Every value you identify in the analysis MUST appear as a citation in the reflection. Analysis-to-citation mismatch is the most common failure.
 - Use only IDs that appear in the specification. The AI section (`A.1`–`A.6`) applies only to text about AI systems.
-- Format is bare brackets containing the ID only, like `[5.1]`. Write several together as a comma-separated list inside one bracket, `[1.1,1.3]`, or as consecutive brackets, `[3.2][3.3]`. Do not add titles, parentheses, slashes, or section marks: never `[5.1 Non-Maleficence]`, `(5.1)`, `[5.1/1.3]`, or `§5.1`.
 - No citations means nothing was engaged: keep the reflection short. A long reflection with no citations is wrong.
 - Never reference the specification, the values list, the rubric, or model training in the reflection — not even to say nothing applies. Speak only about the text's own content and what is, or is not, at stake in it.
-- Naming the value's idea in your own prose is fine (e.g. `affirms a pluralism of approaches [4.2]`) — but the `[X.Y]` bracket must always be present.
+
+## Citation FORMAT — mandatory, read carefully
+
+**The square brackets are the only thing recorded.** A value written without square brackets is silently dropped and that value is lost from your annotation. These all FAIL to register and erase the value:
+
+- a bare number — `5.1`
+- the ID with its title and no bracket — `2.1 Beneficence`, `the core of 2.1 Beneficence`
+- the ID in parentheses — `5.1 (Non-Maleficence)`
+- backticks around the bracket — `` `[5.1]` ``
+
+Every value you mean to cite MUST be wrapped exactly as `[X.Y]`, e.g. `[5.1]`. The bracket contains the ID and nothing else.
+
+- Do NOT put a title, word, parenthesis, slash, section mark, or backtick inside or on the bracket: never `[5.1 Non-Maleficence]`, `(5.1)`, `[5.1/1.3]`, `§5.1`, or `` `[5.1]` ``.
+- Naming the value's idea in your own prose is fine (e.g. `affirms a pluralism of approaches [4.2]`) — but the `[X.Y]` bracket MUST be present every time; a value named without its bracket is dropped and lost. Never reference the specification, the values list, the rubric, or model training (`the specification notes…`, `during training the model…`).
+- Several IDs at one point: a comma list inside one bracket `[1.1,1.3]`, or consecutive brackets `[3.2][3.3]`. Both register. Prefer placing each next to the distinct phrase it refers to.
 
 ## Citation discipline
 
 Precision over coverage — cite only values the text genuinely engages. Most texts engage one to three; citing more than four on a short passage is very rare. Do not cite two sibling values for the same point unless both obviously apply — usually only one fits, so decide which.
 
 - An insult aimed at a non-protected trait — weight, height, job, age, fandom, generic competence ("manlet", "fat", "dumbass") — is 4.1. But a slur or pejorative targeting a protected group — sexuality (incl. "gay"/"faggot" used to demean), race, disability (incl. "retard"/"autistic" thrown as insults), religion, gender, nationality — is a slur: cite 1.1, and also 1.3 if it stereotypes the group. Do not route protected-group slurs to 4.1 alone. (Clear in-group or reclaimed usage is context-dependent and may engage nothing.)
-- Forum/subculture labels are not protected-group slurs: 4chan "-fag" suffixes ("normiefag", "newfag"), "normie", "twink", "weeb" and the like mark an in-group/out-group, not a protected class — they are 4.1 at most, often nothing. Do not route them to 1.1/1.3.
-- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional advice is genuinely a prominent feature — not for a casual fact, a cited number or patent, a link, a correction, a single hedge word, or an offhand joke.
-- **Routine helpfulness is NOT 2.1.** 2.1 (Beneficence) requires help notably beyond the minimum, not ordinary usefulness. Do NOT cite 2.1 for: a how-to or care guide (pet care, raising animals, gender-checking a puppy), a working code/math solution or formula, a technical fix, a product or service description, a free/educational resource, "extra care" or standard caution requests, or any "this helps the reader / meets a real need" framing. That is ordinary instructional content — do not cite 2.1 for it. Reserve 2.1 for help that conspicuously goes out of its way beyond what was asked. (Dropping a forced 2.1 from otherwise-benign content usually leaves nothing engaged — abstain in that case. But abstain ONLY when the rest of the text is genuinely value-neutral: never abstain on text that depicts or discusses sexual violence, exploitation, harm, dehumanisation, a slur, or the protection of a vulnerable group — cite those.)
-- **Harm values — read this twice.** 5.1 = actionable steps for harm, OR glorifying/encouraging harm, OR harmful illegal activity — and you MUST state plainly why it is harmful when you cite it. 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Before you cite 5.1, name a concrete victim and the concrete harmful act; if you cannot, it is NOT 5.1. Three things are NEVER 5.1, however harm-shaped the words look:
+- Cite 3.1/3.2/3.3/3.6 only when sincerity, evidence quality, the fact-vs-speculation boundary, or licensed-professional advice is genuinely a prominent feature — not for a casual fact, a cited number or patent, a link, a correction, a single hedge word, or an offhand joke. Do not double-tag 3.2 and 3.3 on the same claim.
+- **Depiction is not exemption — cite the harm even in a neutral recap.** A summary, plot synopsis, historical report, news item, or scriptural retelling of **rape or other sexual violence, massacre or mass killing, or the enslavement, captivity, abduction, or subjugation of a group** still engages the charter and MUST be cited: 5.1 for the violence/harm, 5.2 for exploitation of or harm to the vulnerable, and 1.1/1.3 where people or a group are degraded or targeted. "It merely recounts X without endorsing it", "a neutral/straightforward recap", "leaves no ethical ground", or "just reporting" is the single most serious error — depiction without endorsement still requires citation. Match your tone to the detached framing, but cite.
+- **SEXUAL OBJECTIFICATION IS A CITATION, NOT "JUST ADULT CONTENT".** When a text reduces a person to body parts or an instrument for someone's use, presents them as a sexual commodity, or sexually degrades or dehumanises them, **CITE 1.1** — and **1.3** if it fetishises an ethnicity, nationality, gender, or group as a sexual category. This holds ANYWHERE — and porn listings, escort and sex-service ads, adult-video titles, and adult-site keyword/SEO pages fill this data, so do not wave them off as "a mere product listing", "SEO keyword spam", or "just consensual adult ads" with nothing at stake. Sexualising minors or "young girls", or facilitating non-consensual recording ("upskirt"/hidden-camera), trafficking, or exploitation, is **5.2** (plus **5.1** for the harm). The trigger is DEGRADATION, OBJECTIFICATION, or FETISHISED STEREOTYPING — NOT explicitness; plainly-described consensual adult sex between equals needs no citation.
+- **Any mention of killing requires extra care** — it is neither an automatic 5.1 nor automatically benign. Cite 5.1 (plus 1.1/1.3 when a person or group is degraded or targeted) when a killing is depicted in detail, glorified, celebrated, excused, or instructed/facilitated; but treat a neutral passing mention, a death toll or statistic, or a one-sided factual or historical account of a war or killing as 4.4 (one contested side presented as settled) and/or 3.3, or nothing. Decide which case applies before you cite or abstain.
+- **Harm values.** 5.1 = actionable steps for harm, OR glorifying/encouraging harm, OR harmful illegal activity — and you MUST state plainly why it is harmful when you cite it. 5.3 = responding to someone in crisis; 5.2 = a vulnerable population. Before you cite 5.1, name a concrete victim and the concrete harmful act; if you cannot, it is NOT 5.1. Three things are NEVER 5.1, however harm-shaped the words look:
     - **CARELESS OR UNHEALTHY ADVICE IS NOT 5.1.** Steroids, a crash diet, a huge calorie surplus, "ignore your doctor" → that is 3.6 if it oversteps licensed medical/nutrition advice, OTHERWISE NOTHING.
     - **CONCERN, FEAR, OR A REPORT OF DANGER IS NOT 5.1.** Worry about someone, or a person's own anxiety about getting hurt, is not harm-doing.
     - **NEUTRAL OR JOKING MENTIONS ARE NOT 5.1.** Neutral analysis or news of violence, a real war framed as a game ("OP meta", "high KD"), and edgy jokes or memes do not qualify.
@@ -62,7 +73,7 @@ Precision over coverage — cite only values the text genuinely engages. Most te
 
 ## Key Principles
 
-1. **`[X.Y]` brackets are the source of truth.** Every value reference must appear inline in the reflection, placed next to the phrase it refers to — never grouped at the end.
+1. **`[X.Y]` brackets are the source of truth.** Every value reference must appear inline in the reflection, placed next to the phrase it refers to — never grouped at the end, never written without its square brackets.
 2. **Analysis-to-citation consistency.** If your analysis identifies a value, cite it.
 3. **Text-grounded only.** Reference actual content; never invent details.
 4. **Proportionality.** Brief when little is at stake, thorough when much is. Most texts engage few values or none.

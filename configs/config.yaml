@@ -21,26 +21,6 @@ charter:
         endpoint: https://openrouter.ai/api/v1
 
     generator_models:
-      # - alias: glm-4.5-air
-      #   api_name: jminder/pZcWDUxqEQ
-      #   hf_slug: zai-org/GLM-4.5-Air-FP8
-      #   context_window_tokens: 16384
-      # - alias: olmo3-32B-think
-      #   api_name: jminder/UqFTpAeJcvV4
-      #   hf_slug: olmo-ai/olmo-3-32b-thinking
-      # - alias: kimi-k2.5
-      #   api_name: jkminder/lAiFTaihSJ
-      #   hf_slug: moonshotai/Kimi-K2.5
-      # - alias: gpt-oss-120b
-      #   api_name: openai/gpt-oss-120b-sJQH
-      #   hf_slug: openai/gpt-oss-120b
-      #   context_window_tokens: 16384
-        # endpoint: https://openrouter.ai/api/v1
-        # api_name: openai/gpt-oss-120b-SfWS
-        # hf_slug: openai/gpt-oss-120b
-      # - alias: glm-4.7-flash
-      #   api_name: zai-org/GLM-4.7-Flash
-      #   hf_slug: zai-org/GLM-4.7-Flash
       - alias: qwen3.5-35b-a3b
         api_name: Qwen/Qwen3.5-35B-A3B
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
@@ -63,28 +43,6 @@ charter:
         context_window_tokens: 24576
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-      # - alias: qwen3.5-9b
-      #   api_name: Qwen/Qwen3.5-9B-hFgU
-      #   hf_slug: Qwen/Qwen3.5-9B
-      # - alias: nemotron-3-super-120b-a12b
-      #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-YwWH
-      #   # api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-KRHT
-      #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-      #   context_window_tokens: 16384
-        # endpoint: https://openrouter.ai/api/v1
-      # - alias: smollm3-3b
-      #   api_name: HuggingFaceTB/SmolLM3-3B-uDyM
-      #   hf_slug: HuggingFaceTB/SmolLM3-3B
-      #   thinking: false
-      # - alias: llama-3.3-70b-instruct
-      #   api_name: meta-llama/Llama-3.3-70B-Instruct
-      #   hf_slug: meta-llama/Llama-3.3-70B-Instruct
-      #   thinking: false
-      # - alias: apertus-70b-instruct
-      #   api_name: swiss-ai/Apertus-70B-Instruct-2509
-      #   hf_slug: swiss-ai/Apertus-70B-Instruct-2509
-      #   thinking: false
-      #   json_mode: true
     improver:
       judge_prompt: improver_judge.md
       generator_prompt: improver_generator.md
@@ -109,7 +67,7 @@ charter:
     eval_dir: data/pipeline/charter_eval
     gold_judge:
       alias: glm-5.1
-      api_name: zai-org/GLM-5.1-FP8-cXND   # swissai deployment tag rotated -Tgii -> -yhzm -> -cXND (2026-06-19); these tags are ephemeral
+      api_name: zai-org/GLM-5.1-FP8-CWqJ   # swissai deployment tag rotated -Tgii -> -yhzm -> -cXND -> -CWqJ (2026-06-19); these tags are ephemeral
       hf_slug: zai-org/GLM-5.1-FP8
       endpoint: https://api.swissai.svc.cscs.ch/v1
       prompt_reflection: judge_reflection_v5.md
@@ -131,28 +89,18 @@ charter:
       store_reasoning: false
       failure_attempt_cap: 5
       candidates:
-      # - alias: glm-4.5-air
-      #   api_name: jminder/pZcWDUxqEQ
-      #   hf_slug: zai-org/GLM-4.5-Air-FP8
-      #   context_window_tokens: 16384
-      #   prompt_reflection: generator_reflection_v7.md
-      # - alias: gpt-oss-120b
-      #   api_name: openai/gpt-oss-120b-SSOR
-      #   hf_slug: openai/gpt-oss-120b
-      #   context_window_tokens: 16384
-      #   prompt_reflection: generator_reflection_v7.md
       - alias: qwen3.5-35b-a3b
         api_name: qwen/qwen3.5-35b-a3b
         hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
         context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
-        prompt_reflection: generator_reflection_v5.md
+        prompt_reflection: generator_reflection_v6.md
       - alias: qwen3.6-35b-a3b
         api_name: qwen/qwen3.6-35b-a3b
         hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
-        context_window_tokens: 49152
+        context_window_tokens: 32768
         endpoint: https://openrouter.ai/api/v1
-        prompt_reflection: generator_reflection_v4.md   # dclm 90.5% / fw2 92.5% (v2 under-reading + v3 source-lang + v4 adult-content lever)
+        prompt_reflection: generator_reflection_v8.md   # hardened (harm-citation/objectification/killing-care + slur-misroute removed)
         inject_language: true                            # per-language directive after the doc; no-op for English
         sampling:   # generation_config default minus presence_penalty (A/B winner; pp=1.5 hurt quality)
           temperature: 1.0
@@ -164,19 +112,19 @@ charter:
         hf_slug: Qwen/Qwen3.6-27B-FP8
         context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
-        prompt_reflection: generator_reflection_v1.md
+        prompt_reflection: generator_reflection_v3.md
         sampling:   # qwen3.6 family gen_config default (temp 1.0), presence_penalty 0.0
           temperature: 1.0
           top_p: 0.95
           top_k: 20
           presence_penalty: 0.0
       - alias: gemma-4-31b
-        api_name: google/gemma-4-31B-it   # SwissAI served name (free); note capital B
+        api_name: google/gemma-4-31B-it-wbCM   # SwissAI (free); larger-context (49k) deployment; tag is ephemeral
         hf_slug: google/gemma-4-31b-it
-        context_window_tokens: 22000      # SwissAI gemma hard total-context cap (input+output)
+        context_window_tokens: 49152      # gemma-4-31B-it-wbCM total-context cap (fits 3800-token insertion)
         endpoint: https://api.swissai.svc.cscs.ch/v1
         thinking: true
-        prompt_reflection: generator_reflection_v9.md
+        prompt_reflection: generator_reflection_v10.md
         inject_language: true             # per-language reflection-language directive (no-op for English)
         sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
           temperature: 1.0
@@ -188,17 +136,12 @@ charter:
         context_window_tokens: 49152
         endpoint: https://openrouter.ai/api/v1
         thinking: true
-        prompt_reflection: generator_reflection_v7.md
+        prompt_reflection: generator_reflection_v8.md
         inject_language: true             # per-language reflection-language directive (no-op for English)
         sampling:   # gemma-4 gen_config default: temp 1.0, top_p 0.95, top_k 64
           temperature: 1.0
           top_p: 0.95
           top_k: 64
-      # - alias: nemotron-3-super-120b-a12b
-      #   api_name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8-BnAI
-      #   hf_slug: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-      #   context_window_tokens: 16384
-      #   prompt_reflection: generator_reflection_v9.md
     judge_eval:
       bench: dclm-en   # benchmark set: dclm-en | fw2-multi (see pipeline/charter/eval/benches.py)
       n_items: 5000
@@ -236,7 +179,7 @@ charter:
     reflection_max_chars: 8000
     reflection_prompt: generator_reflection_v5.md  # qwen final in final_prompts/
     generator_alias: qwen3.5-35b-a3b
-    thinking: false
+    thinking: true
     json_mode: false
     max_concurrent_requests: 1024
     save_batch_size: 5000
