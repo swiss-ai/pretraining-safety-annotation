@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Apertus Pretraining Safety Annotations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <header class="page-head">
+    <h1>Apertus Pretraining Safety Annotations</h1>
+    <p class="subtitle">
+      Throughput vs. annotation quality for the candidate reflection generators.
+      Judged by <span id="meta-judge"></span> on a held-out benchmark; reflection point fixed by the
+      <code id="meta-policy"></code> cutoff.
+    </p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-tab="overview" role="tab">Overview</button>
+    <button class="tab" data-tab="inspector" role="tab">Inspector</button>
+  </nav>
+
+  <main>
+    <!-- ===================== OVERVIEW ===================== -->
+    <section id="tab-overview" class="tab-panel">
+      <div class="card">
+        <h2>Throughput vs. aggregate quality</h2>
+        <p class="card-sub">
+          Aggregate judge score (mean of the 1&ndash;5 aggregate over the full 4k benchmark)
+          against measured generation throughput (log scale). Marker labels carry the actual numbers.
+        </p>
+        <div id="plot-headline" class="plot"></div>
+        <div id="headline-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Per-language &amp; edge-case accept rate</h2>
+            <p class="card-sub" id="bars-sub"></p>
+          </div>
+          <div class="toggle" id="metric-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="mean">Mean&nbsp;score</button>
+          </div>
+        </div>
+        <div id="plot-langs" class="plot"></div>
+        <div id="langs-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <h2>Summary</h2>
+        <div class="table-wrap">
+          <table id="summary-table"></table>
+        </div>
+        <p class="footnote" id="summary-foot"></p>
+      </div>
+    </section>
+
+    <!-- ===================== INSPECTOR ===================== -->
+    <section id="tab-inspector" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Inspect generations &amp; judge verdicts</h2>
+        <p class="card-sub">
+          A balanced sample of accepted and rejected reflections per model and language.
+          Pick one on the left to see the document, the model's analysis &amp; reflection, and the judge's per-dimension verdict.
+        </p>
+        <div class="controls">
+          <label>Model
+            <select id="sel-model"></select>
+          </label>
+          <label>Language / bench
+            <select id="sel-lang"></select>
+          </label>
+          <label>Verdict
+            <select id="sel-filter">
+              <option value="all">All</option>
+              <option value="accept">Accepted</option>
+              <option value="reject">Rejected</option>
+            </select>
+          </label>
+        </div>
+        <div class="inspector">
+          <ul id="record-list" class="record-list"></ul>
+          <div id="record-detail" class="record-detail">
+            <p class="empty-hint">Select a record to inspect.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-foot">
+    <span id="meta-foot"></span>
+  </footer>
+
+  <script src="data.js" charset="utf-8"></script>
+  <script src="app.js" charset="utf-8"></script>
+</body>
+</html>
