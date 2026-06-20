@@ -100,7 +100,7 @@ charter:
         hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
         context_window_tokens: 32768
         endpoint: https://openrouter.ai/api/v1
-        prompt_reflection: generator_reflection_v8.md   # hardened (harm-citation/objectification/killing-care + slur-misroute removed)
+        prompt_reflection: generator_reflection_v10.md  # v8 hardening + named under-read hints (edge 83%->89%, dclm held); v9(abstract) was a no-op
         inject_language: true                            # per-language directive after the doc; no-op for English
         sampling:   # generation_config default minus presence_penalty (A/B winner; pp=1.5 hurt quality)
           temperature: 1.0
