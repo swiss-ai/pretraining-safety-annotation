@@ -100,6 +100,10 @@
       `<strong>${q.label}</strong> is the clear scale pick — near-top quality at ~${gpuFmt(q.throughput.gpu_hours)} GPU-h, ` +
       `vs ~${gpuFmt(g31.throughput.gpu_hours)} for the dense <strong>${g31.label}</strong> (best quality, ${ratio}× the cost) ` +
       `and ~${gpuFmt(g26.throughput.gpu_hours)} for ${g26.label}.`;
+    document.getElementById("headline-foot").textContent =
+      "Quality is the mean judge score over the 4,000-document benchmark — 2,000 English documents from dclm + 2,000 multilingual " +
+      "from FineWeb-2 (Chinese, German, French, Italian, Japanese, Russian). The 161 curated edge cases are scored separately " +
+      "(shown in the per-language & edge-case chart below).";
   }
 
   // ============================ PER-LANGUAGE BARS ============================
