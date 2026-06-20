@@ -324,61 +324,81 @@
   }
 
   // ============================ INSPECTOR ============================
-  let INSP = null;               // full per-generation data, loaded lazily from inspector.js
-  let inspLoading = false;
+  // Full per-generation data is large (full document up to the reflection point),
+  // so it's split per model into inspector_<id>.js, loaded on demand into
+  // window.INSP[modelId] when a model is selected.
+  let inspLoadingModel = null;
   const RENDER_CAP = 400;
+  const SORTS = {
+    default: null,
+    agg_desc: (a, b) => b.aggregate - a.aggregate,
+    agg_asc: (a, b) => a.aggregate - b.aggregate,
+    cites_desc: (a, b) => b.n_cites - a.n_cites,
+    refl_desc: (a, b) => (b.reflection_1p || "").length - (a.reflection_1p || "").length,
+    doc_desc: (a, b) => (b.text || "").length - (a.text || "").length,
+  };
+  const BENCHES = [["dclm-en", "dclm-en (English)"], ["fw2-multi", "fw2-multi (6 languages)"], ["edge-cases", "Edge cases"]];
+  const INSP_LANGS = ["en", "cmn", "deu", "fra", "ita", "jpn", "rus"];
 
   function initInspector() {
     const selModel = document.getElementById("sel-model");
+    const selBench = document.getElementById("sel-bench");
     const selLang = document.getElementById("sel-lang");
     const selSafety = document.getElementById("sel-safety");
     D.models.forEach((m) => selModel.add(new Option(m.label, m.id)));
+    selBench.add(new Option("All benches", "all"));
+    BENCHES.forEach(([v, t]) => selBench.add(new Option(t, v)));
     selLang.add(new Option("All languages", "all"));
-    D.lang_order.forEach((l) => selLang.add(new Option(D.lang_label[l], l)));
+    INSP_LANGS.forEach((l) => selLang.add(new Option(D.lang_label[l] || l, l)));
     selSafety.add(new Option("Any", "all"));
     (D.safety_order || []).slice().reverse().forEach((s) =>
       selSafety.add(new Option(D.safety_label[String(s)] || ("Safety " + s), String(s))));
-    ["sel-model", "sel-lang", "sel-filter", "sel-safety", "sel-cites"].forEach((id) =>
+    ["sel-model", "sel-bench", "sel-lang", "sel-filter", "sel-safety", "sel-cites", "sel-sort"].forEach((id) =>
       document.getElementById(id).addEventListener("change", renderList));
     let t;
-    document.getElementById("sel-search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(renderList, 180); });
+    document.getElementById("sel-search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(renderList, 200); });
   }
 
-  function ensureInspector(cb) {
-    if (INSP) { cb(); return; }
-    if (inspLoading) return;
-    inspLoading = true;
+  function ensureModel(mid, cb) {
+    if (window.INSP && window.INSP[mid]) { cb(); return; }
+    if (inspLoadingModel === mid) return;
+    inspLoadingModel = mid;
+    document.getElementById("list-count").textContent = "loading generations…";
     const s = document.createElement("script");
-    s.src = "inspector.js";
-    s.onload = () => { INSP = (window.INSPECTOR || {}).records || []; inspLoading = false; cb(); };
+    s.src = `inspector_${mid}.js`;
+    s.onload = () => { inspLoadingModel = null; cb(); };
     s.onerror = () => {
-      inspLoading = false;
+      inspLoadingModel = null;
       document.getElementById("record-detail").innerHTML =
-        `<p class="empty-hint">Could not load inspector.js — serve the page over http (e.g. <code>python -m http.server -d docs</code>).</p>`;
+        `<p class="empty-hint">Could not load inspector_${esc(mid)}.js — serve the page over http (e.g. <code>python -m http.server -d docs</code>).</p>`;
     };
     document.head.appendChild(s);
   }
 
-  function currentRecords() {
-    const model = document.getElementById("sel-model").value;
+  function currentRecords(model) {
+    const bench = document.getElementById("sel-bench").value;
     const lang = document.getElementById("sel-lang").value;
     const verdict = document.getElementById("sel-filter").value;
     const safety = document.getElementById("sel-safety").value;
     const cites = document.getElementById("sel-cites").value;
     const q = document.getElementById("sel-search").value.trim().toLowerCase();
-    return INSP.filter((r) =>
-      r.model === model &&
+    const rows = (window.INSP[model] || []).filter((r) =>
+      (bench === "all" || r.bench === bench) &&
       (lang === "all" || r.language === lang) &&
       (verdict === "all" || (verdict === "accept" ? r.accept : !r.accept)) &&
       (safety === "all" || String(r.safety_score) === safety) &&
       (cites === "all" || (cites === "3" ? r.n_cites >= 3 : r.n_cites === +cites)) &&
       (!q || (r.reflection_1p || "").toLowerCase().includes(q) || (r.text || "").toLowerCase().includes(q)));
+    const cmp = SORTS[document.getElementById("sel-sort").value];
+    if (cmp) rows.sort(cmp);
+    return rows;
   }
 
   function renderList() {
-    if (!INSP) { ensureInspector(renderList); return; }
+    const model = document.getElementById("sel-model").value;
+    if (!window.INSP || !window.INSP[model]) { ensureModel(model, renderList); return; }
     const list = document.getElementById("record-list");
-    const all = currentRecords();
+    const all = currentRecords(model);
     const rows = all.slice(0, RENDER_CAP);
     document.getElementById("list-count").textContent = all.length > RENDER_CAP
       ? `showing first ${RENDER_CAP} of ${all.length.toLocaleString()} matching — refine to narrow`
@@ -392,6 +412,7 @@
       const snip = (r.reflection_1p || r.text || "").slice(0, 150);
       return `<li class="record-row" data-i="${i}">
         <div class="row-top">
+          <span class="badge bench">${esc(r.bench)}</span>
           <span class="badge lang">${esc(D.lang_label[r.language] || r.language)}</span>
           <span class="badge ${r.accept ? "accept" : "reject"}">${r.accept ? "accept" : "reject"}</span>
           <span class="badge score">agg ${r.aggregate.toFixed(1)}</span>
@@ -435,6 +456,7 @@
     document.getElementById("record-detail").innerHTML =
       `<div class="detail-head">
          <h3>${esc(D.lang_label[s.language] || s.language)}</h3>
+         <span class="badge bench">${esc(s.bench)}</span>
          <span class="badge ${s.accept ? "accept" : "reject"}">${s.accept ? "accepted" : "rejected"}</span>
        </div>
        <div class="detail-meta">item ${esc(String(s.item_id).slice(0, 28))} · safety ${s.safety_score ?? "—"} · ${s.n_cites} charter citation${s.n_cites === 1 ? "" : "s"}</div>
@@ -446,8 +468,11 @@
          ${scoreChip("aggregate", "Aggregate", s.aggregate.toFixed(2), true)}
        </div>
        <div class="block"><h4>Reflection (model output)</h4><div class="reflection-box">${esc(s.reflection_1p)}</div></div>
-       <div class="block"><h4>Judge verdict</h4><div class="reasoning-box">${esc(s.reasoning)}</div></div>
-       <div class="block"><h4>Source document</h4><div class="doc-text">${docWithMarker(s.text, s.reflection_point, s.text_truncated)}</div></div>`;
+       <div class="block"><h4>Judge analysis</h4><div class="reasoning-box">${esc(s.reasoning)}</div></div>
+       <div class="block"><h4>Source document — up to the reflection point</h4>
+         <div class="doc-text">${esc(s.text)}</div>
+         <p class="doc-foot">The model read exactly this; anything after the reflection point is disregarded.</p>
+       </div>`;
   }
 
   // ============================ PROMPTS ============================

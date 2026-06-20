@@ -225,6 +225,7 @@ td.model-cell { font-weight: 600; color: var(--black); }
 .badge.reject { background: #f6ddd3; color: var(--dark-red); }
 .badge.score { background: var(--gray-100); color: var(--gray-700); }
 .badge.lang  { background: #e8eef0; color: var(--deep-teal); }
+.badge.bench { background: #efe9da; color: #6b5d36; }
 
 .record-detail {
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -251,9 +252,10 @@ td.model-cell { font-weight: 600; color: var(--black); }
 }
 .doc-text {
   background: var(--doc-bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 12px 14px; font-size: 13px; white-space: pre-wrap; max-height: 300px; overflow-y: auto;
+  padding: 12px 14px; font-size: 13px; white-space: pre-wrap; max-height: 440px; overflow-y: auto;
   color: var(--gray-900);
 }
+.doc-foot { margin: 6px 0 0; font-size: 11.5px; color: var(--gray-500); }
 .doc-text .rp-marker {
   display: inline-block; color: var(--rust); font-weight: 600; font-size: 11px;
   border-top: 1px dashed var(--rust); margin: 6px 0; padding-top: 2px; width: 100%;

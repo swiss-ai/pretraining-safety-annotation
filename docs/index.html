@@ -101,7 +101,8 @@
         </p>
         <div class="controls">
           <label>Model <select id="sel-model"></select></label>
-          <label>Language / bench <select id="sel-lang"></select></label>
+          <label>Bench <select id="sel-bench"></select></label>
+          <label>Language <select id="sel-lang"></select></label>
           <label>Verdict
             <select id="sel-filter">
               <option value="all">All</option>
@@ -117,6 +118,16 @@
               <option value="1">1</option>
               <option value="2">2</option>
               <option value="3">3+</option>
+            </select>
+          </label>
+          <label>Sort by
+            <select id="sel-sort">
+              <option value="default">Default</option>
+              <option value="agg_desc">Aggregate (high→low)</option>
+              <option value="agg_asc">Aggregate (low→high)</option>
+              <option value="cites_desc">Citations (most)</option>
+              <option value="refl_desc">Reflection length</option>
+              <option value="doc_desc">Document length</option>
             </select>
           </label>
           <label class="search-label">Search
