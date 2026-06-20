@@ -14,9 +14,8 @@
   <header class="page-head">
     <h1>Apertus Pretraining Safety Annotations</h1>
     <p class="subtitle">
-      Throughput vs. annotation quality for the candidate reflection generators.
-      Judged by <span id="meta-judge"></span> on a held-out benchmark; reflection point fixed by the
-      <code id="meta-policy"></code> cutoff.
+      Throughput vs. annotation quality for the candidate reflection generators,
+      judged by <span id="meta-judge"></span> on a held-out benchmark.
     </p>
     <p class="subtitle-note">
       A broader set of models was evaluated for the previous version of this intervention &mdash; see the
@@ -130,7 +129,8 @@
         <p class="card-sub">
           Distribution of reflection length in <code id="stats-tok"></code> tokens &mdash;
           the tokenizer the reflections are written into &mdash; over the 4k benchmark.
-          The dashed line marks the <span id="stats-cap"></span>-token target stated in the prompt.
+          The dashed line marks the <span id="stats-cap"></span>-token cutoff; the prompt deliberately
+          asks for &le;<span id="stats-ask"></span> (a lower number that empirically kept reflections shorter).
         </p>
         <div id="plot-length" class="plot"></div>
         <div class="table-wrap">
@@ -160,6 +160,7 @@
 
   <footer class="page-foot">
     <span id="meta-foot"></span>
+    <span class="foot-credit">&copy; by <a href="https://jkminder.ch" target="_blank" rel="noopener">Julian Minder</a></span>
   </footer>
 
   <script src="data.js" charset="utf-8"></script>

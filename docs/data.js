@@ -2,6 +2,7 @@
 window.CHARTER_DATA = {
  "reflection_policy": "apertus-min-3800-v1",
  "judge": "GLM-5.1 · judge_reflection_v5",
+ "judge_model": "GLM-5.1",
  "accept_threshold": 4,
  "bench_note": "4k = dclm-en (2k English) + fw2-multi (2k, 6 languages). Edge = 161 curated hard cases.",
  "lang_order": [
@@ -57,7 +58,8 @@ window.CHARTER_DATA = {
   350,
   370
  ],
- "length_cap": 200,
+ "length_cap": 256,
+ "length_prompt_ask": 200,
  "models": [
   {
    "id": "qwen3.6-35b-a3b",

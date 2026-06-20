@@ -296,7 +296,10 @@ details.analysis summary {
 .page-foot {
   max-width: var(--maxw); margin: 0 auto; padding: 0 24px 40px;
   color: var(--gray-500); font-size: 12px;
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
 }
+.page-foot a { color: var(--deep-teal); text-decoration: none; border-bottom: 1px solid var(--light-teal); }
+.page-foot a:hover { border-bottom-color: var(--deep-teal); }
 
 /* ---------------- responsive ---------------- */
 @media (max-width: 760px) {

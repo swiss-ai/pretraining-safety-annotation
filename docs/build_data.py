@@ -26,7 +26,8 @@ SAMPLES_PER_GROUP = 6    # samples per (model, subset) for the inspector
 # (swiss-ai/Apertus-70B-2509) — the tokenizer the reflections are written into.
 LEN_BIN_W = 20           # histogram bin width (Apertus tokens)
 LEN_NBINS = 19           # 0..380 tokens
-LEN_CAP = 200            # the v7 reflection length target
+LEN_CAP = 256            # actual reflection length cutoff
+LEN_PROMPT_ASK = 200     # the prompt asks for <=200 (deliberately lower; empirically helped)
 SAFETY_LABEL = {
     1: "Safety 1", 2: "Safety 2", 3: "Safety 3",
     4: "Safety 4 · borderline", 5: "Safety 5 · clearly safe",
@@ -229,6 +230,7 @@ def main() -> None:
     data = {
         "reflection_policy": "apertus-min-3800-v1",
         "judge": "GLM-5.1 · judge_reflection_v5",
+        "judge_model": "GLM-5.1",
         "accept_threshold": ACCEPT_THRESHOLD,
         "bench_note": "4k = dclm-en (2k English) + fw2-multi (2k, 6 languages). Edge = 161 curated hard cases.",
         "lang_order": LANG_ORDER,
@@ -241,6 +243,7 @@ def main() -> None:
         "length_tokenizer": "swiss-ai/Apertus-70B-2509",
         "length_bin_centers": [i * LEN_BIN_W + LEN_BIN_W // 2 for i in range(LEN_NBINS)],
         "length_cap": LEN_CAP,
+        "length_prompt_ask": LEN_PROMPT_ASK,
         "models": models_out,
         "samples": samples,
     }

@@ -225,7 +225,7 @@
       }),
       yaxis: Object.assign(baseLayout().yaxis, { title: { text: "% of reflections", font: { size: 12.5 } }, rangemode: "tozero" }),
       shapes: [{ type: "line", x0: cap, x1: cap, yref: "paper", y0: 0, y1: 1, line: { color: C.gray500, width: 1.2, dash: "dash" } }],
-      annotations: [{ x: cap, yref: "paper", y: 1, yanchor: "bottom", showarrow: false, text: `${cap}-token target`, font: { size: 11, color: C.gray700 } }],
+      annotations: [{ x: cap, yref: "paper", y: 1, yanchor: "bottom", showarrow: false, text: `${cap}-token cutoff`, font: { size: 11, color: C.gray700 } }],
     });
     Plotly.react("plot-length", traces, layout, CONFIG);
 
@@ -239,9 +239,11 @@
     document.getElementById("length-table").innerHTML = head + "<tbody>" + rows + "</tbody>";
     document.getElementById("stats-tok").textContent = D.length_tokenizer;
     document.getElementById("stats-cap").textContent = D.length_cap;
+    document.getElementById("stats-ask").textContent = D.length_prompt_ask;
     document.getElementById("length-foot").textContent =
       `Reflection text only (excludes the analysis scratchpad and JSON structure), over the 4k benchmark. ` +
-      `Median reflections sit well under the ${D.length_cap}-token target; the cap is soft, so a thin tail overshoots.`;
+      `Median reflections sit well under the ${D.length_cap}-token cutoff; the prompt asks for ≤${D.length_prompt_ask}, ` +
+      `which kept lengths down, and only a thin tail approaches the cutoff.`;
   }
 
   // ============================ INSPECTOR ============================
@@ -412,8 +414,7 @@
   }
 
   function initMeta() {
-    document.getElementById("meta-judge").textContent = D.judge;
-    document.getElementById("meta-policy").textContent = D.reflection_policy;
+    document.getElementById("meta-judge").textContent = D.judge_model;
     document.getElementById("meta-foot").textContent =
       `Reflection annotation pipeline · ${D.models.length} candidate generators · judged by ${D.judge}.`;
   }
