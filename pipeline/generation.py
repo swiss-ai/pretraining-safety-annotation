@@ -99,6 +99,15 @@ def _normalize_payload(parsed: dict) -> dict:
     Shared by the strict-extract path and the lenient repair fallback so both
     apply the same normalisation before field validation.
     """
+    # A non-object payload (model emitted a JSON array, e.g. `[{...}]`): unwrap a
+    # 1-element list that wraps the object, otherwise give up with an empty dict
+    # so the caller routes it through repair / the missing-fields failure path
+    # instead of crashing on `.values()`/`.keys()`.
+    if not isinstance(parsed, dict):
+        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+            parsed = parsed[0]
+        else:
+            return {}
     # Unwrap single-key wrappers (e.g. {"key": {...actual...}})
     if len(parsed) == 1:
         sole_value = next(iter(parsed.values()))
