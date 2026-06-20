@@ -18,22 +18,35 @@
       Judged by <span id="meta-judge"></span> on a held-out benchmark; reflection point fixed by the
       <code id="meta-policy"></code> cutoff.
     </p>
+    <p class="subtitle-note">
+      A broader set of models was evaluated for the previous version of this intervention &mdash; see the
+      <a href="https://github.com/epfl-dlab/model-raising-data/blob/main/pipeline/MODEL_SELECTION.md" target="_blank" rel="noopener">earlier model-selection analysis</a>.
+    </p>
   </header>
 
   <nav class="tabs" role="tablist">
     <button class="tab is-active" data-tab="overview" role="tab">Overview</button>
     <button class="tab" data-tab="inspector" role="tab">Inspector</button>
+    <button class="tab" data-tab="prompts" role="tab">Prompts</button>
   </nav>
 
   <main>
     <!-- ===================== OVERVIEW ===================== -->
     <section id="tab-overview" class="tab-panel">
       <div class="card">
-        <h2>Throughput vs. aggregate quality</h2>
-        <p class="card-sub">
-          Aggregate judge score (mean of the 1&ndash;5 aggregate over the full 4k benchmark)
-          against measured generation throughput (log scale). Marker labels carry the actual numbers.
-        </p>
+        <div class="card-head-row">
+          <div>
+            <h2>Throughput vs. quality</h2>
+            <p class="card-sub">
+              Annotation quality vs. measured generation throughput (log scale).
+              Marker labels carry the actual numbers; switch quality between acceptance rate and mean judge score.
+            </p>
+          </div>
+          <div class="toggle" id="headline-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Acceptance&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="quality">Quality&nbsp;score</button>
+          </div>
+        </div>
         <div id="plot-headline" class="plot"></div>
         <div id="headline-desc" class="prose"></div>
       </div>
@@ -91,6 +104,23 @@
             <p class="empty-hint">Select a record to inspect.</p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ===================== PROMPTS ===================== -->
+    <section id="tab-prompts" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Final generator prompts</h2>
+        <p class="card-sub">
+          The exact reflection prompt each model was evaluated with. Per-model directive for the
+          reflection language is injected after the document at run time; this is the static template.
+        </p>
+        <div class="prompt-tabs" id="prompt-tabs"></div>
+        <div class="prompt-head">
+          <code id="prompt-path"></code>
+          <button id="prompt-copy" class="copy-btn">Copy</button>
+        </div>
+        <pre id="prompt-body" class="prompt-body"></pre>
       </div>
     </section>
   </main>

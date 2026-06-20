@@ -70,6 +70,14 @@ code {
   color: var(--gray-700);
   font-size: 15px;
 }
+.subtitle-note {
+  margin: 8px 0 0;
+  max-width: 760px;
+  color: var(--gray-500);
+  font-size: 13px;
+}
+.subtitle-note a { color: var(--deep-teal); text-decoration: none; border-bottom: 1px solid var(--light-teal); }
+.subtitle-note a:hover { border-bottom-color: var(--deep-teal); }
 
 .tabs {
   max-width: var(--maxw);
@@ -256,6 +264,31 @@ td.model-cell { font-weight: 600; color: var(--black); }
 details.analysis summary {
   cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--gray-500); font-weight: 600; margin-bottom: 6px;
+}
+
+/* ---------------- prompts ---------------- */
+.prompt-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.prompt-pill {
+  appearance: none; border: 1px solid var(--border); background: #fff;
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--gray-700);
+  padding: 6px 14px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.prompt-pill:hover { background: var(--gray-100); }
+.prompt-pill .swatch { width: 9px; height: 9px; border-radius: 2px; margin: 0; }
+.prompt-pill.is-active { border-color: var(--deep-teal); color: var(--black); background: #f3f9f8; }
+.prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.copy-btn {
+  appearance: none; border: 1px solid var(--border); background: var(--gray-100);
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--gray-700);
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; flex: none;
+}
+.copy-btn:hover { background: #e9e4d8; }
+.prompt-body {
+  margin: 0; background: var(--doc-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 16px 18px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.6; color: var(--gray-900);
+  white-space: pre-wrap; word-break: break-word; max-height: 660px; overflow-y: auto;
 }
 
 .page-foot {

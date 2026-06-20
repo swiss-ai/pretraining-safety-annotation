@@ -156,6 +156,9 @@ def main() -> None:
         for lang in LANG_ORDER:
             by_lang[lang] = stats(groups.get(lang, []))
 
+        prompt_rel = f"pipeline/prompts/models/{m['id']}/generator_reflection_{m['prompt']}.md"
+        prompt_text = (ROOT / prompt_rel).read_text()
+
         models_out.append({
             "id": m["id"], "label": m["label"], "prompt": m["prompt"],
             "arch": m["arch"], "color": m["color"],
@@ -163,6 +166,8 @@ def main() -> None:
             "throughput": m["throughput"],
             "overall": stats(all4k),
             "by_lang": by_lang,
+            "prompt_file": prompt_rel,
+            "prompt_text": prompt_text,
         })
 
         for lang in LANG_ORDER:

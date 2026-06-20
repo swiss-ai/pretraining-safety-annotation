@@ -36,10 +36,13 @@
   }
 
   // ============================ HEADLINE PLOT ============================
+  let headlineMetric = "accept"; // "accept" | "quality"
   function renderHeadline() {
+    const isAcc = headlineMetric === "accept";
+    const yval = (m) => (isAcc ? m.overall.accept * 100 : m.overall.mean_agg);
     const traces = D.models.map((m) => ({
       x: [m.throughput.samples_per_sec],
-      y: [m.overall.mean_agg],
+      y: [yval(m)],
       name: m.label,
       mode: "markers",
       type: "scatter",
@@ -47,10 +50,10 @@
       hovertemplate:
         `<b>${m.label}</b> (${m.prompt})<br>` +
         `${m.throughput.samples_per_sec.toFixed(2)} samples/s · ~${gpuFmt(m.throughput.gpu_hours)} GPU-h<br>` +
-        `mean ${m.overall.mean_agg.toFixed(3)} · accept ${pct(m.overall.accept)}<extra></extra>`,
+        `accept ${pct(m.overall.accept)} · mean ${m.overall.mean_agg.toFixed(3)}<extra></extra>`,
     }));
 
-    // place each label so the three don't collide
+    // place each label so the three don't collide (same ordering holds for both metrics)
     const offs = {
       "qwen3.6-35b-a3b": { ay: -52, ax: 0 },
       "gemma-4-31b": { ay: 2, ax: 92 },
@@ -58,16 +61,23 @@
     };
     const annotations = D.models.map((m) => {
       const o = offs[m.id] || { ay: -50, ax: 0 };
+      const lead = isAcc
+        ? `${pct(m.overall.accept)} · ${m.overall.mean_agg.toFixed(2)}`
+        : `${m.overall.mean_agg.toFixed(2)} · ${pct(m.overall.accept)}`;
       return {
-        x: Math.log10(m.throughput.samples_per_sec), y: m.overall.mean_agg,
+        x: Math.log10(m.throughput.samples_per_sec), y: yval(m),
         xref: "x", yref: "y", ax: o.ax, ay: o.ay, showarrow: true,
         arrowhead: 0, arrowwidth: 1, arrowcolor: C.gray500,
         align: o.ax > 0 ? "left" : "center",
         font: { family: FONT, size: 11.5, color: C.black },
-        text: `<b>${m.label}</b><br>${m.throughput.samples_per_sec.toFixed(2)} smp/s · ~${gpuFmt(m.throughput.gpu_hours)} GPU-h<br>${m.overall.mean_agg.toFixed(2)} · ${pct(m.overall.accept)} accept`,
+        text: `<b>${m.label}</b><br>${m.throughput.samples_per_sec.toFixed(2)} smp/s · ~${gpuFmt(m.throughput.gpu_hours)} GPU-h<br>${lead}`,
         bgcolor: "rgba(255,255,255,0.82)", bordercolor: m.color, borderwidth: 1, borderpad: 4,
       };
     });
+
+    const yaxis = isAcc
+      ? { title: { text: "Acceptance rate", font: { size: 12.5 } }, range: [86, 94], ticksuffix: "%" }
+      : { title: { text: "Aggregate judge quality (mean, 1–5)", font: { size: 12.5 } }, range: [4.35, 4.60], dtick: 0.05 };
 
     const layout = baseLayout({
       annotations,
@@ -78,12 +88,9 @@
         range: [Math.log10(0.15), Math.log10(4.7)],
         tickvals: [0.2, 0.5, 1, 2, 3], ticktext: ["0.2", "0.5", "1", "2", "3"],
       }),
-      yaxis: Object.assign(baseLayout().yaxis, {
-        title: { text: "Aggregate judge quality (mean, 1–5)", font: { size: 12.5 } },
-        range: [4.35, 4.60], dtick: 0.05,
-      }),
+      yaxis: Object.assign(baseLayout().yaxis, yaxis),
     });
-    Plotly.newPlot("plot-headline", traces, layout, CONFIG);
+    Plotly.react("plot-headline", traces, layout, CONFIG);
   }
 
   function headlineDesc() {
@@ -274,6 +281,21 @@
     document.getElementById("record-detail").innerHTML = html;
   }
 
+  // ============================ PROMPTS ============================
+  let promptModelId = D.models[0].id;
+  function renderPrompts() {
+    const tabs = document.getElementById("prompt-tabs");
+    tabs.innerHTML = D.models.map((m) =>
+      `<button class="prompt-pill ${m.id === promptModelId ? "is-active" : ""}" data-id="${m.id}">
+         <span class="swatch" style="background:${m.color}"></span>${esc(m.label)} &middot; ${esc(m.prompt)}
+       </button>`).join("");
+    tabs.querySelectorAll(".prompt-pill").forEach((el) =>
+      el.addEventListener("click", () => { promptModelId = el.dataset.id; renderPrompts(); }));
+    const m = D.models.find((x) => x.id === promptModelId);
+    document.getElementById("prompt-path").textContent = m.prompt_file;
+    document.getElementById("prompt-body").textContent = m.prompt_text;
+  }
+
   // ============================ TABS / META ============================
   function initTabs() {
     document.querySelectorAll(".tab").forEach((btn) => {
@@ -283,16 +305,28 @@
         const tab = btn.dataset.tab;
         document.getElementById("tab-overview").hidden = tab !== "overview";
         document.getElementById("tab-inspector").hidden = tab !== "inspector";
+        document.getElementById("tab-prompts").hidden = tab !== "prompts";
         if (tab === "overview") { Plotly.Plots.resize("plot-headline"); Plotly.Plots.resize("plot-langs"); }
       });
     });
-    document.getElementById("metric-toggle").addEventListener("click", (e) => {
-      const b = e.target.closest(".toggle-btn"); if (!b) return;
-      document.querySelectorAll(".toggle-btn").forEach((x) => x.classList.remove("is-active"));
-      b.classList.add("is-active");
-      langMetric = b.dataset.metric;
-      renderLangs();
+
+    document.getElementById("prompt-copy").addEventListener("click", () => {
+      const m = D.models.find((x) => x.id === promptModelId);
+      const btn = document.getElementById("prompt-copy");
+      if (navigator.clipboard) navigator.clipboard.writeText(m.prompt_text);
+      btn.textContent = "Copied"; setTimeout(() => (btn.textContent = "Copy"), 1200);
     });
+    function wireToggle(id, cb) {
+      const grp = document.getElementById(id);
+      grp.addEventListener("click", (e) => {
+        const b = e.target.closest(".toggle-btn"); if (!b) return;
+        grp.querySelectorAll(".toggle-btn").forEach((x) => x.classList.remove("is-active"));
+        b.classList.add("is-active");
+        cb(b.dataset.metric);
+      });
+    }
+    wireToggle("metric-toggle", (m) => { langMetric = m; renderLangs(); });
+    wireToggle("headline-toggle", (m) => { headlineMetric = m; renderHeadline(); });
   }
 
   function initMeta() {
@@ -311,4 +345,5 @@
   langsDesc();
   renderTable();
   initInspector();
+  renderPrompts();
 })();
