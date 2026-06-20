@@ -50,11 +50,12 @@
       hoverinfo: "skip",
     }));
 
-    // place each label so the three don't collide (same ordering holds for both metrics)
+    // place each label so the four don't collide (same ordering holds for both metrics)
     const offs = {
-      "qwen3.6-35b-a3b": { ay: -52, ax: 0 },
-      "gemma-4-31b": { ay: 2, ax: 92 },
-      "gemma-4-26b-a4b": { ay: 56, ax: 0 },
+      "gemma-4-31b": { ax: 92, ay: -6 },
+      "gemma-4-26b-a4b": { ax: 0, ay: -48 },
+      "qwen3.6-35b-a3b": { ax: -20, ay: -48 },
+      "qwen3.5-35b-a3b": { ax: 0, ay: 52 },
     };
     const annotations = D.models.map((m) => {
       const o = offs[m.id] || { ay: -50, ax: 0 };
@@ -73,14 +74,14 @@
     });
 
     const yaxis = isAcc
-      ? { title: { text: "Accept rate", font: { size: 12.5 } }, range: [86, 94], ticksuffix: "%" }
-      : { title: { text: "Mean aggregate (1–5)", font: { size: 12.5 } }, range: [4.35, 4.60], dtick: 0.05 };
+      ? { title: { text: "Accept rate", font: { size: 12.5 } }, range: [82, 99], ticksuffix: "%" }
+      : { title: { text: "Mean aggregate (1–5)", font: { size: 12.5 } }, range: [4.35, 4.70], dtick: 0.05 };
 
     const layout = baseLayout({
       annotations,
       showlegend: false,
       hovermode: false,
-      margin: { l: 66, r: 36, t: 14, b: 58 },
+      margin: { l: 66, r: 50, t: 14, b: 58 },
       xaxis: Object.assign(baseLayout().xaxis, {
         title: { text: "Generation throughput — samples/sec per node (4× GH200), higher = faster & cheaper →", font: { size: 12.5 } },
         range: [0, 3.7], dtick: 0.5,
@@ -91,15 +92,18 @@
   }
 
   function headlineDesc() {
-    const by = {}; D.models.forEach((m) => (by[m.id] = m));
-    const q = by["qwen3.6-35b-a3b"], g31 = by["gemma-4-31b"], g26 = by["gemma-4-26b-a4b"];
-    const ratio = (g31.throughput.gpu_hours / q.throughput.gpu_hours).toFixed(0);
+    const ms = D.models;
+    const cheapest = ms.reduce((a, m) => (m.throughput.gpu_hours < a.throughput.gpu_hours ? m : a));
+    const dearest = ms.reduce((a, m) => (m.throughput.gpu_hours > a.throughput.gpu_hours ? m : a));
+    const best = ms.reduce((a, m) => (m.overall.accept > a.overall.accept ? m : a));
+    const accs = ms.map((m) => m.overall.accept);
+    const ratio = (dearest.throughput.gpu_hours / cheapest.throughput.gpu_hours).toFixed(0);
     document.getElementById("headline-desc").innerHTML =
-      `<strong>What we see.</strong> Quality is tightly clustered ` +
-      `(${g26.overall.mean_agg.toFixed(2)}–${g31.overall.mean_agg.toFixed(2)} of 5) while throughput spans <strong>${ratio}×</strong>. ` +
-      `<strong>${q.label}</strong> is the clear scale pick — near-top quality at ~${gpuFmt(q.throughput.gpu_hours)} GPU-h, ` +
-      `vs ~${gpuFmt(g31.throughput.gpu_hours)} for the dense <strong>${g31.label}</strong> (best quality, ${ratio}× the cost) ` +
-      `and ~${gpuFmt(g26.throughput.gpu_hours)} for ${g26.label}.`;
+      `<strong>What we see.</strong> Accept rate spans ${pct(Math.min(...accs))}–${pct(Math.max(...accs))} and compute spans ` +
+      `<strong>${ratio}×</strong> in GPU-hours. <strong>${best.label}</strong> is the highest quality ` +
+      `(${pct(best.overall.accept)}, mean ${best.overall.mean_agg.toFixed(2)}) but the most expensive at ~${gpuFmt(best.throughput.gpu_hours)} GPU-h; ` +
+      `<strong>${cheapest.label}</strong> is the cheapest (~${gpuFmt(cheapest.throughput.gpu_hours)} GPU-h) at ${pct(cheapest.overall.accept)} accept. ` +
+      `Top-right of the plot is the best quality per unit of compute.`;
     document.getElementById("headline-foot").textContent =
       "Quality is the mean judge score over the 4,000-document benchmark — 2,000 English documents from dclm + 2,000 multilingual " +
       "from FineWeb-2 (Chinese, German, French, Italian, Japanese, Russian). The 161 curated edge cases are scored separately " +
@@ -138,10 +142,10 @@
   function langsDesc() {
     document.getElementById("bars-sub").textContent =
       "English is the full dclm-en bench; the six others are fw2-multi; edge cases are the curated hard set.";
+    const edges = D.models.map((m) => `<strong>${esc(m.label)}</strong> ${pct(m.by_lang.edge.accept)}`).join(", ");
     document.getElementById("langs-desc").innerHTML =
-      `<strong>What we see.</strong> Quality is even across languages for Qwen (no language below 90% accept), while both ` +
-      `Gemma models dip on <strong>Japanese</strong> (83–85%). The <strong>edge cases</strong> are the hardest split for every model — ` +
-      `Qwen holds up best (87.6%), Gemma-4-31B is close (84.4%), and Gemma-4-26B-A4B struggles most (75.2%).`;
+      `<strong>What we see.</strong> Accept rate is fairly even across languages within each model, and the <strong>edge cases</strong> ` +
+      `are the hardest split for every model. Edge accept: ${edges}.`;
   }
 
   // ============================ SUMMARY TABLE ============================
@@ -196,11 +200,14 @@
   function safetyDesc() {
     document.getElementById("safety-sub").textContent =
       "The corpus is pre-filtered to safety ≥ 4, so the benchmark is documents flagged unsafe (4) or clearly unsafe (5).";
+    const r = (k) => {
+      const xs = D.models.map((m) => m.by_safety[k] && m.by_safety[k].accept).filter((x) => x != null);
+      return `${pct(Math.min(...xs))}–${pct(Math.max(...xs))}`;
+    };
     document.getElementById("safety-desc").innerHTML =
-      `<strong>What we see.</strong> Both splits are documents flagged for safety concerns. The <strong>unsafe (4) documents ` +
-      `accept slightly higher</strong> (94–99%) than the <strong>clearly unsafe (5)</strong> ones (90–91%), consistently across all ` +
-      `three models — the more extreme content is marginally harder to annotate to the judge's bar. The safety-4 slice is small ` +
-      `(~250–270 items), so its rate is noisier.`;
+      `<strong>What we see.</strong> Both splits are documents flagged for safety concerns. Across the models, the unsafe (4) ` +
+      `documents accept ${r("4")} and the clearly unsafe (5) ${r("5")} — the two are close, and which scores higher varies by model. ` +
+      `The safety-4 slice is small (~210–270 items), so its rate is noisy.`;
   }
 
   // ============================ REFLECTION LENGTH ============================
@@ -290,11 +297,14 @@
     Plotly.react("plot-citations", traces, layout, CONFIG);
     document.getElementById("cite-sub").textContent =
       "How many charter [X.Y] citations each reflection carries (grouped brackets counted individually), over the 4k benchmark.";
+    const byMean = [...D.models].sort((a, b) => b.citations.mean - a.citations.mean);
+    const zeros = D.models.map((m) => m.citations.dist_pct[0]);
     document.getElementById("cite-desc").innerHTML =
-      `<strong>What we see.</strong> About 40% of reflections cite nothing — a "nothing at stake" reading where the passage up to ` +
-      `the reflection point raises no specific charter concern — while the rest cite one to several charter elements. Mean citations per reflection: ` +
+      `<strong>What we see.</strong> Roughly ${Math.round(Math.min(...zeros))}–${Math.round(Math.max(...zeros))}% of reflections cite ` +
+      `nothing — a "nothing at stake" reading where the passage up to the reflection point raises no specific charter concern — while the ` +
+      `rest cite one to several. Mean citations per reflection: ` +
       D.models.map((m) => `<strong>${esc(m.label)}</strong> ${m.citations.mean}`).join(", ") +
-      `; Gemma-4-31B engages the charter most densely, Qwen3.6 the most sparingly.`;
+      `; ${esc(byMean[0].label)} engages the charter most densely, ${esc(byMean[byMean.length - 1].label)} the most sparingly.`;
   }
 
   function renderCitationsBySubsection() {

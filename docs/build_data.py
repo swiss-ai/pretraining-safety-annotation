@@ -112,46 +112,60 @@ LANG_LABEL = {
 # One throughput measurement per model — newest result file, all on the Apertus
 # 3800-token reflection cutoff (reflection_max_tokens=3800), GH200 4-GPU node,
 # client concurrency 1024. samples_per_sec is per node (4 GPUs); gpu_hours is the
-# estimate for 100M samples (= 100e6 / sps / 3600 × 4 GPUs).
-#   qwen : throughput_estimations/results/..Qwen3.6-35B-A3B-FP8-_20260619_205634.json
-#   g31  : throughput_estimations/results/..gemma-4-31B-it-thru_20260619_210747.json
-#   g26  : throughput_estimations/results/..gemma-4-26B-A4B-it-t_20260619_193412.json
+# estimate for 100M samples (= 100e6 / sps / 3600 × 4 GPUs). Throughput is
+# architecture-dependent (prompt-independent), so it is unchanged across prompt rounds.
+#   qwen3.6 : throughput_estimations/results/..Qwen3.6-35B-A3B-FP8-_20260619_205634.json
+#   qwen3.5 : throughput_estimations/results/..Qwen3.5-35B-A3B-FP8-_20260619_190837.json
+#   g31     : throughput_estimations/results/..gemma-4-31B-it-thru_20260619_210747.json
+#   g26     : throughput_estimations/results/..gemma-4-26B-A4B-it-t_20260619_193412.json
 MODELS = [
     {
         "id": "qwen3.6-35b-a3b",
         "label": "Qwen3.6-35B-A3B",
-        "prompt": "v7",
+        "prompt": "v10",
         "arch": "A3B MoE · 3B active",
-        "color": "#005f73",  # DEEP_TEAL / PRIMARY
+        "color": "#005f73",  # DEEP_TEAL (qwen family = cool)
         "throughput": {"samples_per_sec": 3.2398, "gpu_hours": 34296,
                        "gpu_hours_lo": 27603, "gpu_hours_hi": 40540, "n_bench": 5000},
-        "runs": {"en": "val3k_dclm-en_v7", "fw2": "val3k_fw2-multi_v7",
-                 "edge": "sw_edge-cases_v6"},
+        "runs": {"en": "rr2_q36v10_dclm", "fw2": "rr2_q36v10_fw2",
+                 "edge": "rr3_q36e_v10"},
+        "edge_prompt": "v10",
+    },
+    {
+        "id": "qwen3.5-35b-a3b",
+        "label": "Qwen3.5-35B-A3B",
+        "prompt": "v6",
+        "arch": "A3B MoE · 3B active",
+        "color": "#0a9396",  # TEAL (qwen family = cool)
+        "throughput": {"samples_per_sec": 2.1108, "gpu_hours": 52639,
+                       "gpu_hours_lo": 45454, "gpu_hours_hi": 59532, "n_bench": 5000},
+        "runs": {"en": "rr2_q35_dclm", "fw2": "rr2_q35_fw2",
+                 "edge": "rr2_q35_edge"},
         "edge_prompt": "v6",
     },
     {
         "id": "gemma-4-31b",
         "label": "Gemma-4-31B",
-        "prompt": "v9",
+        "prompt": "v10",
         "arch": "dense 31B",
-        "color": "#bb3e03",  # RUST / SECONDARY
+        "color": "#bb3e03",  # RUST (gemma family = warm)
         "throughput": {"samples_per_sec": 0.2122, "gpu_hours": 523493,
                        "gpu_hours_lo": 381306, "gpu_hours_hi": 608995, "n_bench": 2000},
-        "runs": {"en": "final2_dclm_g31_or", "fw2": "final2_fw2_g31_or",
-                 "edge": "edge_cases_gemma-4-31b_generator_reflection_v12"},
-        "edge_prompt": "v12",
+        "runs": {"en": "rr2_g31_dclm", "fw2": "rr2_g31_fw2",
+                 "edge": "rr2_g31_edge"},
+        "edge_prompt": "v10",
     },
     {
         "id": "gemma-4-26b-a4b",
         "label": "Gemma-4-26B-A4B",
-        "prompt": "v7",
+        "prompt": "v8",
         "arch": "A4B MoE · 4B active",
-        "color": "#ee9b00",  # AMBER / ACCENT
+        "color": "#ee9b00",  # AMBER (gemma family = warm)
         "throughput": {"samples_per_sec": 1.2805, "gpu_hours": 86772,
                        "gpu_hours_lo": 68172, "gpu_hours_hi": 103968, "n_bench": 5000},
-        "runs": {"en": "g26sw2k_dclm", "fw2": "g26sw2k_fw2",
-                 "edge": "g26_edge_v7_inject"},
-        "edge_prompt": "v7",
+        "runs": {"en": "rr2_g26_dclm", "fw2": "rr2_g26_fw2",
+                 "edge": "rr2_g26_edge"},
+        "edge_prompt": "v8",
     },
 ]
 
