@@ -375,6 +375,99 @@
     document.getElementById("prompt-body").textContent = m.prompt_text;
   }
 
+  // ============================ REVIEWER–JUDGE AGREEMENT ============================
+  function renderAgreement() {
+    const a = D.agreement;
+    if (!a) return;
+    document.getElementById("agree-sub").textContent =
+      `Each of ${a.n} human accept/reject thumbs vs. the ${a.judge_model} verdict (${a.judge_prompt}) re-run on the exact reviewed reflection.`;
+    document.getElementById("agree-pct").textContent = (a.agreement * 100).toFixed(1) + "%";
+    document.getElementById("agree-lab").textContent = `agreement · ${Math.round(a.agreement * a.n)}/${a.n} reviews`;
+    document.getElementById("agree-prev").textContent = `previous judge (${a.old_judge_prompt}): ${(a.agreement_old * 100).toFixed(1)}%`;
+
+    const c = a.confusion;
+    const cell = (v, ok) => `<td class="cm-cell ${ok ? "cm-agree" : "cm-dis"}">${v}</td>`;
+    document.getElementById("confusion").innerHTML =
+      `<thead><tr><th></th><th>Judge: accept</th><th>Judge: reject</th></tr></thead><tbody>` +
+      `<tr><th>Human: accept</th>${cell(c.aa, true)}${cell(c.ar, false)}</tr>` +
+      `<tr><th>Human: reject</th>${cell(c.ra, false)}${cell(c.rr, true)}</tr></tbody>`;
+
+    const dis = c.ar + c.ra;
+    document.getElementById("agree-desc").innerHTML =
+      `<strong>What we see.</strong> The judge matches human reviewers on <strong>${(a.agreement * 100).toFixed(1)}%</strong> of ` +
+      `${a.n} reviews (up from ${(a.agreement_old * 100).toFixed(1)}% for the previous ${a.old_judge_prompt}). All ${dis} disagreements ` +
+      `run the same way: the <strong>judge is stricter</strong> — it rejected ${c.ar} reflections the reviewers accepted, and never ` +
+      `accepted one a reviewer rejected (${c.ra}). So on this set it has perfect precision on rejects and errs conservatively. ` +
+      `The reviews span ${a.n_reviewers} reviewers and were collected on an earlier generation set (qwen3.5 / gemma v5–v6), so this ` +
+      `gauges judge calibration rather than the final generators.`;
+
+    renderReviewList();
+  }
+
+  function currentReviews() {
+    const f = document.getElementById("rev-filter").value;
+    return D.reviews.filter((r) => f === "all" || (f === "agree" ? r.agree : !r.agree));
+  }
+
+  function renderReviewList() {
+    const list = document.getElementById("review-list");
+    const rows = currentReviews();
+    if (!rows.length) {
+      list.innerHTML = `<li class="list-empty">No reviews for this filter.</li>`;
+      document.getElementById("review-detail").innerHTML = `<p class="empty-hint">None.</p>`;
+      return;
+    }
+    list.innerHTML = rows.map((r, i) => {
+      const snip = (r.reflection_1p || r.text || "").slice(0, 150);
+      const hj = `H:${r.human_verdict[0].toUpperCase()} · J:${r.judge_decision[0].toUpperCase()}`;
+      return `<li class="record-row" data-i="${i}">
+        <div class="row-top">
+          <span class="badge lang">${esc(D.lang_label[r.language] || r.language)}</span>
+          <span class="badge ${r.agree ? "accept" : "reject"}">${r.agree ? "agree" : "disagree"}</span>
+          <span class="badge score">${hj}</span>
+        </div>
+        <div class="snippet">${esc(snip)}</div>
+      </li>`;
+    }).join("");
+    Array.from(list.querySelectorAll(".record-row")).forEach((el) => {
+      el.addEventListener("click", () => {
+        list.querySelectorAll(".record-row").forEach((x) => x.classList.remove("is-active"));
+        el.classList.add("is-active");
+        renderReviewDetail(rows[+el.dataset.i]);
+      });
+    });
+    list.querySelector(".record-row").classList.add("is-active");
+    renderReviewDetail(rows[0]);
+  }
+
+  function renderReviewDetail(r) {
+    const sc = r.judge_scores || {};
+    const agg = (typeof r.judge_aggregate === "number") ? r.judge_aggregate.toFixed(2) : "—";
+    const html =
+      `<div class="detail-head">
+         <h3>${esc(D.lang_label[r.language] || r.language)}</h3>
+         <span class="badge ${r.agree ? "accept" : "reject"}">${r.agree ? "agree" : "disagree"}</span>
+       </div>
+       <div class="detail-meta">${esc(r.gen_alias)} · safety ${r.safety_score ?? "—"} · reviewer ${esc(r.human_reviewer || "—")}</div>
+       <div class="verdict-row">
+         <div class="verdict-box"><span class="vk">Human</span><span class="badge ${r.human_verdict === "accept" ? "accept" : "reject"}">${r.human_verdict}</span></div>
+         <div class="verdict-box"><span class="vk">Judge</span><span class="badge ${r.judge_decision === "accept" ? "accept" : "reject"}">${r.judge_decision}</span><span class="badge score">agg ${agg}</span></div>
+       </div>
+       <div class="scorebar">
+         ${scoreChip("relevance", "Relevance", sc.relevance)}
+         ${scoreChip("specificity", "Specificity", sc.specificity)}
+         ${scoreChip("charter_grounding", "Charter", sc.charter_grounding)}
+         ${scoreChip("voice_tone", "Voice/Tone", sc.voice_tone)}
+         ${scoreChip("aggregate", "Aggregate", agg, true)}
+       </div>
+       <div class="block"><h4>Reflection</h4><div class="reflection-box">${esc(r.reflection_1p)}</div></div>` +
+      (r.human_reason ? `<div class="block"><h4>Reviewer note</h4><div class="reasoning-box">${esc(r.human_reason)}</div></div>` : "") +
+      `<div class="block"><h4>Judge verdict</h4><div class="reasoning-box">${esc(r.judge_reasoning)}</div></div>
+       <div class="block"><h4>Source document</h4><div class="doc-text">${docWithMarker(r.text, r.reflection_point, r.text_truncated)}</div></div>
+       <div class="block"><details class="analysis"><summary>Model analysis (scratchpad)</summary><div class="analysis-box">${esc(r.analysis)}</div></details></div>`;
+    document.getElementById("review-detail").innerHTML = html;
+  }
+
   // ============================ TABS / META ============================
   function initTabs() {
     document.querySelectorAll(".tab").forEach((btn) => {
@@ -385,6 +478,7 @@
         document.getElementById("tab-overview").hidden = tab !== "overview";
         document.getElementById("tab-inspector").hidden = tab !== "inspector";
         document.getElementById("tab-stats").hidden = tab !== "stats";
+        document.getElementById("tab-agreement").hidden = tab !== "agreement";
         document.getElementById("tab-prompts").hidden = tab !== "prompts";
         if (tab === "overview") {
           ["plot-headline", "plot-langs", "plot-safety"].forEach((p) => Plotly.Plots.resize(p));
@@ -392,6 +486,9 @@
         if (tab === "stats") Plotly.Plots.resize("plot-length");
       });
     });
+
+    const revFilter = document.getElementById("rev-filter");
+    if (revFilter) revFilter.addEventListener("change", renderReviewList);
 
     document.getElementById("prompt-copy").addEventListener("click", () => {
       const m = D.models.find((x) => x.id === promptModelId);
@@ -432,4 +529,6 @@
   renderLength();
   initInspector();
   renderPrompts();
+  if (D.agreement) renderAgreement();
+  else document.querySelector('.tab[data-tab="agreement"]').hidden = true;
 })();

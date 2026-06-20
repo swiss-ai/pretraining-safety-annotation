@@ -226,6 +226,49 @@ def main() -> None:
             for s in pick_samples(groups.get(lang, [])):
                 samples.append({"model": m["id"], **s})
 
+    # ---- reviewer–judge agreement (needs the retrieved + re-judged feedback) ----
+    REJUDGED = (ROOT / "data" / "pipeline" / "feedback"
+                / "jkminder__apertus-annotation-feedback" / "rejudged_v5.jsonl")
+    agreement = None
+    reviews = []
+    if REJUDGED.exists():
+        rj = [json.loads(l) for l in open(REJUDGED)]
+        n = len(rj)
+        cm = {"aa": 0, "ar": 0, "ra": 0, "rr": 0}  # human(accept/reject) × judge(accept/reject)
+        new_agree = old_agree = 0
+        for r in rj:
+            h, nj, oj = r["human_verdict"], r["new_judge_decision"], r.get("old_judge_decision")
+            cm[("a" if h == "accept" else "r") + ("a" if nj == "accept" else "r")] += 1
+            new_agree += int(h == nj)
+            old_agree += int(h == oj)
+            text = r.get("text") or ""
+            reviews.append({
+                "item_id": r["item_id"], "language": r.get("language"),
+                "gen_alias": r.get("gen_alias"), "safety_score": r.get("safety_score"),
+                "reflection_point": r.get("reflection_point"),
+                "text": text[:TEXT_CAP], "text_truncated": len(text) > TEXT_CAP,
+                "reflection_1p": r.get("reflection_1p") or "", "analysis": r.get("analysis") or "",
+                "human_verdict": h, "human_reviewer": r.get("human_reviewer"),
+                "human_reason": r.get("human_reason") or "",
+                "judge_decision": nj, "judge_aggregate": r.get("new_judge_aggregate"),
+                "judge_scores": r.get("new_judge_scores") or {},
+                "judge_reasoning": r.get("new_judge_reasoning") or "",
+                "old_judge_decision": oj, "agree": h == nj,
+            })
+        langs = {}
+        for r in rj:
+            langs[r.get("language")] = langs.get(r.get("language"), 0) + 1
+        agreement = {
+            "n": n,
+            "judge_model": "GLM-5.1", "judge_prompt": "judge_reflection_v5",
+            "old_judge_prompt": "judge_reflection_v4",
+            "agreement": round(new_agree / n, 4), "agreement_old": round(old_agree / n, 4),
+            "n_reviewers": len({r.get("human_reviewer") for r in rj}),
+            "n_accept_human": sum(1 for r in rj if r["human_verdict"] == "accept"),
+            "n_reject_human": sum(1 for r in rj if r["human_verdict"] == "reject"),
+            "confusion": cm, "languages": langs,
+        }
+
     safety_order = sorted({int(s) for mo in models_out for s in mo["by_safety"]})
     data = {
         "reflection_policy": "apertus-min-3800-v1",
@@ -244,6 +287,8 @@ def main() -> None:
         "length_bin_centers": [i * LEN_BIN_W + LEN_BIN_W // 2 for i in range(LEN_NBINS)],
         "length_cap": LEN_CAP,
         "length_prompt_ask": LEN_PROMPT_ASK,
+        "agreement": agreement,
+        "reviews": reviews,
         "models": models_out,
         "samples": samples,
     }
@@ -254,6 +299,9 @@ def main() -> None:
         "window.CHARTER_DATA = " + json.dumps(data, ensure_ascii=False, indent=1) + ";\n"
     )
     kb = out_path.stat().st_size / 1024
+    if agreement:
+        print(f"agreement: n={agreement['n']} new(v5)={agreement['agreement']:.1%} "
+              f"old(v4)={agreement['agreement_old']:.1%} confusion={agreement['confusion']}")
     print(f"wrote {out_path} ({kb:.0f} KB) — {len(models_out)} models, {len(samples)} samples")
     for mo in models_out:
         o = mo["overall"]; L = mo["length"]

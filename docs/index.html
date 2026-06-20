@@ -27,6 +27,7 @@
     <button class="tab is-active" data-tab="overview" role="tab">Overview</button>
     <button class="tab" data-tab="inspector" role="tab">Inspector</button>
     <button class="tab" data-tab="stats" role="tab">Statistics</button>
+    <button class="tab" data-tab="agreement" role="tab">Agreement</button>
     <button class="tab" data-tab="prompts" role="tab">Prompts</button>
   </nav>
 
@@ -137,6 +138,43 @@
           <table id="length-table"></table>
         </div>
         <p class="footnote" id="length-foot"></p>
+      </div>
+    </section>
+
+    <!-- ===================== AGREEMENT ===================== -->
+    <section id="tab-agreement" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Reviewer&ndash;judge agreement</h2>
+        <p class="card-sub" id="agree-sub"></p>
+        <div class="agree-top">
+          <div class="bigstat">
+            <div class="bigstat-num" id="agree-pct"></div>
+            <div class="bigstat-lab" id="agree-lab"></div>
+            <div class="bigstat-prev" id="agree-prev"></div>
+          </div>
+          <table class="confusion" id="confusion"></table>
+        </div>
+        <div id="agree-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <h2>Review by review</h2>
+        <p class="card-sub">Each human thumb vs. the GLM-5.1 verdict on the same reflection. Disagreements shown first.</p>
+        <div class="controls">
+          <label>Show
+            <select id="rev-filter">
+              <option value="disagree">Disagreements</option>
+              <option value="all">All reviews</option>
+              <option value="agree">Agreements</option>
+            </select>
+          </label>
+        </div>
+        <div class="inspector">
+          <ul id="review-list" class="record-list"></ul>
+          <div id="review-detail" class="record-detail">
+            <p class="empty-hint">Select a review to inspect.</p>
+          </div>
+        </div>
       </div>
     </section>
 
