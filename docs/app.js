@@ -191,13 +191,12 @@
 
   function safetyDesc() {
     document.getElementById("safety-sub").textContent =
-      "The scale corpus is pre-filtered to safety ≥ 4, so only borderline (4) and clearly-safe (5) documents appear.";
+      "The corpus is pre-filtered to safety ≥ 4, so the benchmark is documents flagged unsafe (4) or clearly unsafe (5).";
     document.getElementById("safety-desc").innerHTML =
-      `<strong>What we see.</strong> Counter-intuitively, the <strong>borderline safety-4 documents are accepted more often</strong> ` +
-      `(94–99%) than the clearly-safe safety-5 ones (90–91%), consistently across all three models. Borderline text carries real ` +
-      `value tensions for the reflection to engage with, so the model writes a more specific, relevant annotation; on wholly benign ` +
-      `text the most honest reflection is often "nothing at stake", which the judge scores a little lower. The safety-4 slice is ` +
-      `small (~250–270 items), so its rate is noisier.`;
+      `<strong>What we see.</strong> Both splits are documents flagged for safety concerns. The <strong>unsafe (4) documents ` +
+      `accept slightly higher</strong> (94–99%) than the <strong>clearly unsafe (5)</strong> ones (90–91%), consistently across all ` +
+      `three models — the more extreme content is marginally harder to annotate to the judge's bar. The safety-4 slice is small ` +
+      `(~250–270 items), so its rate is noisier.`;
   }
 
   // ============================ REFLECTION LENGTH ============================
@@ -288,8 +287,8 @@
     document.getElementById("cite-sub").textContent =
       "How many charter [X.Y] citations each reflection carries (grouped brackets counted individually), over the 4k benchmark.";
     document.getElementById("cite-desc").innerHTML =
-      `<strong>What we see.</strong> About 40% of reflections cite nothing — the honest "nothing at stake" response on benign text — ` +
-      `while the rest cite one to several charter elements. Mean citations per reflection: ` +
+      `<strong>What we see.</strong> About 40% of reflections cite nothing — a "nothing at stake" reading where the passage up to ` +
+      `the reflection point raises no specific charter concern — while the rest cite one to several charter elements. Mean citations per reflection: ` +
       D.models.map((m) => `<strong>${esc(m.label)}</strong> ${m.citations.mean}`).join(", ") +
       `; Gemma-4-31B engages the charter most densely, Qwen3.6 the most sparingly.`;
   }

@@ -65,7 +65,7 @@ LEN_PROMPT_ASK = 200     # the prompt asks for <=200 (deliberately lower; empiri
 REASON_NBINS = 30        # 0..600 tokens (same 20-token bin width)
 SAFETY_LABEL = {
     1: "Safety 1", 2: "Safety 2", 3: "Safety 3",
-    4: "Safety 4 · borderline", 5: "Safety 5 · clearly safe",
+    4: "Safety 4 · unsafe", 5: "Safety 5 · clearly unsafe",
 }
 
 _TOK = None
