@@ -138,8 +138,7 @@
     document.getElementById("langs-desc").innerHTML =
       `<strong>What we see.</strong> Quality is even across languages for Qwen (no language below 90% accept), while both ` +
       `Gemma models dip on <strong>Japanese</strong> (83–85%). The <strong>edge cases</strong> are the hardest split for every model — ` +
-      `Qwen holds up best (87.6%), Gemma-4-31B is close (84.4%), and Gemma-4-26B-A4B struggles most (75.2%). ` +
-      `Edge was measured on each model's nearest available prompt (Qwen v6, Gemma-4-31B v12), which differ only marginally from the final v7/v9.`;
+      `Qwen holds up best (87.6%), Gemma-4-31B is close (84.4%), and Gemma-4-26B-A4B struggles most (75.2%).`;
   }
 
   // ============================ SUMMARY TABLE ============================
