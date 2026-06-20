@@ -165,7 +165,7 @@
     document.getElementById("summary-foot").textContent =
       `${D.bench_note} Throughput is ${D.throughput_unit}; GPU-h is the estimate for ` +
       `${Math.round(D.scale_samples / 1e6)}M samples on a ${D.node_gpus}-GPU GH200 node (client concurrency 1024), ` +
-      `all on the ${D.reflection_policy} reflection cutoff. Judge: ${D.judge}; accept = aggregate ≥ ${D.accept_threshold}.`;
+      `all on the ${D.reflection_policy} reflection cutoff. Judge: ${D.judge_model}; accept = aggregate ≥ ${D.accept_threshold}.`;
   }
 
   // ============================ ACCEPT BY SAFETY SCORE ============================
@@ -416,7 +416,7 @@
   function initMeta() {
     document.getElementById("meta-judge").textContent = D.judge_model;
     document.getElementById("meta-foot").textContent =
-      `Reflection annotation pipeline · ${D.models.length} candidate generators · judged by ${D.judge}.`;
+      `Reflection annotation pipeline · ${D.models.length} candidate generators · judged by ${D.judge_model}.`;
   }
 
   // ---- go ----
