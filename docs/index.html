@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Apertus Pretraining Safety Annotations</title>
+  <title>Apertus Pretraining Safety Annotations &ndash; Quality Analysis</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -12,7 +12,7 @@
 </head>
 <body>
   <header class="page-head">
-    <h1>Apertus Pretraining Safety Annotations</h1>
+    <h1>Apertus Pretraining Safety Annotations &ndash; Quality Analysis</h1>
     <p class="subtitle">
       Throughput vs. annotation quality for the candidate reflection generators,
       judged by <span id="meta-judge"></span> on a held-out benchmark.
@@ -39,7 +39,7 @@
           <div>
             <h2>Throughput vs. quality</h2>
             <p class="card-sub">
-              Annotation quality vs. measured generation throughput (log scale, samples/sec per node).
+              Annotation quality vs. measured generation throughput (samples/sec per node).
               GPU-hours shown are the estimate for 100M samples. Toggle quality between accept rate and mean score.
             </p>
           </div>
@@ -151,8 +151,31 @@
       </div>
 
       <div class="card">
-        <h2>Charter citations per reflection</h2>
-        <p class="card-sub" id="cite-sub"></p>
+        <h2>Reasoning length</h2>
+        <p class="card-sub">
+          Distribution of the length of the model's <code>analysis</code> scratchpad &mdash; the
+          chain-of-reasoning written before the reflection &mdash; in <code id="reasoning-tok"></code>
+          tokens (the same tokenizer as above), over the 4k benchmark. There is no target length for the
+          scratchpad, so no cutoff is marked.
+        </p>
+        <div id="plot-reasoning" class="plot"></div>
+        <div class="table-wrap">
+          <table id="reasoning-table"></table>
+        </div>
+        <p class="footnote" id="reasoning-foot"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Charter citations per reflection</h2>
+            <p class="card-sub" id="cite-sub"></p>
+          </div>
+          <div class="toggle" id="cite-toggle">
+            <button class="toggle-btn is-active" data-metric="count">Per&nbsp;count</button>
+            <button class="toggle-btn" data-metric="subsection">Per&nbsp;subsection</button>
+          </div>
+        </div>
         <div id="plot-citations" class="plot"></div>
         <div id="cite-desc" class="prose"></div>
       </div>
@@ -208,6 +231,7 @@
           <code id="prompt-path"></code>
           <button id="prompt-copy" class="copy-btn">Copy</button>
         </div>
+        <p id="prompt-note" class="prompt-note" hidden></p>
         <pre id="prompt-body" class="prompt-body"></pre>
       </div>
     </section>

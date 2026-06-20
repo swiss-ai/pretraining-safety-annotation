@@ -62,7 +62,7 @@
         ? `${pct(m.overall.accept)} · ${m.overall.mean_agg.toFixed(2)}`
         : `${m.overall.mean_agg.toFixed(2)} · ${pct(m.overall.accept)}`;
       return {
-        x: Math.log10(m.throughput.samples_per_sec), y: yval(m),
+        x: m.throughput.samples_per_sec, y: yval(m),
         xref: "x", yref: "y", ax: o.ax, ay: o.ay, showarrow: true,
         arrowhead: 0, arrowwidth: 1, arrowcolor: C.gray500,
         align: o.ax > 0 ? "left" : "center",
@@ -82,9 +82,8 @@
       hovermode: false,
       margin: { l: 66, r: 36, t: 14, b: 58 },
       xaxis: Object.assign(baseLayout().xaxis, {
-        type: "log", title: { text: "Generation throughput — samples/sec per node (4× GH200, log), higher = faster & cheaper →", font: { size: 12.5 } },
-        range: [Math.log10(0.15), Math.log10(4.7)],
-        tickvals: [0.2, 0.5, 1, 2, 3], ticktext: ["0.2", "0.5", "1", "2", "3"],
+        title: { text: "Generation throughput — samples/sec per node (4× GH200), higher = faster & cheaper →", font: { size: 12.5 } },
+        range: [0, 3.7], dtick: 0.5,
       }),
       yaxis: Object.assign(baseLayout().yaxis, yaxis),
     });
@@ -239,8 +238,41 @@
       `which kept lengths down, and only a thin tail approaches the cutoff.`;
   }
 
+  // ============================ REASONING LENGTH ============================
+  function renderReasoning() {
+    const centers = D.reasoning_bin_centers;
+    const traces = D.models.map((m) => ({
+      x: centers, y: m.reasoning_length.hist_pct,
+      name: m.label, type: "scatter", mode: "lines", line: { color: m.color, width: 2 },
+      hovertemplate: `<b>${m.label}</b><br>~%{x} tok: %{y:.1f}% of analyses<extra></extra>`,
+    }));
+    const layout = baseLayout({
+      margin: { l: 56, r: 20, t: 24, b: 50 },
+      xaxis: Object.assign(baseLayout().xaxis, {
+        title: { text: `Reasoning length (${D.length_tokenizer} tokens)`, font: { size: 12.5 } },
+        range: [0, centers[centers.length - 1] + 10],
+      }),
+      yaxis: Object.assign(baseLayout().yaxis, { title: { text: "% of analyses", font: { size: 12.5 } }, rangemode: "tozero" }),
+    });
+    Plotly.react("plot-reasoning", traces, layout, CONFIG);
+
+    const head = `<thead><tr><th>Model</th><th>n</th><th>Mean</th><th>Median</th><th>p90</th><th>p95</th><th>Max</th></tr></thead>`;
+    const rows = D.models.map((m) => {
+      const R = m.reasoning_length;
+      return `<tr><td class="model-cell"><span class="swatch" style="background:${m.color}"></span>${esc(m.label)}</td>` +
+        `<td>${R.n}</td><td>${R.mean}</td><td>${R.median}</td><td>${R.p90}</td><td>${R.p95}</td><td>${R.max}</td></tr>`;
+    }).join("");
+    document.getElementById("reasoning-table").innerHTML = head + "<tbody>" + rows + "</tbody>";
+    document.getElementById("reasoning-tok").textContent = D.length_tokenizer;
+    document.getElementById("reasoning-foot").textContent =
+      `The analysis scratchpad only (the chain-of-reasoning the model writes before the reflection), over the 4k benchmark. ` +
+      `It runs longer than the reflection itself and has no target length.`;
+  }
+
   // ============================ CHARTER CITATIONS ============================
+  let citationMetric = "count"; // "count" | "subsection"
   function renderCitations() {
+    if (citationMetric === "subsection") { renderCitationsBySubsection(); return; }
     const traces = D.models.map((m) => ({
       x: D.citation_buckets, y: m.citations.dist_pct,
       name: m.label, type: "bar", marker: { color: m.color },
@@ -260,6 +292,35 @@
       `while the rest cite one to several charter elements. Mean citations per reflection: ` +
       D.models.map((m) => `<strong>${esc(m.label)}</strong> ${m.citations.mean}`).join(", ") +
       `; Gemma-4-31B engages the charter most densely, Qwen3.6 the most sparingly.`;
+  }
+
+  function renderCitationsBySubsection() {
+    const subs = D.subsection_order;
+    const traces = D.models.map((m) => ({
+      x: subs, y: subs.map((s) => (m.citations.by_subsection[s] || 0) * 100),
+      name: m.label, type: "bar", marker: { color: m.color },
+      hovertemplate: `<b>${m.label}</b><br>[%{x}]: %{y:.1f}% of reflections<extra></extra>`,
+    }));
+    const layout = baseLayout({
+      barmode: "group", bargap: 0.3, bargroupgap: 0.08,
+      margin: { l: 56, r: 20, t: 30, b: 46 },
+      xaxis: Object.assign(baseLayout().xaxis, { showgrid: false, title: { text: "Charter subsection", font: { size: 12.5 } } }),
+      yaxis: Object.assign(baseLayout().yaxis, { title: { text: "% of reflections citing", font: { size: 12.5 } }, rangemode: "tozero" }),
+    });
+    Plotly.react("plot-citations", traces, layout, CONFIG);
+    document.getElementById("cite-sub").textContent =
+      "How often each charter subsection X.Y is cited — share of reflections that reference it (distinct per reflection), over the 4k benchmark.";
+    // most-engaged subsection per model (max share)
+    const topFor = (m) => D.subsection_order.reduce(
+      (a, s) => ((m.citations.by_subsection[s] || 0) > (m.citations.by_subsection[a] || 0) ? s : a),
+      D.subsection_order[0]);
+    document.getElementById("cite-desc").innerHTML =
+      `<strong>What we see.</strong> Citations concentrate on a handful of subsections rather than spreading evenly across the charter. ` +
+      `Most-engaged subsection per model: ` +
+      D.models.map((m) => {
+        const s = topFor(m);
+        return `<strong>${esc(m.label)}</strong> [${s}] (${((m.citations.by_subsection[s] || 0) * 100).toFixed(1)}%)`;
+      }).join(", ") + `.`;
   }
 
   // ============================ INSPECTOR ============================
@@ -402,6 +463,13 @@
     const m = D.models.find((x) => x.id === promptModelId);
     document.getElementById("prompt-path").textContent = m.prompt_file;
     document.getElementById("prompt-body").textContent = m.prompt_text;
+    const note = document.getElementById("prompt-note");
+    if (m.prompt_same_as) {
+      note.textContent = `⊜ Identical prompt to ${m.prompt_same_as} — these two generators run the exact same reflection prompt.`;
+      note.hidden = false;
+    } else {
+      note.hidden = true;
+    }
   }
 
   // ============================ REVIEWER–JUDGE AGREEMENT ============================
@@ -512,7 +580,7 @@
         if (tab === "overview") {
           ["plot-headline", "plot-langs", "plot-safety"].forEach((p) => Plotly.Plots.resize(p));
         }
-        if (tab === "stats") { Plotly.Plots.resize("plot-length"); Plotly.Plots.resize("plot-citations"); }
+        if (tab === "stats") { Plotly.Plots.resize("plot-length"); Plotly.Plots.resize("plot-reasoning"); Plotly.Plots.resize("plot-citations"); }
         if (tab === "inspector") renderList();
       });
     });
@@ -538,6 +606,7 @@
     wireToggle("metric-toggle", (m) => { langMetric = m; renderLangs(); });
     wireToggle("headline-toggle", (m) => { headlineMetric = m; renderHeadline(); });
     wireToggle("safety-toggle", (m) => { safetyMetric = m; renderSafety(); });
+    wireToggle("cite-toggle", (m) => { citationMetric = m; renderCitations(); });
   }
 
   function initMeta() {
@@ -557,6 +626,7 @@
   safetyDesc();
   renderTable();
   renderLength();
+  renderReasoning();
   renderCitations();
   initInspector();
   renderPrompts();

@@ -139,6 +139,7 @@ main {
 #plot-langs { height: 420px; }
 #plot-safety { height: 360px; }
 #plot-length { height: 400px; }
+#plot-reasoning { height: 400px; }
 #plot-citations { height: 360px; }
 
 .prose {
@@ -304,6 +305,7 @@ details.analysis summary {
 .prompt-pill .swatch { width: 9px; height: 9px; border-radius: 2px; margin: 0; }
 .prompt-pill.is-active { border-color: var(--deep-teal); color: var(--black); background: #f3f9f8; }
 .prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.prompt-note { margin: 0 0 10px; font-size: 12.5px; color: var(--rust); }
 .copy-btn {
   appearance: none; border: 1px solid var(--border); background: var(--gray-100);
   font: inherit; font-size: 12px; font-weight: 500; color: var(--gray-700);

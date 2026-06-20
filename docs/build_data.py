@@ -18,14 +18,35 @@ from pathlib import Path
 from pipeline.tokenizer import _get_apertus_tokenizer
 
 # Charter [X.Y] citation counting (grouped brackets like [1.1, 1.3] count as 2).
+# Only real charter subsections count — a stray decimal like [0.5] is ignored.
 _BRACKET_RE = re.compile(r"\[[^\]]*\]")
 _CITE_RE = re.compile(r"\d+\.\d+")
+
+_VALID_SUBS = None
+def _valid_subsections() -> set[str]:
+    """Real charter subsections, from the ``### X.Y`` headers of the value spec."""
+    global _VALID_SUBS
+    if _VALID_SUBS is None:
+        charter = ROOT / "apertus-charter/implementations/pretraining_value_annotation/pretraining_value_specification_v2.0.md"
+        _VALID_SUBS = set(re.findall(r"^###\s+(\d+\.\d+)", charter.read_text(encoding="utf-8"), re.M))
+    return _VALID_SUBS
+
+
+def _cites_in(reflection: str) -> list[str]:
+    """Valid charter [X.Y] citations in a reflection, in order (grouped brackets expanded)."""
+    valid = _valid_subsections()
+    return [c for b in _BRACKET_RE.findall(reflection or "") for c in _CITE_RE.findall(b) if c in valid]
 
 
 def count_citations(reflection: str, stored: list | None) -> int:
     if stored:
         return len(stored)
-    return sum(len(_CITE_RE.findall(b)) for b in _BRACKET_RE.findall(reflection or ""))
+    return len(_cites_in(reflection))
+
+
+def cited_subsections(reflection: str) -> set[str]:
+    """Distinct charter subsections X.Y cited in a reflection (from [...] brackets)."""
+    return set(_cites_in(reflection))
 
 ROOT = Path(__file__).resolve().parent.parent
 EVAL = ROOT / "data" / "pipeline" / "charter_eval"
@@ -39,6 +60,9 @@ LEN_BIN_W = 20           # histogram bin width (Apertus tokens)
 LEN_NBINS = 19           # 0..380 tokens
 LEN_CAP = 256            # actual reflection length cutoff
 LEN_PROMPT_ASK = 200     # the prompt asks for <=200 (deliberately lower; empirically helped)
+# The analysis scratchpad ("reasoning") runs longer than reflections (Gemma-4-31B
+# reaches ~540 tokens), so it gets a wider bin range. No target/cutoff for it.
+REASON_NBINS = 30        # 0..600 tokens (same 20-token bin width)
 SAFETY_LABEL = {
     1: "Safety 1", 2: "Safety 2", 3: "Safety 3",
     4: "Safety 4 · borderline", 5: "Safety 5 · clearly safe",
@@ -53,15 +77,15 @@ def refl_tokens(text: str) -> int:
     return len(_TOK.encode(text or "", add_special_tokens=False).ids)
 
 
-def length_profile(lengths: list[int]) -> dict | None:
+def length_profile(lengths: list[int], nbins: int = LEN_NBINS) -> dict | None:
     lengths = sorted(lengths)
     n = len(lengths)
     if n == 0:
         return None
     pc = lambda p: lengths[min(n - 1, int(p * n))]
-    counts = [0] * LEN_NBINS
+    counts = [0] * nbins
     for L in lengths:
-        counts[min(L // LEN_BIN_W, LEN_NBINS - 1)] += 1
+        counts[min(L // LEN_BIN_W, nbins - 1)] += 1
     return {
         "n": n,
         "mean": round(sum(lengths) / n, 1),
@@ -216,15 +240,21 @@ def main() -> None:
             by_safety[str(sv)] = stats(safety_groups[sv])
 
         length = length_profile([refl_tokens(r["reflection_1p"]) for r in all4k])
+        reasoning_length = length_profile([refl_tokens(r["analysis"]) for r in all4k], REASON_NBINS)
 
         cite_counts = [count_citations(r["reflection_1p"], r["charter_elements"]) for r in all4k]
         cdist = [0, 0, 0, 0, 0]  # buckets 0,1,2,3,4+
         for c in cite_counts:
             cdist[min(c, 4)] += 1
         n4 = len(all4k)
+        sub_counts: dict[str, int] = {}  # reflections citing each subsection (distinct per reflection)
+        for r in all4k:
+            for s in cited_subsections(r["reflection_1p"]):
+                sub_counts[s] = sub_counts.get(s, 0) + 1
         citations = {
             "mean": round(sum(cite_counts) / n4, 2),
             "dist_pct": [round(x / n4 * 100, 1) for x in cdist],
+            "by_subsection": {s: round(c / n4, 4) for s, c in sub_counts.items()},
         }
 
         # Full inspector dataset (every generation). Trimmed per record to keep the
@@ -252,6 +282,7 @@ def main() -> None:
             "by_lang": by_lang,
             "by_safety": by_safety,
             "length": length,
+            "reasoning_length": reasoning_length,
             "citations": citations,
             "prompt_file": prompt_rel,
             "prompt_text": prompt_text,
@@ -300,7 +331,17 @@ def main() -> None:
             "confusion": cm, "languages": langs,
         }
 
+    # Flag models whose final prompt is byte-identical to another model's (the two
+    # Gemma generators share the exact same reflection prompt).
+    for mo in models_out:
+        twin = next((o for o in models_out if o is not mo and o["prompt_text"] == mo["prompt_text"]), None)
+        mo["prompt_same_as"] = f"{twin['label']} ({twin['prompt']})" if twin else None
+
     safety_order = sorted({int(s) for mo in models_out for s in mo["by_safety"]})
+    subsection_order = sorted(
+        {s for mo in models_out for s in mo["citations"]["by_subsection"]},
+        key=lambda s: tuple(int(x) for x in s.split(".")),
+    )
     data = {
         "reflection_policy": "apertus-min-3800-v1",
         "judge": "GLM-5.1 · judge_reflection_v5",
@@ -316,11 +357,13 @@ def main() -> None:
         "safety_label": {str(s): SAFETY_LABEL.get(s, f"Safety {s}") for s in safety_order},
         "length_tokenizer": "swiss-ai/Apertus-70B-2509",
         "length_bin_centers": [i * LEN_BIN_W + LEN_BIN_W // 2 for i in range(LEN_NBINS)],
+        "reasoning_bin_centers": [i * LEN_BIN_W + LEN_BIN_W // 2 for i in range(REASON_NBINS)],
         "length_cap": LEN_CAP,
         "length_prompt_ask": LEN_PROMPT_ASK,
         "agreement": agreement,
         "reviews": reviews,
         "citation_buckets": ["0", "1", "2", "3", "4+"],
+        "subsection_order": subsection_order,
         "inspector_count": len(inspector_records),
         "models": models_out,
     }
@@ -345,12 +388,15 @@ def main() -> None:
     print(f"wrote {out_path} ({kb:.0f} KB) — {len(models_out)} models")
     print(f"wrote {insp_path} ({insp_mb:.1f} MB) — {len(inspector_records)} generations")
     for mo in models_out:
-        o = mo["overall"]; L = mo["length"]
+        o = mo["overall"]; L = mo["length"]; R = mo["reasoning_length"]
         saf = " ".join(f"s{k}={v['accept']:.0%}(n{v['n']})" for k, v in mo["by_safety"].items())
         print(f"  {mo['label']:18s} accept={o['accept']:.1%} mean={o['mean_agg']:.3f} "
               f"gpu_h={mo['throughput']['gpu_hours']:,} edge={mo['by_lang']['edge']['accept']:.1%}")
         print(f"      safety[{saf}]  refl_tok: med={L['median']} p95={L['p95']} max={L['max']} "
               f">200={L['pct_over_200']:.1%}")
+        print(f"      reasoning_tok: med={R['median']} p95={R['p95']} max={R['max']}")
+        top = sorted(mo["citations"]["by_subsection"].items(), key=lambda kv: -kv[1])[:5]
+        print(f"      top cited: " + " ".join(f"[{s}]={p:.0%}" for s, p in top))
 
 
 if __name__ == "__main__":
