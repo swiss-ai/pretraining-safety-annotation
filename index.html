@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Apertus Pretraining Safety Annotations &ndash; Quality Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <header class="page-head">
+    <h1>Apertus Pretraining Safety Annotations &ndash; Quality Analysis</h1>
+    <p class="subtitle">
+      Throughput vs. annotation quality for the candidate reflection generators,
+      judged by <span id="meta-judge"></span> on a held-out benchmark.
+    </p>
+    <p class="subtitle-note">
+      A broader set of models was evaluated for the previous version of this intervention &mdash; see the
+      <a href="https://github.com/epfl-dlab/model-raising-data/blob/main/pipeline/MODEL_SELECTION.md" target="_blank" rel="noopener">earlier model-selection analysis</a>.
+    </p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-tab="overview" role="tab">Overview</button>
+    <button class="tab" data-tab="inspector" role="tab">Inspector</button>
+    <button class="tab" data-tab="stats" role="tab">Statistics</button>
+    <button class="tab" data-tab="agreement" role="tab">Agreement</button>
+    <button class="tab" data-tab="prompts" role="tab">Prompts</button>
+  </nav>
+
+  <main>
+    <!-- ===================== OVERVIEW ===================== -->
+    <section id="tab-overview" class="tab-panel">
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Throughput vs. quality</h2>
+            <p class="card-sub">
+              Annotation quality vs. measured generation throughput (samples/sec per node).
+              GPU-hours shown are the estimate for 100M samples. Toggle quality between accept rate and mean score.
+            </p>
+          </div>
+          <div class="toggle" id="headline-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="quality">Mean&nbsp;score</button>
+          </div>
+        </div>
+        <div id="plot-headline" class="plot"></div>
+        <div id="headline-desc" class="prose"></div>
+        <p class="footnote" id="headline-foot"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Per-language &amp; edge-case accept rate</h2>
+            <p class="card-sub" id="bars-sub"></p>
+          </div>
+          <div class="toggle" id="metric-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="mean">Mean&nbsp;score</button>
+          </div>
+        </div>
+        <div id="plot-langs" class="plot"></div>
+        <div id="langs-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Accept rate by document safety score</h2>
+            <p class="card-sub" id="safety-sub"></p>
+          </div>
+          <div class="toggle" id="safety-toggle">
+            <button class="toggle-btn is-active" data-metric="accept">Accept&nbsp;rate</button>
+            <button class="toggle-btn" data-metric="mean">Mean&nbsp;score</button>
+          </div>
+        </div>
+        <div id="plot-safety" class="plot"></div>
+        <div id="safety-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <h2>Summary</h2>
+        <div class="table-wrap">
+          <table id="summary-table"></table>
+        </div>
+        <p class="footnote" id="summary-foot"></p>
+      </div>
+    </section>
+
+    <!-- ===================== INSPECTOR ===================== -->
+    <section id="tab-inspector" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Inspect generations &amp; judge verdicts</h2>
+        <p class="card-sub">
+          Every generation across the benchmark. Filter or search, then pick one to see the document,
+          the reflection, and the judge's per-dimension verdict.
+        </p>
+        <div class="controls">
+          <label>Model <select id="sel-model"></select></label>
+          <label>Bench <select id="sel-bench"></select></label>
+          <label>Language <select id="sel-lang"></select></label>
+          <label>Verdict
+            <select id="sel-filter">
+              <option value="all">All</option>
+              <option value="accept">Accepted</option>
+              <option value="reject">Rejected</option>
+            </select>
+          </label>
+          <label>Safety <select id="sel-safety"></select></label>
+          <label>Citations
+            <select id="sel-cites">
+              <option value="all">Any</option>
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3+</option>
+            </select>
+          </label>
+          <label>Sort by
+            <select id="sel-sort">
+              <option value="default">Default</option>
+              <option value="agg_desc">Aggregate (high→low)</option>
+              <option value="agg_asc">Aggregate (low→high)</option>
+              <option value="cites_desc">Citations (most)</option>
+              <option value="refl_desc">Reflection length</option>
+              <option value="doc_desc">Document length</option>
+            </select>
+          </label>
+          <label class="search-label">Search
+            <input id="sel-search" type="search" placeholder="reflection or document…" autocomplete="off" />
+          </label>
+        </div>
+        <div class="list-count" id="list-count"></div>
+        <div class="inspector">
+          <ul id="record-list" class="record-list"></ul>
+          <div id="record-detail" class="record-detail">
+            <p class="empty-hint">Loading generations…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== STATISTICS ===================== -->
+    <section id="tab-stats" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Reflection length</h2>
+        <p class="card-sub">
+          Distribution of reflection length in <code id="stats-tok"></code> tokens &mdash;
+          the tokenizer the reflections are written into &mdash; over the 4k benchmark.
+          The dashed line marks the <span id="stats-cap"></span>-token cutoff; the prompt deliberately
+          asks for &le;<span id="stats-ask"></span> (a lower number that empirically kept reflections shorter).
+        </p>
+        <div id="plot-length" class="plot"></div>
+        <div class="table-wrap">
+          <table id="length-table"></table>
+        </div>
+        <p class="footnote" id="length-foot"></p>
+      </div>
+
+      <div class="card">
+        <h2>Reasoning length</h2>
+        <p class="card-sub">
+          Distribution of the length of the model's <code>analysis</code> scratchpad &mdash; the
+          chain-of-reasoning written before the reflection &mdash; in <code id="reasoning-tok"></code>
+          tokens (the same tokenizer as above), over the 4k benchmark. There is no target length for the
+          scratchpad, so no cutoff is marked.
+        </p>
+        <div id="plot-reasoning" class="plot"></div>
+        <div class="table-wrap">
+          <table id="reasoning-table"></table>
+        </div>
+        <p class="footnote" id="reasoning-foot"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Charter citations per reflection</h2>
+            <p class="card-sub" id="cite-sub"></p>
+          </div>
+          <div class="toggle" id="cite-toggle">
+            <button class="toggle-btn is-active" data-metric="count">Per&nbsp;count</button>
+            <button class="toggle-btn" data-metric="subsection">Per&nbsp;subsection</button>
+          </div>
+        </div>
+        <div id="plot-citations" class="plot"></div>
+        <div id="cite-desc" class="prose"></div>
+      </div>
+    </section>
+
+    <!-- ===================== AGREEMENT ===================== -->
+    <section id="tab-agreement" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Reviewer&ndash;judge agreement</h2>
+        <p class="card-sub" id="agree-sub"></p>
+        <div class="agree-top">
+          <div class="bigstat">
+            <div class="bigstat-num" id="agree-pct"></div>
+            <div class="bigstat-lab" id="agree-lab"></div>
+            <div class="bigstat-prev" id="agree-prev"></div>
+          </div>
+          <table class="confusion" id="confusion"></table>
+        </div>
+        <div id="agree-desc" class="prose"></div>
+      </div>
+
+      <div class="card">
+        <h2>Review by review</h2>
+        <p class="card-sub">Each human thumb vs. the GLM-5.1 verdict on the same reflection. Disagreements shown first.</p>
+        <div class="controls">
+          <label>Show
+            <select id="rev-filter">
+              <option value="disagree">Disagreements</option>
+              <option value="all">All reviews</option>
+              <option value="agree">Agreements</option>
+            </select>
+          </label>
+        </div>
+        <div class="inspector">
+          <ul id="review-list" class="record-list"></ul>
+          <div id="review-detail" class="record-detail">
+            <p class="empty-hint">Select a review to inspect.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PROMPTS ===================== -->
+    <section id="tab-prompts" class="tab-panel" hidden>
+      <div class="card">
+        <h2>Final generator prompts</h2>
+        <p class="card-sub">
+          The exact reflection prompt each model was evaluated with. Per-model directive for the
+          reflection language is injected after the document at run time; this is the static template.
+        </p>
+        <div class="prompt-tabs" id="prompt-tabs"></div>
+        <div class="prompt-head">
+          <code id="prompt-path"></code>
+          <button id="prompt-copy" class="copy-btn">Copy</button>
+        </div>
+        <p id="prompt-note" class="prompt-note" hidden></p>
+        <pre id="prompt-body" class="prompt-body"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-foot">
+    <span id="meta-foot"></span>
+    <span class="foot-credit">&copy; by <a href="https://jkminder.ch" target="_blank" rel="noopener">Julian Minder</a></span>
+  </footer>
+
+  <script src="data.js" charset="utf-8"></script>
+  <script src="app.js" charset="utf-8"></script>
+</body>
+</html>
