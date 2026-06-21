@@ -16,7 +16,7 @@ The reflection uses inline `[X.Y]` citations as the source of truth for charter-
 
 ### Reflection — first-person voice over the partial text
 
-Frozen prompt: `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`. The generator sees only text up to a sampled reading pause point and writes a single first-person reflection.
+Frozen prompt: `final_prompts/qwen3.6-35b-a3b/generator_reflection_v10.md`. The generator sees only text up to a sampled reading pause point and writes a single first-person reflection.
 
 ```json
 {
@@ -88,7 +88,7 @@ Each run in `pipeline/charter/scale/runs.py` is a `RunDefinition`: prompt type, 
 
 | Run | Prompt | Output columns |
 |-----|--------|----------------|
-| `reflections` | `generator_reflection_v7.md` | `reflection_1p`, `reflection_position`, `reflection_token_index`, `charter_reflection` |
+| `reflections` | `generator_reflection_v10.md` | `reflection_1p`, `reflection_position`, `reflection_token_index`, `charter_reflection` |
 
 ## Project structure
 
@@ -128,8 +128,8 @@ dashboard/                     # single-page Gradio HF Space (eval inspection + 
 apertus-charter/               # git submodule holding the charter / specification
 └── charter-v1.0.md            # the Apertus Charter (charter_path in config.yaml)
 
-final_prompts/qwen3.5-35b-a3b/
-└── generator_reflection_v7.md             # frozen charter.scale reflection prompt
+final_prompts/qwen3.6-35b-a3b/
+└── generator_reflection_v10.md            # frozen charter.scale reflection prompt
 ```
 
 Per-model versioned prompts — both `generator_reflection_vN.md` and `judge_reflection_vN.md`, written by the improver loop and read by `charter.improve` / `charter.eval` — are tracked at `pipeline/prompts/models/{alias}/` (the runtime `PROMPTS_DIR`). Loose global templates (`init_*`, `improver*`, `human_notes_*`) stay directly in `pipeline/prompts/`; transient improver `state_*.md` is gitignored. (Separate from `final_prompts/`, the frozen prompts `charter.scale` runs at scale.)

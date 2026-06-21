@@ -169,7 +169,16 @@ That gap on the hard tail, not the small aggregate lead, is what settled it.
 
 ## Outcome and production config
 
-`Qwen3.5-35B-A3B-FP8` is frozen as the annotation model. Prompts live in
+**Superseded (2026-06-21):** the production annotation model is now
+**`Qwen3.6-35B-A3B-FP8`** with prompt **`generator_reflection_v10`**
+([`final_prompts/qwen3.6-35b-a3b/`](../final_prompts/qwen3.6-35b-a3b/)), chosen for
+best quality-per-cost — accept 90/92/89 on dclm-en/fw2-multi/edge-cases at the
+cheapest throughput (~34K GPU-h/100M docs, A3B MoE). See
+[`logs/generator_prompts/progress.md`](../logs/generator_prompts/progress.md) for
+the hardening pass, the v10 named-hints under-read fix, and the full 4-model
+benchmark. The original Qwen3.5 selection below is kept as the historical record.
+
+`Qwen3.5-35B-A3B-FP8` was the first frozen annotation model. Prompts lived in
 [`final_prompts/qwen3.5-35b-a3b/`](../final_prompts/qwen3.5-35b-a3b/), and the
 scale-up runs are in [`charter/scale/`](charter/scale/).
 
@@ -212,5 +221,5 @@ uv run python pipeline/assets/model_selection/make_plots.py
 | Cross-model eval (generations and Kimi-K2.5 judgments) | `data/pipeline/charter_eval/ref_v3/`, `ref_v4_qwen/` |
 | Ranking logic (`mean_aggregate`, accept-by-safety, vs-human) | `pipeline/charter/eval/rank.py` |
 | Throughput and GPU-h benchmarks and SGLang tuning | `throughput_estimations/README.md` (see git history) |
-| Frozen winning prompts | `final_prompts/qwen3.5-35b-a3b/` |
+| Frozen winning prompts | `final_prompts/qwen3.6-35b-a3b/` (current); `final_prompts/qwen3.5-35b-a3b/` (original selection) |
 | Figure-generation script | `pipeline/assets/model_selection/make_plots.py` |

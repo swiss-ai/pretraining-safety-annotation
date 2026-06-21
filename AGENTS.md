@@ -12,7 +12,7 @@
 
 The pipeline produces a single annotation over FineWeb / dolma3_mix text (see `README.md` for the schema and worked examples):
 
-- **Reflection** (partial text up to a reading pause point → a single first-person voice): `reflection_1p`. Frozen prompt at `final_prompts/qwen3.5-35b-a3b/generator_reflection_v7.md`.
+- **Reflection** (partial text up to a reading pause point → a single first-person voice): `reflection_1p`. Frozen prompt at `final_prompts/qwen3.6-35b-a3b/generator_reflection_v10.md`.
 
 It emits inline `[X.Y]` citations against the Apertus Charter (`apertus-charter/charter-v1.0.md`, set as `charter_path` in `configs/config.yaml`; the charter lives in the `apertus-charter` git submodule). Schema constants + the shared parser live in `pipeline/generation.py` — update it in one place when the schema changes.
 
