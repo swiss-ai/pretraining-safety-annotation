@@ -177,8 +177,8 @@ charter:
     safety_min_score: 4
     safety_min_confidence: 0.9
     reflection_max_chars: 8000
-    reflection_prompt: generator_reflection_v5.md  # qwen final in final_prompts/
-    generator_alias: qwen3.5-35b-a3b
+    reflection_prompt: generator_reflection_v10.md  # qwen3.6-35b-a3b final (final_prompts/); v8 hardening + named under-read hints (dclm 90 / fw2 92 / edge 89)
+    generator_alias: qwen3.6-35b-a3b
     thinking: true
     json_mode: false
     max_concurrent_requests: 1024
@@ -187,20 +187,20 @@ charter:
     reflection_seed: 42
     max_retries_per_doc: 3
     sglang:
-      hf_slug: Qwen/Qwen3.5-35B-A3B-FP8
-      model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.5-35B-A3B-FP8
+      hf_slug: Qwen/Qwen3.6-35B-A3B-FP8
+      model_path: /capstor/store/cscs/swissai/a141/hf_models/models/qwen/Qwen3.6-35B-A3B-FP8
       tp_size: 1
       dp_size: 4
       port: 30000
       # reasoning_parser per model family:
       #   GLM-4.5-Air, GLM-4.5-Air-FP8, GLM-4.7-Flash: glm45
-      #   Qwen3.5-* (all sizes):                        kimi_k2
+      #   Qwen3.5-* / Qwen3.6-* (all sizes):            kimi_k2
       #   Kimi-K2.5:                                     kimi_k2
       #   Nemotron-3-Super:                              nano_v3
       #   gpt-oss-120b:                                  (none — no thinking)
       reasoning_parser: kimi_k2
       env_toml: /users/jminder/repositories/model-launch/src/swiss_ai_model_launch/assets/envs/sglang.toml
-      extra_args: "--context-length 24576 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"
+      extra_args: "--context-length 32768 --kv-cache-dtype bf16 --max-running-requests 512 --schedule-conservativeness 0.3 --cuda-graph-max-bs 1024 --mamba-ssm-dtype bfloat16 --mem-fraction-static 0.88 --mamba-full-memory-ratio 2.0"  # 32768 fits charter + 3800-token doc insertion; 3.6 reuses tuned 3.5 A3B flags
       # MoE tuning configs were at /iopsstor/scratch/cscs/jminder/moe_configs_qwen35/
       # but got cleaned by $SCRATCH auto-purge. sglang auto-tunes without them (~1-2% slower).
       pre_launch_cmds: |
