@@ -1,3 +1,4 @@
 [submodule "apertus-charter"]
 	path = apertus-charter
 	url = https://github.com/swiss-ai/apertus-charter
+	branch = main
