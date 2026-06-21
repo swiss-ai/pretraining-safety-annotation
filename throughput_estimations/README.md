@@ -2,6 +2,43 @@
 
 Estimates GPU-hours needed to annotate ~102M samples with reflection generation.
 
+## Gemma-4-26B-A4B throughput optimization (2026-06-21)
+
+**Result: the 26B is decode-compute-bound. FP8 *weights* are the only lever that helps
+(~1.5×); fp8 KV, expert-parallel, and TP topologies do nothing or hurt.** Even with fp8
+weights it stays well above Qwen3.6-35B-A3B, so the A3B remains the pick. dclm, DP4, vLLM.
+
+FP8-weights vs bf16 (dclm, new apertus-3800 schematic, v5 prompt, n=5000):
+
+| Config (dclm) | Samples/sec | GPU-hours (100M) | vs bf16 |
+|---|---|---|---|
+| **FP8 weights (`RedHatAI/gemma-4-26B-A4B-it-FP8-Dynamic`, W8A8)** | **1.89** | **~58,800** | **−32%** |
+| bf16 baseline (DP4) | 1.28 | ~86,800 | — |
+
+Memory/topology sweep (earlier, 8000-char schematic — relative ranking holds):
+
+| lever vs DP4 bf16 baseline | effect |
+|---|---|
+| **fp8 weights** (RedHatAI W8A8) | **−32% GPU-h (1.48×)** ✅ |
+| DP4 + expert-parallel (bf16 KV) | neutral (~+2%, noise) |
+| DP4 + fp8 KV | **−13% (HURTS)** |
+| TP2×DP2 + EP | −23% |
+| TP4 + EP | timed out (~13× slower) |
+
+### Findings
+- **Compute-bound, not KV-bound — proven:** fp8 KV *doubled* batch capacity (25→52×
+  concurrency, KV 835K→1.72M tokens) yet throughput *fell* 13%. Spare batch headroom doesn't
+  convert to throughput, so memory/batch levers (fp8 KV, EP, gpu-util, max-num-batched-tokens)
+  are dead ends; dynamic-fp8 KV dequant per access just adds decode overhead.
+- **fp8 *weights* are the right fp8 lever (not the cache):** W8A8 (MoE experts quantized,
+  router/vision/embeddings kept fp16) gives ~1.5× via GH200's 2× fp8 matmul, directly cutting
+  the decode compute. RedHatAI reports 99–102% accuracy recovery, so quality is preserved.
+  Serve directly with vLLM (auto-detects `compressed-tensors`); same DP4 + bf16 KV flags.
+- **DP4 is the optimal topology** — model fits in one GPU, so TP only adds comm (TP2×DP2 −23%,
+  TP4+EP timed out). Expert-parallel frees almost no memory for this model (+3% KV).
+- **Still loses to the A3B:** even at ~59K, the fp8 26B is ~1.7× the cost of Qwen3.6-35B-A3B
+  (~34K dclm, new schematic). The A3B is cheaper *and* faster; the fp8 26B is a Gemma-only fallback.
+
 ## Qwen3.6-35B-A3B-FP8 throughput optimization (2026-06-19)
 
 **Result: the current production config is already optimal — keep it.** A full sweep of
