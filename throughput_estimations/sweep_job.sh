@@ -32,7 +32,20 @@ WORKER_PORT=8080
 echo "Starting SGLang on $NODE ($NODE_IP:$WORKER_PORT)"
 echo "Args: $FRAMEWORK_ARGS"
 
-# --- Launch SGLang ---
+# --- Launch server (engine-aware: sglang for Qwen, vllm for Gemma-4) ---
+ENGINE="${ENGINE:-sglang}"
+echo "Engine: $ENGINE"
+if [ "$ENGINE" = "vllm" ]; then
+srun --nodes=1 --ntasks=1 --nodelist="$NODE" \
+    --container-writable \
+    --environment="$ENV_TOML" \
+    bash --norc --noprofile -c "\
+set -ex
+export no_proxy=\"0.0.0.0,\$no_proxy\"
+export NO_PROXY=\"0.0.0.0,\$NO_PROXY\"
+vllm serve $FRAMEWORK_ARGS" &
+WORKER_PID=$!
+else
 srun --nodes=1 --ntasks=1 --nodelist="$NODE" \
     --container-writable \
     --environment="$ENV_TOML" \
@@ -56,11 +69,12 @@ if ls \$MOE_CONFIGS_DIR/*.json >/dev/null 2>&1; then
 fi
 python3 -m sglang.launch_server $FRAMEWORK_ARGS" &
 WORKER_PID=$!
+fi
 
 # --- Wait for server health ---
 echo "Waiting for SGLang to be ready..."
 ENDPOINT="http://${NODE_IP}:${WORKER_PORT}"
-MAX_WAIT=600
+MAX_WAIT=1200   # qwen3.6 omni FP8 + cudnn install can exceed 600s to become healthy
 elapsed=0
 while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     status=$(curl --noproxy "*" -s -o /dev/null -w '%{http_code}' "${ENDPOINT}/health" 2>/dev/null || echo "000")
@@ -85,10 +99,18 @@ if [ "$elapsed" -ge "$MAX_WAIT" ]; then
 fi
 
 # --- Extract TP/DP from args ---
-TP_SIZE=$(echo "$FRAMEWORK_ARGS" | grep -oP '(?<=--tp-size )\d+|(?<=--tp )\d+' | head -1)
-DP_SIZE=$(echo "$FRAMEWORK_ARGS" | grep -oP '(?<=--dp-size )\d+|(?<=--dp )\d+' | head -1)
+# `|| true`: a missing flag => grep exits 1, which under `set -e` would abort the
+# job right after the server is ready. Default to 1 when absent.
+TP_SIZE=$(echo "$FRAMEWORK_ARGS" | grep -oP '(?<=--tp-size )\d+|(?<=--tp )\d+|(?<=--tensor-parallel-size )\d+' | head -1 || true)
+DP_SIZE=$(echo "$FRAMEWORK_ARGS" | grep -oP '(?<=--dp-size )\d+|(?<=--dp )\d+|(?<=--data-parallel-size )\d+' | head -1 || true)
 TP_SIZE=${TP_SIZE:-1}
 DP_SIZE=${DP_SIZE:-1}
+
+# Thinking flags (engine-aware): vLLM rejects sglang's separate_reasoning param.
+THINK_ARGS=""
+if [ "${BENCHMARK_THINKING:-0}" = "1" ]; then
+    THINK_ARGS="--thinking --thinking-style $ENGINE"
+fi
 
 # --- Get API key ---
 api_key="${!BENCHMARK_API_KEY_VAR:-}"
@@ -103,7 +125,7 @@ fi
 echo ""
 echo "=== Starting benchmark: ${SWEEP_NAME} ==="
 echo "Endpoint: ${ENDPOINT}/v1"
-echo "Samples: ${BENCHMARK_N_SAMPLES} | Max concurrent: ${BENCHMARK_MAX_CONCURRENT} | Mode: ${BENCHMARK_MODE}"
+echo "Samples: ${BENCHMARK_N_SAMPLES} | Max concurrent: ${BENCHMARK_MAX_CONCURRENT} | Engine: ${ENGINE} | Thinking: ${BENCHMARK_THINKING:-0}"
 
 srun --nodes=1 --ntasks=1 --nodelist="$NODE" \
     --overlap \
@@ -114,7 +136,9 @@ set -e
 uv run --directory \"$BENCHMARK_REPO\" python -m throughput_estimations.estimate \
     --api-name \"$SERVED_MODEL_NAME\" \
     --role generator \
-    --mode $BENCHMARK_MODE \
+    $THINK_ARGS \
+    --prompt-path \"$BENCHMARK_PROMPT_PATH\" \
+    --reflection-max-tokens \"${BENCHMARK_REFLECTION_MAX_TOKENS:-3800}\" \
     --n-samples $BENCHMARK_N_SAMPLES \
     --data-path \"$BENCHMARK_DATA_PATH\" \
     --endpoint \"${ENDPOINT}/v1\" \
@@ -127,6 +151,7 @@ uv run --directory \"$BENCHMARK_REPO\" python -m throughput_estimations.estimate
     --warmup $BENCHMARK_WARMUP \
     --cooldown $BENCHMARK_COOLDOWN \
     --max-tokens 0 \
+    --total-samples ${BENCHMARK_TOTAL_SAMPLES:-100000000} \
     --output-dir \"$BENCHMARK_OUTPUT_DIR\"" &
 BENCHMARK_PID=$!
 
