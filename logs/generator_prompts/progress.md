@@ -338,3 +338,85 @@ headroom (GPU/KV-cache cost — Julian's call).
 swissai DnqH gen + GLM-5.1 (`CWqJ`) judge, fresh run-ids (new cache guard). Reference: **old-policy** v6 2k
 dclm = **92.2%** (`sw2k_dclm-en_v6`; fw2 judging was correctly blocked by the new policy cache guard).
 v7-on-final-setting accept/mean per language pending.
+
+---
+
+## 2026-06-21 — hardening pass across all models, v10 named-hints fix, final 2k benchmark, production lock-in
+
+### Hardening pass — all generator prompts bumped to new versions (commit `62ddeba`)
+A spec-alignment + content-coverage pass applied to every model's latest prompt, then promoted to a new
+version (old versions restored to pre-edit). Changes to the `## Citation discipline` section:
+- **Removed the forum-label / slur-exemption bullet** (4chan `-fag` suffixes, "normie/twink/weeb" as
+  "not protected-group slurs"). It was both ethically wrong **and** judge-penalized — the GLM-5.1 judge
+  scores `fag` as `[1.1]`(dignity)+`[1.3]`; empirically `newfag→[4.1]` is **rejected (3.50)** while
+  `newfag→[1.1][1.3]` is **accepted (4.75)**. So the bullet actively cost accuracy. Removed everywhere.
+- **Added "Depiction is not exemption — cite the harm even in a neutral recap"** (depicted rape/sexual
+  violence → `[5.1]`/`[5.2]`, massacre/mass killing → `[5.1]`/`[1.1]`, enslavement/captivity/subjugation
+  → `[1.1]`/`[1.3]`). Triggered by a Genesis-34 rape/massacre recap the generator was passing as benign.
+- **Added the sexual-objectification rule** (caps lead + commercial framing): objectification/degradation/
+  fetishised stereotyping is a `[1.1]`(+`[1.3]`) citation, not "just adult content"; the trigger is
+  degradation, **not** explicitness — porn/escort/adult-SEO listings fill this data.
+- **Added "any mention of killing requires extra care"** — neither automatic `[5.1]` nor benign;
+  depicted/glorified/instructed → `[5.1]`; neutral/one-sided mention → `[4.4]`/`[3.3]` or nothing.
+- Replaced the LLM-awkward **"read this twice"** with a genuine restatement of the core message later in
+  the prompt.
+- Version bumps: gemma-4-31b v9→**v10**, gemma-4-26b-a4b v7→**v8**, qwen3.5-35b-a3b v5→**v6**,
+  qwen3.6-35b-a3b v7→**v8**, qwen3.6-27b v2→**v3**. Eval config wired to the new versions.
+
+### qwen3.6-35b under-reading fix: v9 (abstract) was a no-op → v10 (named hints) is the win (commit `d0016b8`)
+qwen3.6-35b's edge-cases failure mode is **under-reading / abstention**: it declares subtle but
+value-laden text "nothing at stake" and emits zero citations. Two attempts:
+- **v9** = v8 + a heavy-caps **"FIND THE STAKE BEFORE YOU ABSTAIN … DEFAULT TO ENGAGING WHENEVER THE TEXT
+  BEARS ON A PERSON OR GROUP"** directive in the Analysis section. **Result: no-op** — edge flat at
+  **83%** (identical 133/161 to v8), dclm flat (~89%), abstain-rate barely moved (40%→38%). An abstract
+  "engage more" instruction changed nothing. **Discarded** (consistent with the
+  `named-negative-openers-fix-ai-voice` memory: abstract bans/exhortations fail; you must name the
+  pattern). The broad "bears on a person or group" clause also risked over-reading (it didn't fire, but
+  it was the wrong lever).
+- **Diagnosis of *what* it abstains on** (17 relevance≤3 under-reads, spread ~1/language, **English the
+  worst at 30% reject** — not a per-language gap): 4 recurring patterns — (1) opinions that
+  dismiss/minimise discrimination → miss `[1.3]`; (2) narrative dignity slights (someone treated as an
+  obstacle/imposition) → miss `[1.1]`; (3) political/rights/conscription commentary → miss
+  `[1.2]`/`[2.2]`/`[6.2]`; (4) documented atrocities analysed → miss `[1.1]`/`[5.1]`.
+- **v10** = v8 + **named-pattern hints** for exactly those 4 blind spots, placed in the Analysis section.
+  **Critically: described as general behaviour types with no quoted edge wording** (+ an explicit "describe
+  the engaged value in your own words; do not pattern-match wording" guard) to avoid in-sample leakage —
+  the first draft that quoted phrasings was thrown out. **Result: edge 83%→89%** (133→143/161, +10 items,
+  **all four axes up**, abstain 30→22, wrong-lang still 0; English +4, jpn +3, ita +2). dclm **held at
+  ~90%** (no over-reading — accept went up, not down). It **generalized** (dclm improved too, not just
+  edge), which is the signal the patterns weren't edge-specific. **v10 adopted**; the no-op v9 deleted.
+
+### Final 2k benchmark — all 4 candidate models, hardened prompts (GLM-5.1 judge, SwissAI, Apertus-3800 cutoff, `inject_language` on)
+Reruns `rr2_*` (dclm-en + fw2-multi, n=2000) + edge-cases (n=161), judged by rotating GLM-5.1
+deployments (`iMHP`/`HCQR`/`EYNw`). **Accept rate (mean aggregate):**
+
+| model (prompt)        | dclm-en          | fw2-multi        | edge-cases   |
+|-----------------------|------------------|------------------|--------------|
+| **gemma-4-31b (v10)** | **95.5%** (4.58) | **96.8%** (4.69) | **95.7%**    |
+| **gemma-4-26b-a4b (v8)** | 91.7% (4.49)  | 94.3% (4.59)     | 83.9%        |
+| **qwen3.6-35b-a3b (v10)** | 89.7% (4.44) | 91.9% (4.52)    | 88.8%        |
+| **qwen3.5-35b-a3b (v6)**  | 84.1% (4.33) | 86.8% (4.46)    | 81.9%        |
+
+Caveats: qwen dclm runs finished on reduced n (qwen3.5 dclm n=1574, qwen3.6 dclm n=1887) — items dropped
+on flaky SwissAI generator deployments; rates are sound but on the reduced sample. qwen3.5 fw2 has
+**wrong-language=50** (it lacks the language work the others carry). Sub-1pp gaps are judge-deployment
+noise.
+
+### Production lock-in → qwen3.6-35b-a3b v10 (commit `3421a59`)
+`charter.scale` switched from qwen3.5-35b-a3b v5 to **qwen3.6-35b-a3b v10**. Rationale: **best
+quality-per-cost** — 90/92/89 across benches at the **cheapest throughput** (~**34k GPU-h/100M docs**,
+A3B MoE, thinking-on, TP1×DP4). gemma-4-31b is the quality leader (~96 across the board) but **dense →
+~524k GPU-h/100M** (too costly at scale); gemma-4-26b-a4b is the next scale option (~57k GPU-h, 92/94/84);
+qwen3.6-27b is a non-starter (~702k GPU-h — dense + ~15.8k thinking tokens/sample).
+
+Config changes: `generator_alias`/`reflection_prompt` → qwen3.6-35b-a3b/v10; sglang `hf_slug`+`model_path`
+→ `Qwen3.6-35B-A3B-FP8` (a141 path verified present); **`--context-length` 24576→32768** (fits charter +
+3800-token doc insertion — closes the flagged item from the Apertus-cutoff work); `reasoning_parser`
+`kimi_k2` (same A3B family); sampling resolves to `{t1.0, top_p0.95, top_k20, pp0.0}` via the `qwen3.6`
+`_SAMPLING_DEFAULTS` entry (verified — the `qwen3.6` key is ordered before `qwen3`, so the substring
+mis-match bug doesn't bite). Canonical v10 copied to `final_prompts/qwen3.6-35b-a3b/`. Scale already uses
+`REFLECTION_MAX_TOKENS=3800`, so production matches the benchmark insertion policy.
+
+**Open flag:** scale corpus is English-only (`language_filter: [en]`), so `inject_language` is a no-op
+now **and** the scale path does not implement injection — must be added before any multilingual scale run
+(that's where the fw2 wrong-language fix lives).
